@@ -1,12 +1,14 @@
-"""$TAPEDECK_HOME resolution and the config.toml the cli owns.
+"""$TAPEDECK_HOME: where the library is, and what a first run puts there.
 
-The home is resolved on every run and created on first use (SPEC-cli-001), so
-`tapedeck` works on a machine that has never seen it. config.toml is written
-exactly once, with every tool seam (SPEC-core-004) spelled out and annotated:
-the defaults are live values rather than commented-out suggestions, so a fresh
-install can `add` immediately, and they are all in one visible place to edit.
-After that first write the file is the user's — scaffolding never rewrites,
-merges, or reformats it.
+Resolved on every run (SPEC-cli-001) and created when absent, so tapedeck on a
+machine that has never run it lands in a working library instead of an error.
+
+config.toml is the one file cli writes (library-layout write authority). It is
+written exactly once, carrying the tool seams of SPEC-core-004 with their
+defaults filled in and commented — visible, editable, and the reason a fresh
+install can fetch and transcribe at all, since no component hardcodes a tool.
+After that first write the file is the user's; we never rewrite it, so an edited
+seam survives every later run.
 """
 
 from __future__ import annotations
@@ -14,55 +16,59 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from . import Failure
+
 DEFAULT_HOME = "~/dev/storage/tapedeck"
 CONFIG_NAME = "config.toml"
-# Created eagerly so an empty library still has the shape the layout contract
-# names; tapedeck.db is the index's to make when there is something to index.
-DIRS = ("library", "archive")
+# archive/ and library/ belong to other components, but a home without them is
+# not a library yet; tapedeck.db is index's to create when there is something in it.
+DIRECTORIES = ("library", "archive")
 
-CONFIG_TEMPLATE = """\
-# tapedeck — created on first run, yours to edit from here on.
+CONFIG = """\
+# tapedeck configuration — written on first run, yours to edit from here on.
 #
-# Every external tool sits behind a command template (SPEC-core-004): tapedeck
-# runs it through the shell, passes what it needs in environment variables, and
-# reads back the file it writes. Any tool honouring the same seam can replace
-# the default — nothing below is hardcoded anywhere else.
+# Every external tool sits behind a command template (SPEC-core-004): change the
+# command and tapedeck uses the new tool, with no code change anywhere. Each one
+# is a shell command, given its inputs in the environment.
 
 [ingest]
-# Downloads one video. In: $TAPEDECK_VIDEO_URL, $TAPEDECK_VIDEO_ID, $TAPEDECK_DEST.
-# Out: $TAPEDECK_DEST/video.<ext> plus a yt-dlp-shaped info.json beside it.
+# $TAPEDECK_VIDEO_ID, $TAPEDECK_VIDEO_URL, $TAPEDECK_DEST (an existing directory)
+# in; a video.<ext> plus a yt-dlp-shaped info.json left in $TAPEDECK_DEST out.
 fetcher_command = 'yt-dlp --no-playlist --write-info-json -f "bv*+ba/b" -o "$TAPEDECK_DEST/video.%(ext)s" "$TAPEDECK_VIDEO_URL"'
 
 [transcribe]
-# Transcribes one video. In: $TAPEDECK_MEDIA, $TAPEDECK_VIDEO_ID, $TAPEDECK_OUT.
-# Out: whisper-shaped JSON ({"segments": [{"start", "end", "text"}, ...]}) at $TAPEDECK_OUT.
+# $TAPEDECK_MEDIA, $TAPEDECK_VIDEO_ID, $TAPEDECK_OUT in; whisper-shaped JSON
+# ({"segments": [{"start", "end", "text"}, ...]}) written to $TAPEDECK_OUT out.
 transcriber_command = 'mlx_whisper --model mlx-community/whisper-large-v3-mlx --output-format json --output-dir "$(dirname "$TAPEDECK_OUT")" "$TAPEDECK_MEDIA"'
-# Recorded in every transcript, so a better model can supersede old ones later.
+# Recorded in every transcript.json — supersession is judged on this label, so a
+# different transcriber deserves a different name here.
 model = "mlx-whisper/large-v3"
 
 [ask]
-# Answers one question. In: the assembled prompt on stdin. Out: the answer on stdout.
-# tapedeck retrieves the sources and writes the citations; this only drafts prose.
-answerer_command = "claude -p"
+# The assembled prompt on stdin, answer prose on stdout. tapedeck builds the
+# Sources section itself from what retrieval returned; the answerer only cites.
+answerer_command = 'claude -p'
 """
 
 
-def home_dir() -> Path:
-    """Where the library lives — resolved fresh on every run, never cached."""
-    return Path(os.environ.get("TAPEDECK_HOME") or DEFAULT_HOME).expanduser()
+def resolve() -> Path:
+    """The library home for this run — absolute, so every child process we hand
+    it to resolves the same directory regardless of where it was started."""
+    raw = os.environ.get("TAPEDECK_HOME") or DEFAULT_HOME
+    return Path(os.path.abspath(os.path.expanduser(raw)))
 
 
-def ensure(home: Path) -> Path:
-    """Make the home usable: its directories exist, and config.toml is there."""
-    for name in DIRS:
-        (home / name).mkdir(parents=True, exist_ok=True)
-    config = home / CONFIG_NAME
-    if not config.exists():
-        try:
-            # Exclusive create: two tapedecks starting at once must not have one
-            # overwrite a config the other has already written (or the user has).
-            with open(config, "x", encoding="utf-8", newline="\n") as f:
-                f.write(CONFIG_TEMPLATE)
-        except FileExistsError:
-            pass
+def prepare(home: Path) -> Path:
+    """Make the home usable, then leave it alone."""
+    try:
+        for name in DIRECTORIES:
+            (home / name).mkdir(parents=True, exist_ok=True)
+        # Exclusive create: never clobber a config, not even when two runs race
+        # for a fresh home — one writes the defaults, the other finds them there.
+        with open(home / CONFIG_NAME, "x", encoding="utf-8", newline="\n") as fh:
+            fh.write(CONFIG)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        raise Failure(f"could not prepare {home} — {exc}") from exc
     return home

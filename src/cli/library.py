@@ -1,10 +1,11 @@
-"""What is in the library: the reading behind `list` and `show`.
+"""Reading the library — what `list` and `show` answer from.
 
-Both read `library/<id>/meta.json` (system/contracts/meta.schema.json) rather
-than the index. The question these verbs answer — "what have I got?" — is about
-the library itself, so it must stay answerable when tapedeck.db is deleted,
-stale, or mid-rebuild; the index is derived, and deriving is not owning.
-Read-only: nothing here writes anywhere.
+cli writes nothing under library/ or archive/; those belong to ingest,
+transcribe and archive. This is a reader of meta.json and of what happens to be
+beside it, which is why `show` can tell you a video is here but not yet
+transcribed. An entry with unreadable metadata is skipped from a listing with a
+word on stderr rather than being fatal: one damaged entry must not make the
+whole library unlistable.
 """
 
 from __future__ import annotations
@@ -14,131 +15,116 @@ import re
 import sys
 from pathlib import Path
 
+from . import Failure
+
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 META_NAME = "meta.json"
 TRANSCRIPT_NAME = "transcript.json"
-VIDEO_STEM = "video"
-NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp")
-SUMMARY_KEYS = ("id", "upload_date", "channel", "title", "duration_s", "url")
-CHANNEL_COLUMN = 28  # a long channel name pushes its own row out, not every row
-
-
-class NotInLibrary(ValueError):
-    """No such video here — a validation error, not a failed operation."""
-
-
-class Unreadable(RuntimeError):
-    """An entry exists but does not say what it is."""
 
 
 def hms(seconds) -> str:
-    """Seconds as h:mm:ss — hours unpadded, matching the search/ask contracts."""
-    try:
-        total = max(int(seconds), 0)
-    except (TypeError, ValueError):
-        return "0:00:00"
-    return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
+    s = int(seconds or 0)
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
 
 
-def read_meta(entry: Path) -> dict | None:
-    """The entry's metadata, or None when it has none yet (a fetch in flight)."""
-    path = entry / META_NAME
+def entry_dir(home: Path, video_id: str) -> Path:
+    return home / "library" / video_id
+
+
+def archive_page(home: Path, video_id: str) -> Path:
+    return home / "archive" / f"{video_id}.md"
+
+
+def read_meta(home: Path, video_id: str) -> dict:
+    path = entry_dir(home, video_id) / META_NAME
     try:
         meta = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
     except (OSError, ValueError) as exc:
-        raise Unreadable(f"{entry.name}: {META_NAME} is unreadable — {exc}") from exc
+        raise Failure(f"{video_id}: {META_NAME} is unreadable — {exc}") from exc
     if not isinstance(meta, dict):
-        raise Unreadable(f"{entry.name}: {META_NAME} is not a JSON object")
-    meta.setdefault("id", entry.name)
+        raise Failure(f"{video_id}: {META_NAME} is not a JSON object")
     return meta
 
 
-def find_video(entry: Path) -> Path | None:
-    videos = sorted(
-        path
-        for path in (entry.iterdir() if entry.is_dir() else [])
-        if path.is_file() and path.stem == VIDEO_STEM and path.suffix.lower() not in NOT_VIDEO
-    )
-    return videos[0] if videos else None
-
-
-def entries(home: Path) -> list[dict]:
-    """Every video in the library, newest upload first. One unreadable entry is
-    reported and stepped over: a listing that stops at the first bad row is worse
-    than a listing with a gap in it."""
-    root = home / "library"
-    found = []
-    for entry in sorted(root.iterdir()) if root.is_dir() else []:
-        if not entry.is_dir() or entry.name.startswith("."):
-            continue  # a dotted dir is a fetch in progress, not a video
-        try:
-            meta = read_meta(entry)
-        except Unreadable as exc:
-            print(f"warning: {exc}", file=sys.stderr)
-            continue
-        if meta is not None:
-            found.append(meta)
-    found.sort(key=lambda meta: (str(meta.get("upload_date", "")), str(meta["id"])), reverse=True)
-    return found
-
-
-def summary(meta: dict) -> dict:
-    return {key: meta.get(key, "") for key in SUMMARY_KEYS}
-
-
-def listing(metas: list[dict]) -> str:
-    """One line per video: id, date, channel, title (contracts/cli-surface.md)."""
-    rows = [summary(meta) for meta in metas]
-    width = min(max((len(str(row["channel"])) for row in rows), default=0), CHANNEL_COLUMN)
-    lines = []
-    for row in rows:
-        channel = f"{str(row['channel']):<{width}}"
-        date = f"{str(row['upload_date']):<10}"
-        lines.append(f"{row['id']}  {date}  {channel}  {row['title']}".rstrip())
-    return "\n".join(lines)
-
-
-def locate(home: Path, video_id: str) -> tuple[dict, dict, list[str]]:
-    """One video's metadata, where its artifacts live, and which are not there."""
-    if not VIDEO_ID.fullmatch(video_id):
-        raise NotInLibrary(f"{video_id!r} is not an 11-character video id")
-    entry = home / "library" / video_id
-    meta = read_meta(entry) if entry.is_dir() else None
-    if meta is None:
-        raise NotInLibrary(f"{video_id}: not in the library ({home / 'library'})")
-    video = find_video(entry)
-    paths = {
-        "entry": str(entry),
-        "video": str(video) if video else None,
-        "transcript": str(entry / TRANSCRIPT_NAME),
-        "archive": str(home / "archive" / f"{video_id}.md"),
+def record(home: Path, video_id: str, meta: dict) -> dict:
+    """One video as tapedeck knows it: what ingest recorded, plus how far along
+    the derivation chain this entry has actually got."""
+    entry = entry_dir(home, video_id)
+    page = archive_page(home, video_id)
+    transcript = entry / TRANSCRIPT_NAME
+    return {
+        "id": video_id,
+        "title": str(meta.get("title") or video_id),
+        "channel": str(meta.get("channel") or ""),
+        "upload_date": str(meta.get("upload_date") or ""),
+        "duration_s": meta.get("duration_s"),
+        "url": str(meta.get("url") or ""),
+        "library": str(entry),
+        "transcript": str(transcript) if transcript.is_file() else None,
+        "archive": str(page) if page.is_file() else None,
     }
-    missing = [name for name in ("transcript", "archive") if not Path(paths[name]).is_file()]
-    if video is None:
-        missing.append("video")
-    return meta, paths, missing
 
 
-def detail(meta: dict, paths: dict, missing: list[str]) -> str:
-    """Metadata and the artifact paths — including the ones not written yet, so
-    `show` says where a missing transcript or page *would* be."""
-    facts = " · ".join(
-        part
-        for part in (meta.get("channel"), meta.get("upload_date"), hms(meta.get("duration_s")))
-        if part
+def records(home: Path) -> list[dict]:
+    """Every video in the library, newest upload first. Directories that are not
+    entries — a fetch still staging under a dotted name — are simply not videos."""
+    library = home / "library"
+    found = []
+    for path in sorted(p for p in library.iterdir() if p.is_dir()) if library.is_dir() else []:
+        if not VIDEO_ID.fullmatch(path.name) or not (path / META_NAME).is_file():
+            continue
+        try:
+            found.append(record(home, path.name, read_meta(home, path.name)))
+        except Failure as exc:
+            print(f"warning: {exc}", file=sys.stderr)
+    return sorted(found, key=lambda r: (r["upload_date"], r["id"]), reverse=True)
+
+
+def one(home: Path, video_id: str) -> dict:
+    """The record for a single video, or a validation error naming what is wrong."""
+    if not VIDEO_ID.fullmatch(video_id):
+        raise Failure(f"{video_id!r} is not an 11-character video id", code=2)
+    if not (entry_dir(home, video_id) / META_NAME).is_file():
+        raise Failure(f"{video_id}: not in the library ({home / 'library'})", code=2)
+    return record(home, video_id, read_meta(home, video_id))
+
+
+def listing(found: list[dict]) -> str:
+    """One line per video: id, date, channel, title — aligned so the titles line up."""
+    width = max((len(r["channel"]) for r in found), default=0)
+    return "\n".join(
+        f"{r['id']}  {r['upload_date'] or '----------'}  "
+        f"{r['channel']:<{width}}  {r['title']}".rstrip()
+        for r in found
     )
-    lines = [f"{meta['id']}  {meta.get('title', '')}".rstrip()]
-    for line in (facts, meta.get("url", "")):
-        if line:
-            lines.append(line)
-    lines.append("")
-    for name in ("video", "transcript", "archive"):
-        where = paths[name] or f"{paths['entry']}/{VIDEO_STEM}.<ext>"
-        note = "  (missing)" if name in missing else ""
-        lines.append(f"{name:<11} {where}{note}")
-    chapters = meta.get("chapters")
-    if isinstance(chapters, list) and chapters:
-        lines.append(f"{'chapters':<11} {len(chapters)}")
+
+
+def detail(found: dict) -> str:
+    """Everything about one video, ending in where to read it."""
+    fields = [
+        ("id", found["id"]),
+        ("channel", found["channel"]),
+        ("uploaded", found["upload_date"]),
+        ("duration", hms(found["duration_s"]) if found["duration_s"] is not None else ""),
+        ("url", found["url"]),
+        ("library", found["library"]),
+        ("transcript", found["transcript"] or "not transcribed yet"),
+        ("archive", found["archive"] or "not rendered yet — run `tapedeck add <id>`"),
+    ]
+    lines = [found["title"]]
+    lines += [f"  {label:<10}  {value}" for label, value in fields if value]
     return "\n".join(lines)
+
+
+def ingested_id(stdout: str) -> str:
+    """The id ingest just wrote, read back from the entry path it printed.
+
+    ingest owns what a YouTube address means (SPEC-ingest-001); parsing the URL
+    again here would be a second answer to that question, free to diverge from
+    the first and to start a duplicate entry when it did.
+    """
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    name = Path(lines[-1]).name if lines else ""
+    if not VIDEO_ID.fullmatch(name):
+        raise Failure(f"ingest named no library entry to derive from: {stdout.strip()!r}")
+    return name

@@ -1,57 +1,60 @@
-"""Running the components — the cli's only way to reach them.
+"""Delegating to the components — each one a process, never an import.
 
-Each component is driven at exactly the boundary its own evaluations use:
-`python -m <component> …`, overridable per component with $TAPEDECK_<NAME>_CMD.
-So the cli composes verbs without importing a single line of another component,
-and any of them can be regenerated — or swapped for something else entirely —
-underneath it.
+`python -m ingest add <url>` is the same boundary ingest's own evaluations
+drive, so the cli depends on what a component does and what it exits with, and
+on nothing about how it is written: any component can be regenerated whole
+without touching this file (SPEC-core-002). $TAPEDECK_<NAME>_CMD overrides a
+component the way the harness does, which is also how a replacement
+implementation gets tried without reinstalling anything.
 
-Whose stdout is the user's stdout is decided per call. A pass-through verb
-(`search`, `ask`, `reindex`) hands the component the terminal and the component's
-answer *is* the answer; inside the `add` pipeline every step is captured and
-echoed to stderr, so a four-process pipeline still prints one line of stdout.
+The home is named to every child explicitly, so a child can never resolve a
+different library than the run that called it.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shlex
 import subprocess
 import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import Failure
 
 
-class RunError(RuntimeError):
-    """A component could not be run at all (as opposed to running and failing)."""
+@dataclass(frozen=True)
+class Result:
+    code: int
+    stdout: str = ""
 
 
-def override(module: str) -> str | None:
-    return os.environ.get(f"TAPEDECK_{module.upper()}_CMD")
+def command(module: str) -> list[str]:
+    override = os.environ.get(f"TAPEDECK_{module.upper()}_CMD", "").strip()
+    # sys.executable, not `python`: the interpreter running tapedeck is the one
+    # the components are installed beside.
+    return shlex.split(override) if override else [sys.executable, "-m", module]
 
 
-def invocation(module: str) -> list[str]:
-    command = override(module)
-    if command:
-        return shlex.split(command)
-    if importlib.util.find_spec(module) is None:
-        raise RunError(f"the {module} component is not installed — nothing at `-m {module}`")
-    # sys.executable, not `python`: the components live wherever tapedeck does.
-    return [sys.executable, "-m", module]
-
-
-def run(module: str, args: list[str], home, capture: bool = False) -> tuple[int, str]:
-    """Run one component verb against `home`. Returns (exit code, stdout)."""
-    argv = [*invocation(module), *args]
+def run(module: str, args: list[str], home: Path, capture: bool = False) -> Result:
+    """Run a component verb. `capture` keeps the component's stdout out of ours —
+    intermediate artifact paths are the pipeline's business, not the user's —
+    while stderr always passes straight through, because progress is theirs to
+    narrate and diagnostics are the user's to see."""
+    argv = [*command(module), *args]
     env = {**os.environ, "TAPEDECK_HOME": str(home)}
+    sys.stdout.flush()  # children write to fd 1 directly; keep the order honest
     try:
-        result = subprocess.run(
+        done = subprocess.run(
             argv, env=env, text=True, stdout=subprocess.PIPE if capture else None
         )
     except OSError as exc:
-        raise RunError(f"could not run the {module} component — {exc}") from exc
-    out = result.stdout or ""
-    if out:
-        # Captured output is still the component talking: it becomes progress
-        # rather than disappearing.
-        sys.stderr.write(out if out.endswith("\n") else out + "\n")
-    return result.returncode, out
+        raise Failure(f"could not run `{shlex.join(argv)}` — {exc}") from exc
+    return Result(exit_code(done.returncode), done.stdout or "")
+
+
+def exit_code(code: int) -> int:
+    """Only 0, 1 and 2 mean anything at this boundary (contracts/cli-surface.md).
+    A component killed by a signal, or exiting with something else, is an
+    operation failure — not a usage error the user could fix by retyping."""
+    return code if code in (0, 1, 2) else 1
