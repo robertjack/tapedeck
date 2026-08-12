@@ -111,6 +111,17 @@ def add_video(home, meta, segments=None):
         )
 
 
+def set_fetcher(home, script_body):
+    """Configure the SPEC-core-004 fetcher seam with a fake. Interface pinned here:
+    the fetcher runs as a shell command with env TAPEDECK_VIDEO_ID, TAPEDECK_VIDEO_URL,
+    and TAPEDECK_DEST (an existing directory); it must create video.<ext> plus a
+    yt-dlp-shaped info.json in $TAPEDECK_DEST. ingest normalizes info.json into the
+    meta.schema.json form."""
+    script = home / "fetch.sh"
+    script.write_text(script_body)
+    (home / "config.toml").write_text(f'[ingest]\nfetcher_command = "sh {script}"\n')
+
+
 @pytest.fixture
 def home(tmp_path):
     h = tmp_path / "home"
