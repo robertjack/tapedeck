@@ -6,7 +6,8 @@ real libraries. Additive changes only.
 
 ## Location
 
-`$TAPEDECK_HOME` if set, else `~/Tapedeck`. The code repo never contains user data.
+`$TAPEDECK_HOME` if set, else `~/dev/storage/tapedeck`. The code repo never contains
+user data.
 
 ```
 $TAPEDECK_HOME/

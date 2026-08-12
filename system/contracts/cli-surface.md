@@ -16,6 +16,6 @@ Additive changes only; removals require superseding SPEC-cli-001.
 - Exit codes: `0` success · `1` operation failure (fetch/transcribe/answer failed, no
   results where results were required) · `2` usage or validation error.
 - Human output → stdout; diagnostics/progress → stderr; `--json` on read-only commands.
-- `$TAPEDECK_HOME` resolves the library (default `~/Tapedeck`); first use creates the
-  home and a `config.toml` with commented defaults.
+- `$TAPEDECK_HOME` resolves the library (default `~/dev/storage/tapedeck`); first use
+  creates the home and a `config.toml` with commented defaults.
 - Every verb is idempotent (SPEC-core-003): re-running is always safe.

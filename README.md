@@ -10,7 +10,8 @@ disposable.
 
 ## Shape
 
-- **Library** (user data, never in this repo): `$TAPEDECK_HOME` (default `~/Tapedeck`)
+- **Library** (user data, never in this repo): `$TAPEDECK_HOME` (default
+  `~/dev/storage/tapedeck`)
   — full videos, transcripts, markdown archive, SQLite FTS index. See
   `system/contracts/library-layout.md`.
 - **Derivation chain**: video → transcript → archive page → index. Every link
