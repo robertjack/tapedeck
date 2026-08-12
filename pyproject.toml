@@ -1,0 +1,20 @@
+# Packaging is durable-layer plumbing: it wires generated packages under src/
+# into the project env. Components are added to `packages` as they are generated;
+# the `tapedeck` console script appears with the cli component.
+
+[project]
+name = "tapedeck"
+version = "0.1.0"
+description = "A local video brain: download, transcribe, archive, ask"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/archive"]
