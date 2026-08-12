@@ -1,0 +1,21 @@
+[component]
+name = "archive"
+purpose = "Pure deterministic render: meta.json + transcript.json -> archive/<id>.md with frontmatter and chaptered, timestamp-linked transcript sections. Identical inputs give byte-identical output (SPEC-archive-001)."
+pace = "fast"
+language = "python"
+
+[owns]
+paths = ["src/archive/"]
+data = ["archive/*.md"]
+
+[boundary]
+contracts = ["system/contracts/library-layout.md", "system/contracts/meta.schema.json", "system/contracts/transcript.schema.json"]
+consumes = []
+
+[evals]
+path = "system/evals/archive/"
+command = "just eval archive"
+
+[budget]
+context_tokens = 8000
+src_tokens = 6000

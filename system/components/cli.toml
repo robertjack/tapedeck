@@ -1,0 +1,21 @@
+[component]
+name = "cli"
+purpose = "The tapedeck entrypoint: argument parsing, TAPEDECK_HOME resolution and first-run config scaffolding, and orchestration of the add pipeline (ingest -> transcribe -> archive -> index). Exit codes and output conventions per the CLI contract (SPEC-cli-001)."
+pace = "fast"
+language = "python"
+
+[owns]
+paths = ["src/cli/"]
+data = ["config.toml"]
+
+[boundary]
+contracts = ["system/contracts/cli-surface.md"]
+consumes = ["ingest", "transcribe", "archive", "index", "ask"]
+
+[evals]
+path = "system/evals/cli/"
+command = "just eval cli"
+
+[budget]
+context_tokens = 14000
+src_tokens = 7000

@@ -1,0 +1,21 @@
+[component]
+name = "ingest"
+purpose = "Turn a YouTube URL into library/<id>/: extract the canonical video id, invoke the configured fetcher (default yt-dlp) for the full video, and write schema-valid meta.json. Sole writer of video files and metadata (SPEC-ingest-001)."
+pace = "medium"
+language = "python"
+
+[owns]
+paths = ["src/ingest/"]
+data = ["library/*/video.*", "library/*/meta.json"]
+
+[boundary]
+contracts = ["system/contracts/library-layout.md", "system/contracts/meta.schema.json"]
+consumes = []
+
+[evals]
+path = "system/evals/ingest/"
+command = "just eval ingest"
+
+[budget]
+context_tokens = 8000
+src_tokens = 6000

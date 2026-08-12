@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tapedeck/transcript",
+  "title": "tapedeck transcript (library/<id>/transcript.json)",
+  "type": "object",
+  "required": ["video_id", "model", "segments"],
+  "additionalProperties": false,
+  "properties": {
+    "video_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{11}$" },
+    "model": { "type": "string", "description": "transcriber identity, e.g. mlx-whisper/large-v3 — recorded so better models can supersede old transcripts" },
+    "language": { "type": "string" },
+    "transcribed_at": { "type": "string" },
+    "segments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "start": { "type": "number", "minimum": 0 },
+          "end": { "type": "number", "minimum": 0 },
+          "text": { "type": "string" }
+        }
+      }
+    }
+  }
+}

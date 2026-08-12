@@ -1,0 +1,25 @@
+[project]
+name = "tapedeck"
+language_default = "python"
+
+[generator]
+tool = "claude-code"
+model = "sonnet"
+command = "claude --model sonnet -p --permission-mode acceptEdits"
+
+[budgets]
+default_context_tokens = 8000
+default_src_tokens = 6000
+token_heuristic = "bytes/4"
+
+[pace.fast]
+review = "none"
+[pace.medium]
+review = "none"
+[pace.slow]
+review = "human"
+[pace.conservation]
+regen = "forbidden"
+
+[regen]
+max_retries = 2

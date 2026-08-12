@@ -1,0 +1,21 @@
+[component]
+name = "ask"
+purpose = "Question -> top-k retrieval via index -> prompt assembly -> configured answerer (default claude -p) -> answer with tapedeck-assembled citations per the citation contract. Probabilistic inside, deterministic at the edges (SPEC-ask-001, SPEC-ask-002)."
+pace = "fast"
+language = "python"
+
+[owns]
+paths = ["src/ask/"]
+data = []
+
+[boundary]
+contracts = ["system/contracts/ask-citations.md"]
+consumes = ["index"]
+
+[evals]
+path = "system/evals/ask/"
+command = "just eval ask"
+
+[budget]
+context_tokens = 8000
+src_tokens = 6000

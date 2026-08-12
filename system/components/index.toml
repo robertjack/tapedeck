@@ -1,0 +1,21 @@
+[component]
+name = "index"
+purpose = "Own tapedeck.db: SQLite FTS5 over archive-page sections, fully regenerable from archive/*.md (reindex), with ranked timestamped search and deep links (SPEC-index-001, SPEC-index-002)."
+pace = "medium"
+language = "python"
+
+[owns]
+paths = ["src/index/"]
+data = ["tapedeck.db"]
+
+[boundary]
+contracts = ["system/contracts/library-layout.md"]
+consumes = []
+
+[evals]
+path = "system/evals/index/"
+command = "just eval index"
+
+[budget]
+context_tokens = 8000
+src_tokens = 6000

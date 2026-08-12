@@ -1,0 +1,21 @@
+[component]
+name = "transcribe"
+purpose = "Derive library/<id>/transcript.json from the video via the configured transcriber (default mlx_whisper): ordered timestamped segments plus the model identity, so better models can supersede old transcripts (SPEC-transcribe-001)."
+pace = "medium"
+language = "python"
+
+[owns]
+paths = ["src/transcribe/"]
+data = ["library/*/transcript.json"]
+
+[boundary]
+contracts = ["system/contracts/library-layout.md", "system/contracts/transcript.schema.json"]
+consumes = []
+
+[evals]
+path = "system/evals/transcribe/"
+command = "just eval transcribe"
+
+[budget]
+context_tokens = 8000
+src_tokens = 6000
