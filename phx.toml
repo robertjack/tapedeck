@@ -4,8 +4,8 @@ language_default = "python"
 
 [generator]
 tool = "claude-code"
-model = "sonnet"
-command = "claude --model sonnet -p --permission-mode acceptEdits"
+model = "claude-opus-5"
+command = "claude --model claude-opus-5 -p --permission-mode acceptEdits"
 
 [budgets]
 default_context_tokens = 8000
