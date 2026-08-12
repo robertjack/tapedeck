@@ -118,3 +118,25 @@ def test_reindex_via_cli(home):
 def test_garbage_url_exits_2(home):
     set_pipeline(home)
     assert run_cli(["add", "https://example.com/nope"], home).returncode == 2
+
+
+ANSWER_OK = """#!/bin/sh
+cat > /dev/null
+printf 'It is about regeneration [1].\\n'
+"""
+
+
+def test_ask_end_to_end_through_the_executable(home):
+    # the full brain: add a video, then ask about it — cli delegates to the ask
+    # component (python -m ask run "<question>" [-k N]) with the citation contract
+    set_pipeline(home)
+    answer = home / "answer.sh"
+    answer.write_text(ANSWER_OK)
+    with (home / "config.toml").open("a") as fh:
+        fh.write(f'\n[ask]\nanswerer_command = "sh {answer}"\n')
+    assert run_cli(["add", "dQw4w9WgXcQ"], home).returncode == 0
+    r = run_cli(["ask", "what is the core idea"], home)
+    assert r.returncode == 0, r.stderr
+    assert "It is about regeneration [1]" in r.stdout
+    assert "Sources:" in r.stdout
+    assert "watch?v=dQw4w9WgXcQ&t=95s" in r.stdout
