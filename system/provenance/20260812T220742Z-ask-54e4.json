@@ -1,0 +1,38 @@
+{
+  "id": "gen-20260812T220742Z-ask-54e4",
+  "component": "ask",
+  "trigger": {
+    "kind": "human",
+    "refs": []
+  },
+  "root_hash": "sha256:54e4c6ac674edbd76ca935ee106e3939347c7858710898f58bbf25f65a0ac0ea",
+  "inputs": {
+    "manifest": "sha256:9bd85443d9080c7190d0fd24381f90db67b8ffc09887381bdc9c3efb2ae782e2",
+    "clauses": {
+      "SPEC-ask-001": "sha256:2303b45f316bb12e1bf063de55efd049bab4aa9cdadc76feb26a10b5f96e5cd5",
+      "SPEC-ask-002": "sha256:12ead53eb8f94df32b53fb9ff3d953d3405c2330403891a81a51683404830a4d",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/ask-citations.md": "sha256:866430681c4485bac73e5ba3eeab83c2f1590bf16a2b61548cbeefef2af575bf"
+    },
+    "eval_sources": {
+      "system/evals/ask/test_ask.py": "sha256:0a2579c4e959b82ff1024cd2e0c64f8ba6cada3406e079268649c0f012ddf3fb"
+    },
+    "lessons": []
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-opus-5",
+    "session_ref": "claude-code:e1f69df8 via phx regen (headless opus 5)"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "generated via: claude --model claude-opus-5 -p --permission-mode acceptEdits"
+}
