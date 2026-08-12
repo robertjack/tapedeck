@@ -122,6 +122,20 @@ def set_fetcher(home, script_body):
     (home / "config.toml").write_text(f'[ingest]\nfetcher_command = "sh {script}"\n')
 
 
+def set_transcriber(home, script_body, model="fixture/whisper-0"):
+    """Configure the SPEC-core-004 transcriber seam with a fake. Interface pinned
+    here: the transcriber runs as a shell command with env TAPEDECK_MEDIA (path to
+    the video file), TAPEDECK_VIDEO_ID, and TAPEDECK_OUT (a file path chosen by the
+    component); it must write whisper-style JSON ({"segments":[{start,end,text}...]})
+    to $TAPEDECK_OUT. The transcribe component normalizes that into transcript.json
+    (video_id, model label from config, stripped segment text)."""
+    script = home / "whisper.sh"
+    script.write_text(script_body)
+    (home / "config.toml").write_text(
+        f'[transcribe]\ntranscriber_command = "sh {script}"\nmodel = "{model}"\n'
+    )
+
+
 @pytest.fixture
 def home(tmp_path):
     h = tmp_path / "home"
