@@ -67,6 +67,36 @@ PLAIN_SEGMENTS = [
 ]
 
 
+def hms(seconds):
+    s = int(seconds)
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
+
+
+def write_archive_page(home, meta, sections):
+    """Write archive/<id>.md directly, in the pinned SPEC-archive-001 shape
+    (frontmatter, then '## [h:mm:ss](deep-link) Title' sections) — so suites for
+    downstream components stay independent of the archive implementation."""
+    (home / "archive").mkdir(exist_ok=True)
+    vid = meta["id"]
+    lines = [
+        "---",
+        f"id: {vid}",
+        f'title: "{meta["title"]}"',
+        f"channel: {meta['channel']}",
+        f"upload_date: {meta['upload_date']}",
+        f"duration_s: {meta['duration_s']}",
+        f"url: {meta['url']}",
+        "---",
+        "",
+        f"# {meta['title']}",
+        "",
+    ]
+    for start_s, title, text in sections:
+        url = f"https://www.youtube.com/watch?v={vid}&t={int(start_s)}s"
+        lines += [f"## [{hms(start_s)}]({url}) {title}", "", text, ""]
+    (home / "archive" / f"{vid}.md").write_text("\n".join(lines))
+
+
 def add_video(home, meta, segments=None):
     d = home / "library" / meta["id"]
     d.mkdir(parents=True)
