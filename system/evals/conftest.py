@@ -136,6 +136,19 @@ def set_transcriber(home, script_body, model="fixture/whisper-0"):
     )
 
 
+def run_cli(args, home):
+    """Drive the user-facing `tapedeck` executable (override via $TAPEDECK_BIN)."""
+    cmd = os.environ.get("TAPEDECK_BIN", "tapedeck")
+    return subprocess.run(
+        [*shlex.split(cmd), *args],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=TIMEOUT,
+        env={**os.environ, "TAPEDECK_HOME": str(home)},
+    )
+
+
 @pytest.fixture
 def home(tmp_path):
     h = tmp_path / "home"
