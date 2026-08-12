@@ -136,6 +136,17 @@ def set_transcriber(home, script_body, model="fixture/whisper-0"):
     )
 
 
+def set_answerer(home, script_body):
+    """Configure the SPEC-core-004 answerer seam with a fake. Interface pinned
+    here: the answerer runs as a shell command with the assembled prompt on stdin
+    and prints the answer prose (with [n] citation markers) to stdout. The Sources
+    section is assembled by tapedeck from retrieval results, never by the answerer
+    (contracts/ask-citations.md)."""
+    script = home / "answer.sh"
+    script.write_text(script_body)
+    (home / "config.toml").write_text(f'[ask]\nanswerer_command = "sh {script}"\n')
+
+
 def run_cli(args, home):
     """Drive the user-facing `tapedeck` executable (override via $TAPEDECK_BIN)."""
     cmd = os.environ.get("TAPEDECK_BIN", "tapedeck")
