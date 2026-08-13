@@ -18,4 +18,7 @@ command = "just eval ask"
 
 [budget]
 context_tokens = 8000
-src_tokens = 6000
+# Raised 6000 -> 8000: the last generation landed at 5997/6000 and its own notes said
+# the budget must rise before any new clause arrives rather than prose be squeezed out
+# of the implementation. SPEC-ask-004 and the citation-parsing clauses are that clause.
+src_tokens = 8000

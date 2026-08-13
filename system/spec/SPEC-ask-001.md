@@ -13,6 +13,13 @@ inline deep-link citations, and tapedeck verifies the answer mechanically before
 accepting it: the answer must contain at least one YouTube deep link, and every deep
 link must reference a video present in the library with a timestamp within that
 video's duration — an absent or fabricated citation fails the command with exit 1.
+Verification is only as good as the reading it is done from, so citations are read
+exactly per contracts/ask-citations.md: sentence punctuation trailing a link is prose
+and belongs to neither the URL nor its `t=` value, and a video whose duration is
+unknown — `duration_s: 0`, or metadata that cannot be read — bounds nothing, so the
+upper-bound check is waived for it while the video-exists check still stands. A
+citation must not be refused for the punctuation that ends its sentence, and must not
+escape the bounds check by carrying some.
 An empty library exits 1 with "no sources in the library" without invoking the
 librarian. `ask --fast <question>` preserves the strict retrieval pipeline: top-k
 chunks via the index (default 8, `-k`), a prompt with numbered excerpts to
