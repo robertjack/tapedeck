@@ -11,6 +11,8 @@ Additive changes only; removals require superseding SPEC-cli-001.
 | `tapedeck show <id> [--json]` | no | metadata + archive path for one video |
 | `tapedeck reindex` | yes (db only) | rebuild tapedeck.db from archive/ alone |
 | `tapedeck rm <id> [--media-only]` | yes | remove a video everywhere (default), or delete just its media to reclaim disk while keeping the knowledge (SPEC-cli-002) |
+| `tapedeck retranscribe [--dry-run]` | yes | re-derive transcript → archive → index for every video whose transcript model label differs from the configured `[transcribe].model` (SPEC-cli-004) |
+| `tapedeck adapt-parakeet` | no | stdin→stdout filter: parakeet-mlx JSON to the whisper shape the transcriber seam requires (SPEC-transcribe-002) |
 
 ## Conventions
 

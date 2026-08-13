@@ -31,7 +31,10 @@ cat > "$TAPEDECK_OUT" <<'JSON'
 JSON
 """
 
-SUBCOMMANDS = ("add", "search", "ask", "list", "show", "reindex", "rm")
+SUBCOMMANDS = (
+    "add", "search", "ask", "list", "show", "reindex", "rm",
+    "retranscribe", "adapt-parakeet",
+)
 
 
 def set_pipeline(home):
@@ -87,6 +90,9 @@ def test_first_run_defaults_carry_the_battle_tested_seams(tmp_path):
     assert "large-v3-turbo" in cfg, "default whisper model is large-v3-turbo"
     assert "--condition-on-previous-text False" in cfg, "repetition-loop guard missing"
     assert "mlx-whisper/large-v3-turbo" in cfg, "model label must name the real config"
+    assert "lister_command" in cfg, "collections need the lister seam visible"
+    assert "--flat-playlist" in cfg
+    assert "adapt-parakeet" in cfg, "the parakeet alternative must be documented"
 
 
 def test_add_runs_the_full_pipeline(home):
