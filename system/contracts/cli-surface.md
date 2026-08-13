@@ -4,7 +4,7 @@ Additive changes only; removals require superseding SPEC-cli-001.
 
 | command | mutates library | purpose |
 |---|---|---|
-| `tapedeck add <url> [--force]` | yes | ingest → transcribe → archive → index for one video |
+| `tapedeck add <url> [--force]` | yes | ingest → transcribe → archive → index for one video, or for every video of a playlist/channel URL (SPEC-cli-003; `--force` is single-video only) |
 | `tapedeck search <query> [--json] [-k N]` | no | ranked timestamped excerpts with deep links |
 | `tapedeck ask <question> [-k N] [--fast]` | no | librarian agent over the library (default) with post-hoc-verified citations; `--fast` = strict retrieval pipeline (SPEC-ask-001) |
 | `tapedeck list [--json]` | no | one line per video: id, date, channel, title |
