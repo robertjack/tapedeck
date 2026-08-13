@@ -76,6 +76,19 @@ def test_first_run_scaffolds_home_and_config(tmp_path):
     assert "cite" in brief.lower()
 
 
+def test_first_run_defaults_carry_the_battle_tested_seams(tmp_path):
+    # LESSON-0001 / LESSON-0002: a fresh install ships the fixes — it never
+    # re-suffers the AV1 403 or the large-v3 repetition loop.
+    home = tmp_path / "fresh" / "deck"
+    assert run_cli(["list"], home).returncode == 0
+    cfg = (home / "config.toml").read_text()
+    assert "vcodec^=avc1" in cfg, "default fetcher must prefer h264 (YouTube 403s AV1)"
+    assert "height<=1080" in cfg
+    assert "large-v3-turbo" in cfg, "default whisper model is large-v3-turbo"
+    assert "--condition-on-previous-text False" in cfg, "repetition-loop guard missing"
+    assert "mlx-whisper/large-v3-turbo" in cfg, "model label must name the real config"
+
+
 def test_add_runs_the_full_pipeline(home):
     set_pipeline(home)
     r = run_cli(["add", "https://youtu.be/dQw4w9WgXcQ"], home)
