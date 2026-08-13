@@ -5,6 +5,12 @@ file is disposable by design — `build` writes a fresh database beside the old 
 and swaps it in, so an interrupted reindex leaves the previous index intact
 (SPEC-core-003) and never a half-built one.
 
+The chunk index stems English through fts5's porter tokenizer over unicode61
+(SPEC-index-003), so "video" finds "videos" and "transcribe" finds "transcribing".
+Stemming happens at write time, so a database built under a different tokenizer
+answers different queries: `_open` refuses one, which turns every path that can
+rebuild into the migration — `reindex` outright, `update` by falling back to it.
+
 Ranking is bm25, ordered with explicit tie-breaks so that an incrementally
 updated database answers exactly like a fully rebuilt one (SPEC-index-001):
 insertion order — the one thing the two builds do not share — never leaks out.
@@ -21,9 +27,10 @@ from pathlib import Path
 from .pages import Page, deep_link, hms
 
 DB_NAME = "tapedeck.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+TOKENIZE = "porter unicode61 remove_diacritics 2"
 
-SCHEMA = """
+SCHEMA = f"""
 CREATE TABLE videos (
     video_id    TEXT PRIMARY KEY,
     title       TEXT NOT NULL DEFAULT '',
@@ -40,7 +47,7 @@ CREATE VIRTUAL TABLE chunks USING fts5(
     start_s UNINDEXED,
     section,
     text,
-    tokenize = 'unicode61 remove_diacritics 2'
+    tokenize = '{TOKENIZE}'
 );
 """
 
@@ -76,7 +83,8 @@ def fts_query(text: str) -> str:
 
     Every word becomes a phrase of its own, so punctuation a viewer would type
     ("C++", "don't", "--force") can never be read as query syntax; double-quoted
-    groups stay phrases, and a trailing `*` still asks for a prefix match.
+    groups stay phrases, and a trailing `*` still asks for a prefix match. The
+    tokenizer stems phrases on the way in, so quoting costs no morphology.
     """
     terms = []
     for raw in TERM.findall(text):
@@ -104,6 +112,17 @@ def _create(path: Path) -> sqlite3.Connection:
     return db
 
 
+def _current(db: sqlite3.Connection) -> bool:
+    """Is this a database the running build both understands and searches like?"""
+    if db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+        return False
+    ddl = db.execute("SELECT sql FROM sqlite_master WHERE name = 'chunks'").fetchone()
+    # Rows stemmed by another tokenizer are not rows this build can match against
+    # (SPEC-index-003) — read the tokenizer off the database rather than trust a
+    # version number to have been bumped.
+    return bool(ddl) and TOKENIZE in (ddl[0] or "")
+
+
 def _open(path: Path) -> sqlite3.Connection | None:
     """Open an existing database this build understands, else None (rebuild it)."""
     if not path.is_file():
@@ -112,8 +131,8 @@ def _open(path: Path) -> sqlite3.Connection | None:
     try:
         db = sqlite3.connect(path)
         db.row_factory = sqlite3.Row
-        if db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
-            raise sqlite3.DatabaseError("schema version")
+        if not _current(db):
+            raise sqlite3.DatabaseError("built by another schema or tokenizer")
         db.execute("SELECT video_id FROM chunks LIMIT 1").fetchone()
         db.execute("SELECT video_id FROM videos LIMIT 1").fetchone()
     except sqlite3.Error:

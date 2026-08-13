@@ -83,7 +83,8 @@ def update(home: Path, video_id: str) -> int:
     except (store.Unusable, sqlite3.Error, OSError) as exc:
         raise Failure(f"{video_id}: could not update the index — {exc}") from exc
     if target is None:
-        # Nothing usable on disk yet; a full build covers this video too.
+        # Nothing this build can use on disk yet — no database, or one stemmed by
+        # an older tokenizer. A full build covers this video too, and migrates.
         return reindex(home)
     print(target)
     return 0
