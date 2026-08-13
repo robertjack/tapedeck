@@ -6,7 +6,7 @@ Additive changes only; removals require superseding SPEC-cli-001.
 |---|---|---|
 | `tapedeck add <url> [--force]` | yes | ingest → transcribe → archive → index for one video, or for every video of a playlist/channel URL (SPEC-cli-003; `--force` is single-video only) |
 | `tapedeck search <query> [--json] [-k N]` | no | ranked timestamped excerpts with deep links |
-| `tapedeck ask <question> [-k N] [--fast]` | no | librarian agent over the library (default) with post-hoc-verified citations; `--fast` = strict retrieval pipeline (SPEC-ask-001) |
+| `tapedeck ask <question> [-k N] [--fast] [--video <id>]` | no | librarian agent over the library (default) with post-hoc-verified citations; `--fast` = strict retrieval pipeline (SPEC-ask-001); `--video` scopes either mode to one video (SPEC-ask-003) |
 | `tapedeck list [--json]` | no | one line per video: id, date, channel, title |
 | `tapedeck show <id> [--json]` | no | metadata + archive path for one video |
 | `tapedeck reindex` | yes (db only) | rebuild tapedeck.db from archive/ alone |

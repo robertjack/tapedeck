@@ -164,3 +164,8 @@ def test_ask_end_to_end_through_the_executable(home):
     assert "It is about regeneration [1]" in r.stdout
     assert "Sources:" in r.stdout
     assert "watch?v=dQw4w9WgXcQ&t=95s" in r.stdout
+    # --video passes through to ask (SPEC-ask-003): scoping to the one video
+    # still answers; scoping to an id that is not in the library is exit 2
+    r = run_cli(["ask", "core idea", "--fast", "--video", "dQw4w9WgXcQ"], home)
+    assert r.returncode == 0, r.stderr
+    assert run_cli(["ask", "core idea", "--video", "nosuchvid00"], home).returncode == 2
