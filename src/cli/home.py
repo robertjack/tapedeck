@@ -1,7 +1,7 @@
 """The library home: where it is, what shape it has, and its first-run scaffold.
 
 `$TAPEDECK_HOME` is resolved on every run (SPEC-cli-001) and the home is made
-whole before any verb executes, so nothing downstream has to wonder whether the
+whole before any verb executes, so nothing downstream wonders whether the
 directories exist. The cli owns `config.toml` and writes it exactly once, with
 every seam of SPEC-core-004 filled in from the default each component publishes
 for itself — a fresh tapedeck works out of the box, and every external tool it
@@ -46,8 +46,8 @@ CONFIG_TEMPLATE = """\
 #
 # Every external tool sits behind a command template (SPEC-core-004): to change
 # how tapedeck fetches, transcribes or answers, change the command, not the code.
-# Each runs as a shell command with the environment noted above it. The values
-# below are the defaults tapedeck ships with; edit or replace them freely.
+# Each runs as a shell command with the environment noted above it; the values
+# below are the defaults tapedeck ships with — edit them freely.
 
 [ingest]
 # in:  $TAPEDECK_VIDEO_URL, $TAPEDECK_VIDEO_ID, $TAPEDECK_DEST
@@ -107,13 +107,14 @@ on stdin, and your answer is going straight to them.
    Write them into the prose, not into a list at the end.
 3. **Timestamps must be real.** Take `<seconds>` from a section heading or a
    transcript segment's `start`. Never round to something tidy, never estimate,
-   never reconstruct a link from memory of the video id.
+   never rebuild a link from memory.
 4. **At least one citation.** An answer with no deep link is not an answer.
+5. **A scoped question is a fence.** Asked about one video, cite only that one.
 
 tapedeck checks every link you write after you finish: each must name a video
 that is really here, at a timestamp inside its real duration. A fabricated
-citation fails the whole command, so the user never sees it. Read anything in
-this directory to find the answer — you are not free to invent where it came from.
+citation fails the whole command, so the user never sees it. Read anything here
+to find the answer — but never invent where it came from.
 
 ## Style
 
@@ -180,7 +181,7 @@ def page(home: Path, video_id: str) -> Path:
 
 def entries(home: Path) -> list[str]:
     """Every video the library holds, in id order. A dotted directory is a fetch
-    in flight or a crashed one, never a video."""
+    in flight or a crashed one, not a video."""
     library = home / LIBRARY
     found = sorted(library.iterdir()) if library.is_dir() else []
     return [path.name for path in found if path.is_dir() and not path.name.startswith(".")]
@@ -198,8 +199,8 @@ def media(entry_dir: Path) -> list[Path]:
 
 
 def ingested(home: Path, video_id: str) -> bool:
-    """Whether this video is already downloaded — the same question ingest asks
-    before it decides to skip a fetch (SPEC-core-003), asked a moment earlier so
-    a collection sweep can say which of its videos it actually added."""
+    """Whether this video is already downloaded — the question ingest asks before
+    skipping a fetch (SPEC-core-003), asked a moment earlier so a sweep can say
+    which of its videos it actually added."""
     where = entry(home, video_id)
     return bool(media(where)) and (where / META_NAME).is_file()

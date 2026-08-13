@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     question.add_argument("question", nargs="+")
     question.add_argument("-k", type=int, help="sources to retrieve (--fast only)")
     question.add_argument("--fast", action="store_true", help="skip the librarian: retrieve, answer")
+    question.add_argument("--video", help="answer from this one library video alone")
 
     catalogue = verbs.add_parser("list", help="one line per video: id, date, channel, title")
     catalogue.add_argument("--json", action="store_true", help="emit the same fields structurally")
@@ -75,9 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def limit(k) -> list[str]:
-    """`-k` is passed on only when given: the default belongs to the component."""
-    return [] if k is None else ["-k", str(k)]
+def option(name: str, value) -> list[str]:
+    """A valued flag, passed on only when given: the default belongs to the
+    component that owns it, not the cli."""
+    return [] if value is None else [name, str(value)]
 
 
 def flag(present: bool, name: str) -> list[str]:
@@ -88,10 +90,16 @@ def dispatch(args, deck) -> int:
     if args.verb == "add":
         return components.add(deck, args.url, args.force)
     if args.verb == "search":
-        query = ["search", *args.query, *limit(args.k), *flag(args.json, "--json")]
+        query = ["search", *args.query, *option("-k", args.k), *flag(args.json, "--json")]
         return components.delegate("index", query, deck)
     if args.verb == "ask":
-        asked = ["answer", *args.question, *limit(args.k), *flag(args.fast, "--fast")]
+        asked = [
+            "answer",
+            *args.question,
+            *option("-k", args.k),
+            *option("--video", args.video),
+            *flag(args.fast, "--fast"),
+        ]
         return components.delegate("ask", asked, deck)
     if args.verb == "reindex":
         return components.delegate("index", ["reindex"], deck)

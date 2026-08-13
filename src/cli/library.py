@@ -5,8 +5,8 @@ the library directory *is* the record of what tapedeck has: `rm` removing an
 entry is `list` forgetting it, with nothing to keep in step.
 
 Removal (SPEC-cli-002) is the one place the cli destroys anything, and it is
-careful about two things. It only ever touches paths named after the id it was
-given, so no other video can be caught by it. And it does not reach into
+careful about two things. It only touches paths named after the id it was given,
+so no other video can be caught by it. And it does not reach into
 `tapedeck.db` — dropping a video's rows means deleting its archive page and
 letting the index, which owns that file, update itself (SPEC-core-001).
 """
@@ -143,9 +143,9 @@ def remove(home: Path, video_id: str, media_only: bool) -> int:
 
 
 def drop_media(where: Path, video_id: str) -> int:
-    """Reclaim the disk, keep the knowledge: the transcript, the archive page and
-    the index rows outlive the file they came from — at the price of never
-    re-deriving them without downloading the video again (SPEC-cli-002)."""
+    """Reclaim the disk, keep the knowledge: transcript, archive page and index
+    rows outlive the file they came from — at the price of never re-deriving them
+    without downloading the video again (SPEC-cli-002)."""
     files = media(where)
     for path in files:
         path.unlink()

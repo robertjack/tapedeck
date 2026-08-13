@@ -1,21 +1,20 @@
 """Delegation to the components that own the work (SPEC-cli-001).
 
 The cli holds no pipeline logic of its own. Every verb that belongs to another
-component is that component's module CLI, run as a subprocess at exactly the
-boundary its durable evaluations drive — `python -m ingest add|expand`, `python
+component is that component's module CLI, run as a subprocess at the boundary
+its durable evaluations drive — `python -m ingest add|expand`, `python
 -m transcribe run|from-parakeet`, `python -m archive render`, `python -m index
 update|search`, `python -m ask answer`. Same interpreter, same resolved home, and
 the child's exit code is ours unchanged: every component speaks the codes of
-contracts/cli-surface.md, so there is nothing to translate.
+contracts/cli-surface.md, so there is nothing to translate. Read-only verbs pass
+their stdout straight through — a `--json` payload the cli reformatted would be
+the cli's format, not the owner's.
 
-Read-only verbs pass their stdout straight through — a `--json` payload the cli
-reformatted would be the cli's format, not the component's.
-
-Two things are read out of a component rather than run, both pure config reads
-the cli needs before it does anything: whether a target names one video or a
-collection (SPEC-ingest-002 — a channel is a sweep, and `--force` on one has to
-be refused before a lister is asked to enumerate it), and which model label the
-transcriber seam stamps (SPEC-transcribe-001 — what `retranscribe` judges on).
+Two things are read out of a component rather than run, both config reads needed
+up front: whether a target names one video or a collection
+(SPEC-ingest-002 — a channel is a sweep, and `--force` on one has to be refused
+before a lister is asked to enumerate it), and which model label the transcriber
+seam stamps (SPEC-transcribe-001 — what `retranscribe` judges on).
 """
 
 from __future__ import annotations
@@ -32,14 +31,14 @@ from transcribe.transcriber import ConfigError, seam
 from .home import TRANSCRIPT_NAME, VIDEO_ID, entries, entry, ingested, page
 
 # The derivation chain after the fetch (SPEC-core-002), in the only order it runs:
-# a transcript from the video, a page from the transcript, index rows from the page.
+# transcript from video, page from transcript, index rows from page.
 STAGES = (("transcribe", "run"), ("archive", "render"), ("index", "update"))
 
 FORCE_IS_SINGULAR = (
-    "--force throws away a download and takes it again, and doing that to an entire "
-    "playlist or channel has to be deliberate: name the videos you mean, one "
-    "`tapedeck add <id> --force` each. Without --force this URL is welcome — "
-    "re-running it picks up whatever is new and skips what is already here."
+    "--force throws a download away and takes it again; doing that to a whole "
+    "playlist or channel has to be deliberate, one `tapedeck add <id> --force` per "
+    "video you mean. Without --force this URL is welcome — re-running it picks up "
+    "what is new and skips what is here."
 )
 
 
@@ -70,7 +69,7 @@ def derive(home: Path, video_id: str, force: bool) -> int:
 
     The stages print the artifact they produced; that is progress, not output, so
     the chain keeps it. The first failure ends the chain with that code — nothing
-    downstream derives from a link that is not there.
+    derives from a link that is not there.
     """
     for module, verb in STAGES:
         args = [verb, video_id]
@@ -107,10 +106,10 @@ def add_one(home: Path, target: str, force: bool) -> int:
         return fetched.returncode
     video_id = Path(last_line(fetched.stdout)).name
     if not VIDEO_ID.fullmatch(video_id):
-        print(f"error: ingest named no library entry to build on ({video_id!r})", file=sys.stderr)
+        print(f"error: ingest named no entry to build on ({video_id!r})", file=sys.stderr)
         return 1
-    # A re-fetched video makes its transcript stale: force the whole chain, not just
-    # the download, or `--force` would leave the old words on the new video.
+    # A re-fetched video makes its transcript stale: force the whole chain, or
+    # `--force` would leave the old words on the new video.
     code = derive(home, video_id, force)
     if code != 0:
         return code
@@ -124,9 +123,9 @@ def sweep(home: Path, url: str) -> int:
     A sweep is a long-running thing pointed at a source that changes under it: a
     video may be private or taken down between the listing and the fetch. One of
     those must not cost the user the other ninety-nine, so a failure is reported
-    and the sweep goes on; the exit code at the end says whether anything went
-    wrong. Videos already here are skipped by ingest itself, which is what makes
-    re-running the same channel URL the way to pick up new uploads.
+    and the sweep goes on; the exit code says whether anything went wrong. Videos
+    already here are skipped by ingest itself, which is what makes re-running the
+    same channel URL the way to pick up new uploads.
     """
     listed = run("ingest", ["expand", url], home, capture=True)
     if listed.returncode != 0:
@@ -155,8 +154,8 @@ def sweep(home: Path, url: str) -> int:
 
 
 def label(home: Path, video_id: str) -> str | None:
-    """The model that produced this video's transcript, or None if there is no
-    readable transcript to have a label at all."""
+    """The model that produced this video's transcript, or None when there is no
+    readable transcript to carry a label."""
     try:
         doc = json.loads((entry(home, video_id) / TRANSCRIPT_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -172,8 +171,7 @@ def retranscribe(home: Path, dry_run: bool) -> int:
     which is what makes the sweep a no-op once the library has caught up. A video
     whose transcript is missing or unreadable has no label to match either, so it
     is swept in too — the point of the verb is a library uniformly on the model
-    configured now. Same bargain as a collection sweep for the rest: a failure is
-    reported and the others go on.
+    configured now. Failures go the way a collection sweep's do.
     """
     try:
         wanted = seam(home)[1]

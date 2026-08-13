@@ -1,0 +1,45 @@
+{
+  "id": "gen-20260813T170239Z-cli-298c",
+  "component": "cli",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": []
+  },
+  "root_hash": "sha256:298c0aa6ca353880ebc330bedd5af960a393464a3b0a4465b2d9a88b6cfdd916",
+  "inputs": {
+    "manifest": "sha256:bfbc33b954d0d9ee206bd1d17de2cf019376b4891b45556fed739c7f2ce36d32",
+    "clauses": {
+      "SPEC-cli-001": "sha256:f8d34fa1ce57466345fe3aaee9317fcaa4784a67e563600d6044d9a60dbc3806",
+      "SPEC-cli-002": "sha256:d93260f40d918251e700ce4185b44249bfa984eeab383f1011cbc7ff307828ad",
+      "SPEC-cli-003": "sha256:0f519ece412c842944e6da0b9090616c62f4582d638a581a752409e3d9c430ec",
+      "SPEC-cli-004": "sha256:a07237170bd3a3beb247de1d527d8a45cccf787a8deedcc8aee6de9be96cd8ec",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/cli-surface.md": "sha256:b9ce47efc4a482570d480bbb0ac754c1d1c8a5772ca604e9a78083ab1ad0fb31"
+    },
+    "eval_sources": {
+      "system/evals/cli/test_add_collection.py": "sha256:c86c51ca2b039683d43f1043b94a50af04100a48c2739a2c5794078a60a1c789",
+      "system/evals/cli/test_cli.py": "sha256:5dbc17dae4dbd4b1d981b6fb190a4feea4a1097e700ce067e5242dc540a11e2e",
+      "system/evals/cli/test_retranscribe.py": "sha256:a002bf3965777bd829a24d42c42b9bdfb5a56dc1f98cf273d9453b2b4b68a64f",
+      "system/evals/cli/test_rm.py": "sha256:666a41c2155ce70b91f98e4d6772979d3571f6694c309df10bbf3e666d53aa1e"
+    },
+    "lessons": []
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-opus-5",
+    "session_ref": "phx regen"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "skipped"
+  },
+  "escape_hatch": null,
+  "attempts": 1,
+  "duration_s": 524.4,
+  "notes": "generated via: claude --model claude-opus-5 -p --permission-mode acceptEdits"
+}
