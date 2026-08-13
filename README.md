@@ -26,6 +26,7 @@ disposable.
 tapedeck add <youtube-url>     # download + transcribe + archive + index
 tapedeck search "<terms>"      # timestamped excerpts with deep links
 tapedeck ask "<question>"      # cited answer grounded in your library
+tapedeck rm <id> [--media-only]   # remove a video (or just its media, keeping the knowledge)
 tapedeck list | show <id> | reindex
 ```
 

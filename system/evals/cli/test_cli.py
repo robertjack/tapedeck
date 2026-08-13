@@ -31,7 +31,7 @@ cat > "$TAPEDECK_OUT" <<'JSON'
 JSON
 """
 
-SUBCOMMANDS = ("add", "search", "ask", "list", "show", "reindex")
+SUBCOMMANDS = ("add", "search", "ask", "list", "show", "reindex", "rm")
 
 
 def set_pipeline(home):

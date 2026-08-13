@@ -10,6 +10,7 @@ Additive changes only; removals require superseding SPEC-cli-001.
 | `tapedeck list [--json]` | no | one line per video: id, date, channel, title |
 | `tapedeck show <id> [--json]` | no | metadata + archive path for one video |
 | `tapedeck reindex` | yes (db only) | rebuild tapedeck.db from archive/ alone |
+| `tapedeck rm <id> [--media-only]` | yes | remove a video everywhere (default), or delete just its media to reclaim disk while keeping the knowledge (SPEC-cli-002) |
 
 ## Conventions
 
