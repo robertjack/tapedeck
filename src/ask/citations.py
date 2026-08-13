@@ -1,16 +1,15 @@
 """Both halves of system/contracts/ask-citations.md, because they are one promise.
 
-Fast mode numbers what retrieval found: `prompt` hands the answerer those markers
-and tells it they are the only ones that exist (SPEC-ask-002 — the wording is part
-of this component's testable surface, not decoration), `sources_block` renders the
-same numbers back from the same chunks, so `[2]` in the prose and `[2]` under
-Sources are the same passage by construction, and `invented` is the gate between.
+Fast mode numbers what retrieval found: `prompt` gives the answerer those markers and
+tells it they are the only ones there are (SPEC-ask-002 — that wording is testable
+surface, not decoration), `sources_block` renders the same numbers back from the same
+chunks, so `[2]` in the prose and `[2]` under Sources are one passage by construction,
+and `invented` is the gate between.
 
-Librarian mode has no numbering to hold it — the agent reads the library itself and
-writes its own deep links — so the check moves after the fact: `deep_links` collects
-every link the answer offers, `unverified` asks the library whether each one is a
-real moment in a real video.
-
+Librarian mode has no numbering to hold it, so the check moves after the fact:
+`deep_links` collects every link offered, `unverified` asks the library whether each
+is a real moment in a real video, and under `--video` `ask_for` states the scope
+going in while `unverified` holds the answer to it coming back (SPEC-ask-003).
 Either way the model picks its citations and never decides whether they stand.
 """
 
@@ -27,17 +26,24 @@ LINK = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com/watch\?|youtu\.be/)[^
 OFFSET = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?", re.IGNORECASE)
 
 INSTRUCTIONS = """\
-Answer the question below using only the numbered sources that follow it. They
-are transcript excerpts from the asker's own video library, and they are all you
-know here.
+Answer the question below using only the numbered sources that follow it. They are
+transcript excerpts from the asker's own video library, and all you know here.
 
-- Use only what the sources say. No outside knowledge, no inference past them,
-  no source you were not given.
+- Use only what the sources say: no outside knowledge, no inference past them, no
+  source you were not given.
 - Cite as you go: put a source's marker — [1], [2], and so on — immediately after
   each statement it supports. Use only the markers listed below.
 - If the sources do not answer the question, reply exactly: not in the library
-- Write the answer prose only. Do not write a Sources list of your own; tapedeck
-  appends one built from this same numbering.\
+- Write the answer prose only; tapedeck appends the Sources list.\
+"""
+
+# The librarian is otherwise handed the question and nothing else — its rules live in
+# the library's CLAUDE.md. A scope is the exception: not a standing rule but this
+# run's boundary, and it cannot honour one it was never told (SPEC-ask-003).
+SCOPE_NOTE = """\
+Scope: answer only from the library video {video_id} — library/{video_id}/ and its
+archive page archive/{video_id}.md. Ignore every other video and cite only this one:
+a link elsewhere is rejected even to a video the library has.\
 """
 
 
@@ -48,15 +54,15 @@ def hms(seconds) -> str:
 
 
 def deep_link(video_id: str, seconds) -> str:
-    """A moment in a video, per system/contracts/library-layout.md."""
+    """A moment in a video, per contracts/library-layout.md."""
     return f"https://www.youtube.com/watch?v={video_id}&t={int(seconds)}s"
 
 
-# --- fast mode: the numbering ---
+# --- fast mode ---
 
 
 def _citation(number: int, source) -> str:
-    """`[n] <title> — <channel> @ <h:mm:ss>` — the contract's one citation line."""
+    """`[n] <title> — <channel> @ <h:mm:ss>`: the contract's citation line."""
     who = f"{source.title} — {source.channel}" if source.channel else source.title
     return f"[{number}] {who} @ {source.timestamp}"
 
@@ -65,7 +71,7 @@ def prompt(question: str, sources) -> str:
     """The whole of what the answerer is told: the rules, the sources, the question."""
     blocks = [INSTRUCTIONS, "Sources:"]
     for number, source in enumerate(sources, start=1):
-        # The section name rides along inside the prompt, where it orients the model.
+        # The section name rides inside the prompt, where it orients the model.
         head = _citation(number, source)
         head = f"{head} ({source.section})" if source.section else head
         blocks.append(f"{head}\n{source.text}".rstrip())
@@ -77,8 +83,7 @@ def sources_block(sources) -> str:
     """The Sources section, assembled from what retrieval actually returned.
 
     Every retrieved chunk is listed, cited or not: the numbering the answerer was
-    given is the numbering the reader sees, so `[2]` never has to be renumbered to
-    stay true — and what ask read in order to answer is itself part of the answer.
+    given is the numbering the reader sees, so `[2]` is never renumbered to stay true.
     """
     lines = ["Sources:"]
     for number, source in enumerate(sources, start=1):
@@ -97,7 +102,14 @@ def document(answer: str, sources) -> str:
     return f"{answer.strip()}\n\n{sources_block(sources)}"
 
 
-# --- librarian mode: the verification ---
+# --- librarian mode ---
+
+
+def ask_for(question: str, scope: str | None) -> str:
+    """What goes to the librarian on stdin: the question, and any scope."""
+    if not scope:
+        return f"{question}\n"
+    return f"{SCOPE_NOTE.format(video_id=scope)}\n\n{question}\n"
 
 
 def _offset(raw: str) -> int | None:
@@ -120,18 +132,20 @@ def deep_links(answer: str) -> list[tuple[str, str, int | None]]:
     return found
 
 
-def unverified(links, videos) -> list[str]:
+def unverified(links, videos, scope: str | None = None) -> list[str]:
     """The citations the library cannot vouch for — one printable line each.
 
-    A link is good when the library holds that video and the moment is inside it.
-    An unknown duration cannot disprove a moment, so the link stands: this is a
-    check against fabrication, not against gaps in metadata.
+    A link is good when the library holds that video, the moment is inside it, and —
+    under `--video` — it is the video asked about. An unknown duration cannot
+    disprove a moment: this checks fabrication, not gaps in metadata.
     """
     problems = []
     for url, video_id, seconds in links:
         duration = videos.get(video_id)
         if video_id not in videos:
             problems.append(f"{url} — no video {video_id!r} in the library")
+        elif scope and video_id != scope:
+            problems.append(f"{url} — {video_id} is outside the --video {scope} scope")
         elif seconds is not None and duration is not None and seconds > duration:
             problems.append(
                 f"{url} — {hms(seconds)} is past the end of {video_id} ({hms(duration)})"

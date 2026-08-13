@@ -1,9 +1,8 @@
 """The library as ask sees it: which videos exist, and how long each one runs.
 
 Read-only, and the whole of what ask knows about `library/<id>/meta.json`
-(system/contracts/library-layout.md). Two questions are asked of it — is there
-anything to answer from at all, and is this citation's moment a real one — and
-both are answered from metadata alone, never from the video or the transcript.
+(system/contracts/library-layout.md). Is there anything to answer from, is
+`--video <id>` real, is this citation's moment real — all from metadata alone.
 """
 
 from __future__ import annotations
@@ -27,8 +26,7 @@ def videos(home: Path) -> dict[str, int | None]:
     """Every ingested video id, mapped to its duration in seconds where known.
 
     An entry whose meta.json is missing or unreadable still counts as present: being
-    in the library is what makes a citation real, and knowing the length only bounds
-    it — a metadata gap is not grounds for calling a citation fabricated.
+    in the library is what makes a citation real, and the length only bounds it.
     """
     root = home / "library"
     found: dict[str, int | None] = {}

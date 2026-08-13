@@ -1,18 +1,17 @@
 """Fast-mode retrieval: a question in, the top-k library chunks out.
 
 The chunks live in `tapedeck.db`, which the index owns and rebuilds from archive
-pages alone. ask only ever reads it — SPEC-core-001 gives ask write authority
-nowhere — so the connection is opened read-only and cannot create, journal or touch
-a file even by accident. The schema is the index's, at the shape SPEC-index-001
-pins; a database that has moved on is reported as unreadable rather than guessed at.
+pages. ask only ever reads it — SPEC-core-001 gives ask write authority nowhere — so
+the connection is opened read-only and cannot create, journal or touch a file by
+accident. A database past the shape SPEC-index-001 pins is reported unreadable
+rather than guessed at.
 
 We read it rather than shelling out to `index search` because the two retrievals are
-not the same act. A searcher types keywords and wants all of them, so `search` joins
-the words with AND; a question is mostly grammar, and insisting that "what", "is" and
-"the" appear alongside "core idea" finds nothing at all. So ask drops the question
-words, ORs what is left and lets bm25 rank by overlap — and it needs each section's
-whole text (a snippet is an excerpt to skim, not enough to answer from) and the
-channel the citation line names, neither of which crosses the search verb's surface.
+not the same act. A searcher wants all their keywords, so `search` ANDs them; a
+question is mostly grammar, and demanding "what", "is" and "the" alongside "core
+idea" finds nothing. So ask drops the question words and ORs the rest — and it needs
+whole section text, the channel a citation names, and a `--video` scope clause, none
+of which crosses the search verb's surface.
 """
 
 from __future__ import annotations
@@ -30,32 +29,28 @@ REINDEX_HINT = "run `tapedeck reindex`"
 
 # Same weighting the index searches under: a hit in a section title beats one in
 # prose, and the two unindexed columns still take a weight each.
-COLUMN_WEIGHTS = "0.0, 0.0, 2.0, 1.0"
+COLUMN_WEIGHTS = "0.0, 0.0, 2.0, 1.0"  # video_id, start_s, section, text
 SEARCH_SQL = f"""
-SELECT chunks.video_id                    AS video_id,
-       chunks.start_s                     AS start_s,
-       chunks.section                     AS section,
-       chunks.text                        AS text,
-       COALESCE(videos.title, '')         AS title,
-       COALESCE(videos.channel, '')       AS channel,
-       bm25(chunks, {COLUMN_WEIGHTS})     AS score
+SELECT chunks.video_id AS video_id, chunks.start_s AS start_s,
+       chunks.section AS section, chunks.text AS text,
+       COALESCE(videos.title, '') AS title, COALESCE(videos.channel, '') AS channel,
+       bm25(chunks, {COLUMN_WEIGHTS}) AS score
 FROM chunks LEFT JOIN videos ON videos.video_id = chunks.video_id
-WHERE chunks MATCH ?
-ORDER BY score, chunks.video_id, chunks.start_s
-LIMIT ?
-"""
+WHERE chunks MATCH ?"""
+# `--video` narrows the retrieval itself, not its results: a scoped -k must buy k
+# chunks of that video, not k of the library minus the ones that did not belong.
+SCOPE_SQL = "\n  AND chunks.video_id = ?"
+ORDER_SQL = "\nORDER BY score, chunks.video_id, chunks.start_s\nLIMIT ?\n"
 
 TERM = re.compile(r'"[^"]*"?|\S+')
-# A term the tokenizer can make a word of: at least one letter or digit. `\w` would
-# not do — it admits "___", which fts5 tokenizes to nothing and then refuses as an
-# empty phrase.
+# A term the tokenizer can make a word of: at least one letter or digit. `\w` admits
+# "___", which fts5 tokenizes to nothing and then refuses as an empty phrase.
 ALNUM = re.compile(r"[^\W_]", re.UNICODE)
 NOT_WORD = re.compile(r"\W+", re.UNICODE)
 
-# The grammar a question is made of: no retrieval signal, but they would drag in
-# every chunk containing them, so they are dropped unless dropping them would leave
-# nothing to search for. Only function words belong here — anything that could be
-# what an asker is asking about ("way", "make", "one") stays in for bm25 to weigh.
+# The grammar a question is made of: ORed in, these drag in every chunk that has
+# them, so they go unless dropping them leaves nothing. Only function words belong
+# here — a word that could be what is being asked about stays in for bm25 to weigh.
 STOPWORDS = frozenset(
     """
     a about after all also am an and any are as at be because been but by can could did
@@ -66,9 +61,8 @@ STOPWORDS = frozenset(
     """.split()
 )
 
-# One source is a passage to reason from, not a whole chapter to wade through: a
-# section long enough to blow past this is cut at a word boundary, so eight of them
-# stay a prompt an answerer can actually attend to.
+# A source is a passage to reason from, not a chapter to wade through: a longer
+# section is cut at a word boundary, so eight of them stay a readable prompt.
 EXCERPT_CHARS = 1600
 
 
@@ -78,7 +72,7 @@ class IndexUnreadable(RuntimeError):
 
 @dataclass(frozen=True)
 class Source:
-    """One retrieved chunk — what both the prompt and the citation are built from."""
+    """One retrieved chunk — what the prompt and the citation are both built from."""
 
     video_id: str
     title: str
@@ -101,7 +95,7 @@ def db_path(home: Path) -> Path:
 
 
 def terms(question: str) -> list[str]:
-    """The question's searchable words: quoted groups kept whole, grammar dropped."""
+    """The question's searchable words: quoted groups whole, grammar dropped."""
     words: list[str] = []
     kept: list[str] = []
     for raw in TERM.findall(question):
@@ -120,8 +114,8 @@ def match_expression(question: str) -> str:
     """An fts5 MATCH the question cannot break and every word is optional in.
 
     Each word becomes a phrase of its own, so punctuation an asker types ("C++",
-    "don't", "why?") is never read as query syntax, and the words are ORed: a chunk
-    answering half the question is worth reading, and bm25 ranks fuller ones above it.
+    "why?") is never read as query syntax, and the words are ORed: a chunk answering
+    half the question is worth reading, and bm25 ranks fuller ones above it.
     """
     return " OR ".join('"' + term.replace('"', '""') + '"' for term in terms(question))
 
@@ -131,8 +125,8 @@ def connect(home: Path) -> sqlite3.Connection:
     if not path.is_file():
         raise IndexUnreadable(f"no index at {path} — {REINDEX_HINT}")
     try:
-        # Read-only URI: ask has no write authority over tapedeck.db, and this is the
-        # enforcement rather than the intention.
+        # Read-only URI: ask has no write authority over tapedeck.db — enforced
+        # here rather than merely intended.
         db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
     except sqlite3.Error as exc:
         raise IndexUnreadable(f"cannot open {path} — {exc}; {REINDEX_HINT}") from exc
@@ -159,14 +153,16 @@ def _source(row: sqlite3.Row) -> Source:
     )
 
 
-def top_k(home: Path, question: str, k: int) -> list[Source]:
-    """The k chunks most worth answering from, best first. Empty is an answer."""
+def top_k(home: Path, question: str, k: int, video_id: str | None = None) -> list[Source]:
+    """The k chunks most worth answering from, best first; empty is an answer."""
     match = match_expression(question)
     if not match:
         return []
+    sql = SEARCH_SQL + (SCOPE_SQL if video_id else "") + ORDER_SQL
+    params = [match, video_id, k] if video_id else [match, k]
     try:
         with closing(connect(home)) as db:
-            rows = db.execute(SEARCH_SQL, (match, k)).fetchall()
+            rows = db.execute(sql, params).fetchall()
     except sqlite3.Error as exc:
         raise IndexUnreadable(
             f"{db_path(home)} is not an index ask can read — {exc}; {REINDEX_HINT}"
