@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 from ask.seams import DEFAULT_ANSWERER_COMMAND, DEFAULT_LIBRARIAN_COMMAND
-from ingest.fetch import DEFAULT_FETCHER_COMMAND
+from ingest.fetch import DEFAULT_FETCHER_COMMAND, DEFAULT_LISTER_COMMAND
 from transcribe.transcriber import DEFAULT_MODEL, DEFAULT_TRANSCRIBER_COMMAND
 
 DEFAULT_HOME = "~/dev/storage/tapedeck"
@@ -31,6 +31,9 @@ ARCHIVE = "archive"
 DIRECTORIES = (LIBRARY, ARCHIVE)
 CONFIG_NAME = "config.toml"
 BRIEF_NAME = "CLAUDE.md"
+META_NAME = "meta.json"
+TRANSCRIPT_NAME = "transcript.json"
+MEDIA_STEM = "video"
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 
 CONFIG_TEMPLATE = """\
@@ -45,6 +48,10 @@ CONFIG_TEMPLATE = """\
 # in:  $TAPEDECK_VIDEO_URL, $TAPEDECK_VIDEO_ID, $TAPEDECK_DEST
 # out: $TAPEDECK_DEST/video.<ext> and a yt-dlp-shaped info.json beside it
 fetcher_command = {fetcher}
+# how `tapedeck add <playlist-or-channel-url>` learns what a collection contains
+# in:  $TAPEDECK_COLLECTION_URL
+# out: one video id per line on stdout, in collection order
+lister_command = {lister}
 
 [transcribe]
 # in:  $TAPEDECK_MEDIA, $TAPEDECK_VIDEO_ID, $TAPEDECK_OUT
@@ -117,6 +124,7 @@ def config_text() -> str:
     """The seams as each component documents them — the cli invents no defaults."""
     return CONFIG_TEMPLATE.format(
         fetcher=toml_value(DEFAULT_FETCHER_COMMAND),
+        lister=toml_value(DEFAULT_LISTER_COMMAND),
         transcriber=toml_value(DEFAULT_TRANSCRIBER_COMMAND),
         model=toml_value(DEFAULT_MODEL),
         librarian=toml_value(DEFAULT_LIBRARIAN_COMMAND),
@@ -156,3 +164,22 @@ def entry(home: Path, video_id: str) -> Path:
 def page(home: Path, video_id: str) -> Path:
     """`archive/<id>.md` — the readable render, and the index's only source."""
     return home / ARCHIVE / f"{video_id}.md"
+
+
+def media(entry_dir: Path) -> list[Path]:
+    """`library/<id>/video.<ext>` — the download itself, never a sidecar. The
+    layout contract names the file without fixing the container."""
+    contents = entry_dir.iterdir() if entry_dir.is_dir() else []
+    return sorted(
+        path
+        for path in contents
+        if path.is_file() and path.stem == MEDIA_STEM and path.suffix.lower() != ".json"
+    )
+
+
+def ingested(home: Path, video_id: str) -> bool:
+    """Whether this video is already downloaded — the same question ingest asks
+    before it decides to skip a fetch (SPEC-core-003), asked a moment earlier so
+    a collection sweep can say which of its videos it actually added."""
+    where = entry(home, video_id)
+    return bool(media(where)) and (where / META_NAME).is_file()

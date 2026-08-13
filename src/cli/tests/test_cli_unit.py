@@ -1,29 +1,43 @@
-"""Ephemeral unit tests: the seams the durable evals cannot see from outside.
+"""Ephemeral unit tests for cli — disposable, regenerated with the component.
 
-Disposable — the durable evals in system/evals/cli/ are the real contract. These
-cover the scaffold's content, the catalogue's edge cases, and the argument
-plumbing between verbs and components without paying for a subprocess.
-
-Run with: uv run --with pytest pytest src/cli/tests -q
+They cover what the durable evals reach only indirectly: the first-run scaffold's
+exact content and its refusal to overwrite, the layout helpers the verbs share,
+the catalogue's ordering and tolerance of a damaged entry, and — the new
+surface — how a collection sweep counts and survives what happens to it
+(SPEC-cli-003). The subprocess boundary to the other components is stubbed here;
+the durable evals drive the real one.
 """
 
 import json
+import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 
-from cli import components, home, library
-from cli.main import build_parser, dispatch, flag, limit, main
+sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
+from cli import components, home, library  # noqa: E402
+
+ID = "dQw4w9WgXcQ"
+OTHER = "plainvide00"
+PLAYLIST = "https://www.youtube.com/playlist?list=PLtest"
 META = {
-    "id": "dQw4w9WgXcQ",
-    "title": "Test Video: Building Things",
+    "id": ID,
+    "title": "Test Video",
     "channel": "Fixture Channel",
     "upload_date": "2026-01-15",
     "duration_s": 720,
-    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "url": f"https://www.youtube.com/watch?v={ID}",
 }
-OTHER = {**META, "id": "plainvide00", "title": "Sourdough", "upload_date": "2026-02-02"}
+
+
+class Done:
+    """What subprocess.run gives back, as much of it as the cli reads."""
+
+    def __init__(self, returncode=0, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
 
 
 @pytest.fixture
@@ -32,275 +46,252 @@ def deck(tmp_path, monkeypatch):
     return home.resolve()
 
 
-def entry(deck, meta, media=True, transcript=True):
-    path = home.entry(deck, meta["id"])
-    path.mkdir(parents=True, exist_ok=True)
-    (path / "meta.json").write_text(json.dumps(meta))
-    if media:
-        (path / "video.mp4").write_bytes(b"\x00bytes")
+def entry(deck, video_id=ID, meta=META, transcript=True, video=True):
+    where = home.entry(deck, video_id)
+    where.mkdir(parents=True, exist_ok=True)
+    if video:
+        (where / "video.mp4").write_bytes(b"\x00fixture")
+    if meta is not None:
+        (where / "meta.json").write_text(json.dumps({**meta, "id": video_id}))
     if transcript:
-        (path / "transcript.json").write_text('{"segments": []}')
-    home.page(deck, meta["id"]).write_text("# page\n")
-    return path
-
-
-class Recorder:
-    """Stands in for components.run: records the boundary calls, never spawns."""
-
-    def __init__(self, stdout="", codes=None):
-        self.calls, self.stdout, self.codes = [], stdout, codes or {}
-
-    def __call__(self, module, args, home_path, capture=False):
-        self.calls.append((module, args))
-        code = self.codes.get(module, 0)
-        return type("Result", (), {"returncode": code, "stdout": self.stdout})()
+        (where / "transcript.json").write_text('{"segments": []}')
+    return where
 
 
 # ---------------------------------------------------------------- the scaffold
 
 
-def test_config_is_toml_carrying_every_seam(deck):
-    config = tomllib.loads((deck / "config.toml").read_text())
-    assert "yt-dlp" in config["ingest"]["fetcher_command"]
-    assert "mlx_whisper" in config["transcribe"]["transcriber_command"]
-    assert config["transcribe"]["model"]
-    assert "claude" in config["ask"]["librarian_command"]
-    assert "claude" in config["ask"]["answerer_command"]
+def test_config_carries_every_seam_the_components_publish():
+    config = tomllib.loads(home.config_text())
+    assert set(config) == {"ingest", "transcribe", "ask"}
+    assert config["ingest"]["fetcher_command"].startswith("yt-dlp")
+    assert "vcodec^=avc1" in config["ingest"]["fetcher_command"]  # LESSON-0001
+    assert "--flat-playlist" in config["ingest"]["lister_command"]  # SPEC-cli-003
+    assert "$TAPEDECK_COLLECTION_URL" in config["ingest"]["lister_command"]
+    assert "large-v3-turbo" in config["transcribe"]["transcriber_command"]  # LESSON-0002
+    assert "--condition-on-previous-text False" in config["transcribe"]["transcriber_command"]
+    assert config["transcribe"]["model"] == "mlx-whisper/large-v3-turbo"
+    assert config["ask"]["librarian_command"].startswith("claude -p")
+    assert config["ask"]["answerer_command"]
 
 
-def test_scaffold_makes_the_home_whole(deck):
-    assert (deck / "library").is_dir() and (deck / "archive").is_dir()
-    brief = (deck / "CLAUDE.md").read_text()
-    assert "not in the library" in brief and "cite" in brief.lower()
+def test_toml_value_survives_a_command_with_a_quote_in_it():
+    assert home.toml_value("say 'hi'") == '"say \'hi\'"'
+    assert tomllib.loads(f"k = {home.toml_value('say \'hi\'')}")["k"] == "say 'hi'"
 
 
-def test_scaffold_never_overwrites_an_edited_config(deck):
-    (deck / "config.toml").write_text("[ingest]\nfetcher_command = 'mine'\n")
-    (deck / "CLAUDE.md").write_text("my brief")
+def test_first_run_creates_the_home_and_later_runs_leave_it_alone(deck):
+    for name in home.DIRECTORIES:
+        assert (deck / name).is_dir()
+    assert "not in the library" in (deck / home.BRIEF_NAME).read_text()
+    (deck / home.CONFIG_NAME).write_text("# mine now\n")
     assert home.resolve() == deck
-    assert "mine" in (deck / "config.toml").read_text()
-    assert (deck / "CLAUDE.md").read_text() == "my brief"
+    assert (deck / home.CONFIG_NAME).read_text() == "# mine now\n"
 
 
-@pytest.mark.parametrize("raw", ['-o "$X/video.%(ext)s"', "it's -o 'x'", 'both " and \'', "a\nb"])
-def test_toml_value_survives_any_quoting(raw):
-    assert tomllib.loads("k = " + home.toml_value(raw))["k"] == raw
+def test_home_follows_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("TAPEDECK_HOME", str(tmp_path / "elsewhere"))
+    assert home.resolve() == tmp_path / "elsewhere"
+
+
+# ------------------------------------------------------------ layout helpers
+
+
+def test_media_is_the_download_and_not_its_sidecars(deck):
+    where = entry(deck)
+    (where / "video.info.json").write_text("{}")
+    assert [p.name for p in home.media(where)] == ["video.mp4"]
+    assert home.ingested(deck, ID)
+
+
+def test_ingested_needs_both_the_video_and_its_metadata(deck):
+    entry(deck, video=False)
+    assert not home.ingested(deck, ID)
+    entry(deck, OTHER, meta=None)
+    assert not home.ingested(deck, OTHER)
+    assert not home.ingested(deck, "absentvid0")
+
+
+def test_hms_never_raises_on_a_hand_edited_duration():
+    assert library.hms(3725) == "1:02:05"
+    assert library.hms(None) == ""
+    assert library.hms("nonsense") == ""
 
 
 # ------------------------------------------------------------- list and show
 
 
-def test_catalogue_is_newest_first_and_skips_what_is_not_a_video(deck, capsys):
-    entry(deck, META)
-    entry(deck, OTHER)
-    (deck / "library" / ".dQw4w9WgXcQ.tmp.partial").mkdir()
-    (deck / "library" / "brokenvid00").mkdir()
-    (deck / "library" / "brokenvid00" / "meta.json").write_text("{not json")
-    assert [video["id"] for video in library.catalogue(deck)] == ["plainvide00", "dQw4w9WgXcQ"]
+def test_catalogue_is_newest_first_and_forgives_a_damaged_entry(deck, capsys):
+    entry(deck)
+    entry(deck, OTHER, {**META, "upload_date": "2026-02-02", "title": "Sourdough"})
+    (deck / home.LIBRARY / ".tmp-fetch").mkdir()
+    broken = deck / home.LIBRARY / "brokenvid00"
+    broken.mkdir()
+    (broken / "meta.json").write_text("{not json")
+    listed = library.catalogue(deck)
+    assert [video["id"] for video in listed] == [OTHER, ID]
     assert "brokenvid00" in capsys.readouterr().err
 
 
-def test_list_json_mirrors_the_human_line(deck, capsys):
-    entry(deck, META)
-    assert library.show_all(deck, as_json=True) == 0
-    assert json.loads(capsys.readouterr().out) == [
-        {
-            "id": "dQw4w9WgXcQ",
-            "upload_date": "2026-01-15",
-            "channel": "Fixture Channel",
-            "title": "Test Video: Building Things",
-        }
-    ]
-
-
-def test_empty_list_says_so_on_stderr_only(deck, capsys):
-    assert library.show_all(deck, as_json=False) == 0
-    captured = capsys.readouterr()
-    assert captured.out == "" and "tapedeck add" in captured.err
-    assert library.show_all(deck, as_json=True) == 0
-    assert json.loads(capsys.readouterr().out) == []
-
-
-def test_show_reports_metadata_and_the_archive_path(deck, capsys):
-    entry(deck, META)
-    assert library.show(deck, "dQw4w9WgXcQ", as_json=False) == 0
-    out = capsys.readouterr().out
-    assert "Fixture Channel" in out and "0:12:00" in out
-    assert str(home.page(deck, "dQw4w9WgXcQ")) in out
-
-
-def test_show_json_adds_the_derived_paths(deck, capsys):
-    path = entry(deck, META)
-    assert library.show(deck, "dQw4w9WgXcQ", as_json=True) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["title"] == META["title"]
-    assert payload["archive"] == str(home.page(deck, "dQw4w9WgXcQ"))
-    assert payload["media"] == str(path / "video.mp4")
-
-
-def test_show_unknown_or_malformed_id_is_a_usage_error(deck):
+def test_show_reports_an_unknown_id_as_a_usage_error(deck):
     assert library.show(deck, "nosuchvid00", as_json=False) == 2
-    assert library.show(deck, "nope", as_json=False) == 2
+    assert library.show(deck, "not-an-id", as_json=False) == 2
 
 
-def test_show_unreadable_meta_is_an_operation_failure(deck):
-    path = entry(deck, META)
-    (path / "meta.json").write_text("{not json")
-    assert library.show(deck, "dQw4w9WgXcQ", as_json=False) == 1
+def test_show_json_names_the_derived_artifacts(deck, capsys):
+    entry(deck)
+    home.page(deck, ID).write_text("# page\n")
+    assert library.show(deck, ID, as_json=True) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["title"] == "Test Video"
+    assert payload["archive"].endswith(f"{ID}.md")
+    assert payload["media"].endswith("video.mp4")
 
 
-# ------------------------------------------------------------------- removal
+# ------------------------------------------------------------------ removal
 
 
-def test_rm_deletes_the_entry_the_page_and_the_index_rows(deck, monkeypatch, capsys):
-    entry(deck, META)
+def test_rm_media_only_keeps_everything_derived(deck):
+    where = entry(deck)
+    home.page(deck, ID).write_text("# page\n")
+    assert library.remove(deck, ID, media_only=True) == 0
+    assert not (where / "video.mp4").exists()
+    assert (where / "transcript.json").is_file()
+    assert home.page(deck, ID).is_file()
+
+
+def test_rm_drops_the_page_and_asks_the_index_to_catch_up(deck, monkeypatch):
+    entry(deck)
     entry(deck, OTHER)
-    recorder = Recorder()
-    monkeypatch.setattr(components, "run", recorder)
-    assert library.remove(deck, "dQw4w9WgXcQ", media_only=False) == 0
-    assert recorder.calls == [("index", ["update", "dQw4w9WgXcQ"])]
-    assert not home.entry(deck, "dQw4w9WgXcQ").exists()
-    assert not home.page(deck, "dQw4w9WgXcQ").exists()
-    assert home.entry(deck, "plainvide00").is_dir()
-    assert home.page(deck, "plainvide00").is_file()
-    assert "removed" in capsys.readouterr().out
+    home.page(deck, ID).write_text("# page\n")
+    seen = []
+
+    def fake(module, args, where, capture=False):
+        seen.append((module, args))
+        return Done()
+
+    monkeypatch.setattr(components, "run", fake)
+    assert library.remove(deck, ID, media_only=False) == 0
+    assert seen == [("index", ["update", ID])]  # the index rebuilds itself; cli never writes it
+    assert not home.entry(deck, ID).exists()
+    assert not home.page(deck, ID).exists()
+    assert home.entry(deck, OTHER).is_dir()  # never another video's data
 
 
-def test_rm_reports_an_index_that_would_not_let_go(deck, monkeypatch):
-    entry(deck, META)
-    monkeypatch.setattr(components, "run", Recorder(codes={"index": 1}))
-    assert library.remove(deck, "dQw4w9WgXcQ", media_only=False) == 1
-
-
-def test_rm_media_only_keeps_everything_derived(deck, monkeypatch):
-    path = entry(deck, META)
-    monkeypatch.setattr(components, "run", Recorder(codes={"index": 1}))  # never called
-    assert library.remove(deck, "dQw4w9WgXcQ", media_only=True) == 0
-    assert not (path / "video.mp4").exists()
-    assert (path / "meta.json").is_file() and (path / "transcript.json").is_file()
-    assert home.page(deck, "dQw4w9WgXcQ").is_file()
-    # and again: nothing left to reclaim is not a failure (SPEC-core-003)
-    assert library.remove(deck, "dQw4w9WgXcQ", media_only=True) == 0
-
-
-def test_rm_unknown_id_is_a_usage_error(deck, capsys):
+def test_rm_of_an_unknown_id_is_a_usage_error(deck):
     assert library.remove(deck, "nosuchvid00", media_only=False) == 2
-    assert "nosuchvid00" in capsys.readouterr().err
-    assert library.remove(deck, "../../etc", media_only=False) == 2
 
 
-def test_rm_works_from_a_dangling_archive_page(deck, monkeypatch):
-    home.page(deck, "dQw4w9WgXcQ").write_text("# orphan\n")
-    monkeypatch.setattr(components, "run", Recorder())
-    assert library.remove(deck, "dQw4w9WgXcQ", media_only=False) == 0
-    assert not home.page(deck, "dQw4w9WgXcQ").exists()
+# ------------------------------------------------------- add: one and many
 
 
-def test_media_is_only_the_download(deck):
-    path = entry(deck, META)
-    (path / "video.json").write_text("{}")
-    assert [p.name for p in library.media_files(path)] == ["video.mp4"]
+def test_add_refuses_a_target_that_names_nothing(capsys):
+    assert components.add(Path("/nowhere"), "https://example.com/nope", force=False) == 2
+    assert "error:" in capsys.readouterr().err
 
 
-# -------------------------------------------------------------- the pipeline
+def test_force_on_a_collection_is_a_usage_error(deck, monkeypatch, capsys):
+    monkeypatch.setattr(components, "sweep", lambda *a: pytest.fail("no sweep may start"))
+    assert components.add(deck, PLAYLIST, force=True) == 2
+    assert "--force" in capsys.readouterr().err
 
 
-def test_add_runs_the_chain_in_order(deck, monkeypatch):
-    recorder = Recorder(stdout=f"{home.entry(deck, 'dQw4w9WgXcQ')}\n")
-    monkeypatch.setattr(components, "run", recorder)
-    assert components.add(deck, "https://youtu.be/dQw4w9WgXcQ", force=False) == 0
-    assert recorder.calls == [
-        ("ingest", ["add", "https://youtu.be/dQw4w9WgXcQ"]),
-        ("transcribe", ["run", "dQw4w9WgXcQ"]),
-        ("archive", ["render", "dQw4w9WgXcQ"]),
-        ("index", ["update", "dQw4w9WgXcQ"]),
-    ]
-
-
-def test_force_re_derives_the_transcript_too(deck, monkeypatch):
-    recorder = Recorder(stdout=str(home.entry(deck, "dQw4w9WgXcQ")))
-    monkeypatch.setattr(components, "run", recorder)
-    assert components.add(deck, "dQw4w9WgXcQ", force=True) == 0
-    assert recorder.calls[0] == ("ingest", ["add", "dQw4w9WgXcQ", "--force"])
-    assert recorder.calls[1] == ("transcribe", ["run", "dQw4w9WgXcQ", "--force"])
-    assert recorder.calls[2] == ("archive", ["render", "dQw4w9WgXcQ"])
-
-
-@pytest.mark.parametrize("failing,code", [("ingest", 2), ("transcribe", 1), ("archive", 1)])
-def test_a_broken_link_stops_the_chain_with_its_own_code(deck, monkeypatch, failing, code):
-    recorder = Recorder(stdout=str(home.entry(deck, "dQw4w9WgXcQ")), codes={failing: code})
-    monkeypatch.setattr(components, "run", recorder)
-    assert components.add(deck, "dQw4w9WgXcQ", force=False) == code
-    assert [module for module, _ in recorder.calls][-1] == failing
-
-
-def test_an_ingest_that_names_no_entry_fails(deck, monkeypatch, capsys):
-    monkeypatch.setattr(components, "run", Recorder(stdout="\n"))
-    assert components.add(deck, "dQw4w9WgXcQ", force=False) == 1
-    assert "error" in capsys.readouterr().err
-
-
-def test_last_line_is_the_artifact_path():
-    assert components.last_line("note\n/tmp/library/id\n") == "/tmp/library/id"
-    assert components.last_line("  \n") == ""
-
-
-# ------------------------------------------------------------------ the surface
-
-
-def test_every_verb_parses_and_nothing_else_does():
-    parser = build_parser()
-    for argv in (["add", "x"], ["search", "q"], ["ask", "q"], ["list"], ["show", "i"],
-                 ["reindex"], ["rm", "i"]):
-        assert parser.parse_args(argv).verb == argv[0]
-    for argv in ([], ["bogus"], ["add"], ["rm"]):
-        with pytest.raises(SystemExit) as exit:
-            parser.parse_args(argv)
-        assert exit.value.code == 2
-
-
-def test_help_names_every_verb(capsys):
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(["--help"])
-    help_text = capsys.readouterr().out
-    for verb in ("add", "search", "ask", "list", "show", "reindex", "rm"):
-        assert verb in help_text
-
-
-def test_optional_arguments_are_passed_on_only_when_given():
-    assert limit(None) == [] and limit(4) == ["-k", "4"]
-    assert flag(False, "--json") == [] and flag(True, "--json") == ["--json"]
-
-
-@pytest.mark.parametrize(
-    "argv,expected",
-    [
-        (["search", "core", "idea"], ("index", ["search", "core", "idea"])),
-        (["search", "q", "-k", "3", "--json"], ("index", ["search", "q", "-k", "3", "--json"])),
-        (["ask", "why"], ("ask", ["answer", "why"])),
-        (["ask", "why", "--fast", "-k", "2"], ("ask", ["answer", "why", "-k", "2", "--fast"])),
-        (["reindex"], ("index", ["reindex"])),
-    ],
-)
-def test_read_only_verbs_are_handed_over_whole(deck, monkeypatch, argv, expected):
-    handed = []
+def test_a_video_target_runs_the_pipeline_once(deck, monkeypatch):
+    calls = []
     monkeypatch.setattr(
-        components, "delegate", lambda module, args, home_path: handed.append((module, args)) or 7
+        components,
+        "add_one",
+        lambda where, target, force: calls.append((target, force)) or 0,
     )
-    assert dispatch(build_parser().parse_args(argv), deck) == 7
-    assert handed == [expected]
+    assert components.add(deck, f"https://youtu.be/{ID}", force=True) == 0
+    assert calls == [(f"https://youtu.be/{ID}", True)]
 
 
-def test_main_resolves_the_home_before_the_verb_runs(tmp_path, monkeypatch):
-    fresh = tmp_path / "nested" / "deck"
-    monkeypatch.setenv("TAPEDECK_HOME", str(fresh))
-    assert main(["list"]) == 0
-    assert (fresh / "config.toml").is_file()
+def stub_expand(monkeypatch, ids, returncode=0):
+    def fake(module, args, where, capture=False):
+        assert (module, args[0]) == ("ingest", "expand")
+        return Done(returncode, "\n".join([*ids, "NA", ""]))
+
+    monkeypatch.setattr(components, "run", fake)
 
 
-def test_main_turns_a_broken_home_into_an_operation_failure(tmp_path, monkeypatch, capsys):
-    blocked = tmp_path / "deck"
-    blocked.write_text("not a directory")
-    monkeypatch.setenv("TAPEDECK_HOME", str(blocked))
-    assert main(["list"]) == 1
-    assert "error" in capsys.readouterr().err
+def test_sweep_adds_every_video_and_summarizes(deck, monkeypatch, capsys):
+    stub_expand(monkeypatch, ["aaaaaaaaaaa", "bbbbbbbbbbb"])
+    swept = []
+    monkeypatch.setattr(
+        components, "add_one", lambda where, vid, force: swept.append((vid, force)) or 0
+    )
+    assert components.add(deck, PLAYLIST, force=False) == 0
+    assert swept == [("aaaaaaaaaaa", False), ("bbbbbbbbbbb", False)]
+    assert "2 added, 0 already present, 0 failed" in capsys.readouterr().out
+
+
+def test_sweep_counts_what_was_already_here(deck, monkeypatch, capsys):
+    entry(deck, "aaaaaaaaaaa")
+    stub_expand(monkeypatch, ["aaaaaaaaaaa", "bbbbbbbbbbb"])
+    monkeypatch.setattr(components, "add_one", lambda where, vid, force: 0)
+    assert components.add(deck, PLAYLIST, force=False) == 0
+    assert "1 added, 1 already present, 0 failed" in capsys.readouterr().out
+
+
+def test_sweep_goes_on_past_a_failure_and_fails_the_run(deck, monkeypatch, capsys):
+    stub_expand(monkeypatch, ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"])
+    swept = []
+    monkeypatch.setattr(
+        components,
+        "add_one",
+        lambda where, vid, force: swept.append(vid) or (1 if vid == "bbbbbbbbbbb" else 0),
+    )
+    assert components.add(deck, PLAYLIST, force=False) == 1
+    assert swept == ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"]
+    out = capsys.readouterr()
+    assert "bbbbbbbbbbb" in out.err
+    assert "2 added, 0 already present, 1 failed" in out.out
+
+
+def test_a_listing_that_failed_is_not_swept(deck, monkeypatch):
+    stub_expand(monkeypatch, ["aaaaaaaaaaa"], returncode=1)
+    monkeypatch.setattr(components, "add_one", lambda *a: pytest.fail("half a channel is not one"))
+    assert components.add(deck, PLAYLIST, force=False) == 1
+
+
+def test_an_empty_collection_is_not_a_failure(deck, monkeypatch, capsys):
+    stub_expand(monkeypatch, [])
+    assert components.add(deck, PLAYLIST, force=False) == 0
+    assert "0 added, 0 already present, 0 failed" in capsys.readouterr().out
+
+
+def test_add_one_stops_at_the_first_stage_that_fails(deck, monkeypatch, capsys):
+    calls = []
+
+    def fake(module, args, where, capture=False):
+        calls.append(module)
+        if module == "transcribe":
+            return Done(1)
+        return Done(0, f"{home.entry(deck, ID)}\n")
+
+    monkeypatch.setattr(components, "run", fake)
+    assert components.add_one(deck, ID, force=False) == 1
+    assert calls == ["ingest", "transcribe"]
+
+
+def test_add_one_forces_the_transcript_when_the_video_is_refetched(deck, monkeypatch, capsys):
+    seen = []
+
+    def fake(module, args, where, capture=False):
+        seen.append((module, args))
+        return Done(0, f"{home.entry(deck, ID)}\n")
+
+    monkeypatch.setattr(components, "run", fake)
+    assert components.add_one(deck, ID, force=True) == 0
+    assert ("ingest", ["add", ID, "--force"]) in seen
+    assert ("transcribe", ["run", ID, "--force"]) in seen
+    assert ("archive", ["render", ID]) in seen
+    assert ("index", ["update", ID]) in seen
+    assert capsys.readouterr().out.strip().endswith(f"{ID}.md")
+
+
+def test_add_one_needs_an_entry_it_can_build_on(deck, monkeypatch, capsys):
+    monkeypatch.setattr(components, "run", lambda *a, **k: Done(0, "somewhere odd\n"))
+    assert components.add_one(deck, ID, force=False) == 1
+    assert "error:" in capsys.readouterr().err

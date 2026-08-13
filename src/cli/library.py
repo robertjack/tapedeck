@@ -19,11 +19,8 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import components, home as home_mod
-
-META_NAME = "meta.json"
-TRANSCRIPT_NAME = "transcript.json"
-MEDIA_STEM = "video"
+from . import components
+from .home import LIBRARY, META_NAME, TRANSCRIPT_NAME, VIDEO_ID, entry, media, page
 
 
 def error(message: str) -> None:
@@ -39,18 +36,9 @@ def hms(seconds) -> str:
     return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
 
 
-def is_media(path: Path) -> bool:
-    """`library/<id>/video.<ext>` — the download itself, and nothing derived from it."""
-    return path.is_file() and path.stem == MEDIA_STEM and path.suffix.lower() != ".json"
-
-
-def media_files(entry: Path) -> list[Path]:
-    return sorted(path for path in entry.iterdir() if is_media(path)) if entry.is_dir() else []
-
-
-def load_meta(entry: Path) -> dict | None:
+def load_meta(where: Path) -> dict | None:
     try:
-        meta = json.loads((entry / META_NAME).read_text(encoding="utf-8"))
+        meta = json.loads((where / META_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return meta if isinstance(meta, dict) else None
@@ -67,17 +55,17 @@ def row(video_id: str, meta: dict) -> dict:
 
 def catalogue(home: Path) -> list[dict]:
     """Every video in the library, newest first."""
-    library = home / home_mod.LIBRARY
+    library = home / LIBRARY
     videos = []
-    for entry in sorted(library.iterdir()) if library.is_dir() else []:
+    for where in sorted(library.iterdir()) if library.is_dir() else []:
         # A dotted directory is a fetch in flight or a crashed one — not a video yet.
-        if not entry.is_dir() or entry.name.startswith("."):
+        if not where.is_dir() or where.name.startswith("."):
             continue
-        meta = load_meta(entry)
+        meta = load_meta(where)
         if meta is None:
-            error(f"{entry.name}: no readable {META_NAME} — skipping")
+            error(f"{where.name}: no readable {META_NAME} — skipping")
             continue
-        videos.append(row(entry.name, meta))
+        videos.append(row(where.name, meta))
     videos.sort(key=lambda video: (video["upload_date"], video["id"]), reverse=True)
     return videos
 
@@ -96,24 +84,24 @@ def show_all(home: Path, as_json: bool) -> int:
 
 
 def show(home: Path, video_id: str, as_json: bool) -> int:
-    entry = home_mod.entry(home, video_id)
-    if not home_mod.VIDEO_ID.fullmatch(video_id) or not (entry / META_NAME).is_file():
+    where = entry(home, video_id)
+    if not VIDEO_ID.fullmatch(video_id) or not (where / META_NAME).is_file():
         error(f"{video_id}: not in the library")
         return 2
-    meta = load_meta(entry)
+    meta = load_meta(where)
     if meta is None:
         error(f"{video_id}: {META_NAME} is unreadable")
         return 1
-    page = home_mod.page(home, video_id)
-    media = media_files(entry)
-    transcript = entry / TRANSCRIPT_NAME
+    rendered = page(home, video_id)
+    files = media(where)
+    transcript = where / TRANSCRIPT_NAME
     if as_json:
         print(
             json.dumps(
                 {
                     **meta,
-                    "archive": str(page) if page.is_file() else None,
-                    "media": str(media[0]) if media else None,
+                    "archive": str(rendered) if rendered.is_file() else None,
+                    "media": str(files[0]) if files else None,
                     "transcript": str(transcript) if transcript.is_file() else None,
                 },
                 ensure_ascii=False,
@@ -129,28 +117,28 @@ def show(home: Path, video_id: str, as_json: bool) -> int:
     )
     print(f"{listed['title']}\n{facts}\n{str(meta.get('url') or '')}\n")
     print(f"id          {video_id}")
-    print(f"archive     {page if page.is_file() else '— run `tapedeck add` to re-render'}")
-    print(f"video       {media[0].name if media else '— removed; `tapedeck add` re-fetches it'}")
+    print(f"archive     {rendered if rendered.is_file() else '— run `tapedeck add` to re-render'}")
+    print(f"video       {files[0].name if files else '— removed; `tapedeck add` re-fetches it'}")
     print(f"transcript  {transcript if transcript.is_file() else '— not transcribed yet'}")
     return 0
 
 
 def remove(home: Path, video_id: str, media_only: bool) -> int:
-    entry = home_mod.entry(home, video_id)
-    page = home_mod.page(home, video_id)
-    if not home_mod.VIDEO_ID.fullmatch(video_id) or not (entry.is_dir() or page.is_file()):
+    where = entry(home, video_id)
+    rendered = page(home, video_id)
+    if not VIDEO_ID.fullmatch(video_id) or not (where.is_dir() or rendered.is_file()):
         error(f"{video_id}: not in the library — nothing to remove")
         return 2
     if media_only:
-        return drop_media(entry, video_id)
+        return drop_media(where, video_id)
 
     # Page first, then the index update it makes true, then the entry: interrupted
     # anywhere, the id still resolves and a second `rm` finishes the job.
-    page.unlink(missing_ok=True)
+    rendered.unlink(missing_ok=True)
     indexed = components.run("index", ["update", video_id], home, capture=True).returncode
-    shutil.rmtree(entry, ignore_errors=True)
-    if entry.exists():
-        error(f"{video_id}: {entry} could not be removed")
+    shutil.rmtree(where, ignore_errors=True)
+    if where.exists():
+        error(f"{video_id}: {where} could not be removed")
         return 1
     if indexed != 0:
         error(f"{video_id}: files removed, but the index still has it — run `tapedeck reindex`")
@@ -159,11 +147,11 @@ def remove(home: Path, video_id: str, media_only: bool) -> int:
     return 0
 
 
-def drop_media(entry: Path, video_id: str) -> int:
+def drop_media(where: Path, video_id: str) -> int:
     """Reclaim the disk, keep the knowledge: the transcript, the archive page and the
     index rows all outlive the file they came from — at the price of never being able
     to re-derive them without downloading the video again (SPEC-cli-002)."""
-    files = media_files(entry)
+    files = media(where)
     for path in files:
         path.unlink()
     if not files:

@@ -24,9 +24,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tapedeck", description=DESCRIPTION)
     verbs = parser.add_subparsers(dest="verb", required=True, metavar="command")
 
-    add = verbs.add_parser("add", help="fetch, transcribe, archive and index one video")
-    add.add_argument("url", help="watch URL, youtu.be/shorts link, or bare video id")
-    add.add_argument("--force", action="store_true", help="re-fetch and re-derive a video here")
+    add = verbs.add_parser("add", help="fetch, transcribe, archive and index a video, or many")
+    add.add_argument(
+        "url",
+        help="watch URL, youtu.be/shorts link, bare video id, or a playlist or channel URL",
+    )
+    add.add_argument(
+        "--force",
+        action="store_true",
+        help="re-fetch and re-derive one video that is already here (never a collection)",
+    )
 
     find = verbs.add_parser("search", help="ranked timestamped excerpts with deep links")
     find.add_argument("query", nargs="+")
