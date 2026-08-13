@@ -1,304 +1,216 @@
-"""Ephemeral unit tests for ask — the durable evals are system/evals/ask/.
+"""Ephemeral unit tests: the seams the durable evals cannot see from outside.
 
-These go under the surface the evals drive: query construction, the prompt text,
-the citation gate, and the seam's failure modes. Run: uv run pytest src/ask -q
+Disposable — the durable evals in system/evals/ask/ are the real contract.
+Run with: uv run --with pytest pytest src/ask/tests -q
 """
 
-import sqlite3
-import sys
-from pathlib import Path
+import json
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from ask.citations import (
+    INSTRUCTIONS,
+    deep_links,
+    document,
+    hms,
+    invented,
+    prompt,
+    sources_block,
+    unverified,
+)
+from ask.library import videos
+from ask.retrieve import Source, excerpt, match_expression, terms, top_k
+from ask.seams import ANSWERER_KEY, LIBRARIAN_KEY, AnswerError, ConfigError, brief, command, run
 
-from ask import answerer, citations, retrieve  # noqa: E402
-from ask.__main__ import main  # noqa: E402
-
-SCHEMA = """
-CREATE TABLE videos (
-    video_id TEXT PRIMARY KEY, title TEXT, channel TEXT,
-    upload_date TEXT, url TEXT, duration_s INTEGER
-);
-CREATE VIRTUAL TABLE chunks USING fts5(
-    video_id UNINDEXED, start_s UNINDEXED, section, text,
-    tokenize = 'unicode61 remove_diacritics 2'
-);
-"""
-
-CHUNKS = [
-    ("dQw4w9WgXcQ", 0, "Intro", "Welcome to the fixture show."),
-    ("dQw4w9WgXcQ", 95, "The Core Idea", "The core idea is regeneration over maintenance."),
-    ("dQw4w9WgXcQ", 610, "Wrap Up", "Thanks for watching, goodbye."),
-    ("plainvide00", 0, "Part 1", "Block one content about sourdough starters."),
-    ("plainvide00", 300, "Part 2", "Block two content about proofing times."),
-]
-VIDEOS = [
-    ("dQw4w9WgXcQ", "Test Video: Building Things", "Fixture Channel"),
-    ("plainvide00", "Sourdough Basics", "Bread Channel"),
-]
+SRC = Source(
+    video_id="dQw4w9WgXcQ",
+    title="Test Video",
+    channel="Fixture Channel",
+    section="The Core Idea",
+    start_s=95,
+    text="The core idea is regeneration over maintenance.",
+)
+BARE = Source("plainvide00", "Sourdough", "", "", 0, "Block one.")
 
 
 @pytest.fixture
 def home(tmp_path):
-    """A home with an index in exactly the shape `index reindex` leaves behind."""
     h = tmp_path / "home"
-    h.mkdir()
-    db = sqlite3.connect(h / "tapedeck.db")
-    with db:
-        db.executescript(SCHEMA)
-        db.execute("PRAGMA user_version = 1")
-        db.executemany(
-            "INSERT INTO videos (video_id, title, channel) VALUES (?, ?, ?)", VIDEOS
-        )
-        db.executemany(
-            "INSERT INTO chunks (video_id, start_s, section, text) VALUES (?, ?, ?, ?)", CHUNKS
-        )
-    db.close()
+    (h / "library").mkdir(parents=True)
     return h
 
 
-def answerer_script(home, body):
-    script = home / "answer.sh"
-    script.write_text(body)
-    (home / "config.toml").write_text(f'[ask]\nanswerer_command = "sh {script}"\n')
+def add(home, video_id, duration=720, meta=True):
+    entry = home / "library" / video_id
+    entry.mkdir(parents=True)
+    if meta:
+        (entry / "meta.json").write_text(json.dumps({"id": video_id, "duration_s": duration}))
+    return entry
 
 
-def source(**over):
-    fields = {
-        "video_id": "dQw4w9WgXcQ",
-        "title": "Test Video: Building Things",
-        "channel": "Fixture Channel",
-        "section": "The Core Idea",
-        "start_s": 95,
-        "text": "The core idea is regeneration over maintenance.",
-    }
-    return retrieve.Source(**{**fields, **over})
+# --- library ---
 
 
-# --- query construction ------------------------------------------------------
+def test_videos_maps_ids_to_durations(home):
+    add(home, "dQw4w9WgXcQ", 720)
+    add(home, "plainvide00", 90.6)
+    assert videos(home) == {"dQw4w9WgXcQ": 720, "plainvide00": 90}
 
 
-def test_question_grammar_is_dropped_from_the_query():
-    assert retrieve.terms("what is the core idea") == ["core", "idea"]
+def test_videos_is_empty_without_a_library(tmp_path):
+    assert videos(tmp_path / "nowhere") == {}
 
 
-def test_punctuation_never_becomes_query_syntax():
-    assert retrieve.match_expression("why C++? (really)") == '"C++?" OR "(really)"'
+def test_entry_without_usable_meta_is_present_with_unknown_duration(home):
+    add(home, "dQw4w9WgXcQ", meta=False)
+    (home / "library" / "brokenvid00").mkdir()
+    (home / "library" / "brokenvid00" / "meta.json").write_text("{not json")
+    (home / "library" / "notanid").mkdir()  # ignored: not an 11-char video id
+    assert videos(home) == {"brokenvid00": None, "dQw4w9WgXcQ": None}
 
 
-def test_quoted_groups_survive_even_when_they_are_grammar():
-    assert retrieve.terms('what does "the way" mean') == ['the way', "mean"]
+# --- citation verification (librarian mode) ---
 
 
-def test_a_question_of_pure_grammar_still_searches_for_something():
-    assert retrieve.terms("what is it about") == ["what", "is", "it", "about"]
+def test_deep_links_reads_id_and_offset_out_of_markdown():
+    text = "See [intro](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s), and that's it."
+    assert deep_links(text) == [
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s", "dQw4w9WgXcQ", 95)
+    ]
 
 
-def test_a_wordless_question_matches_nothing(home):
-    assert retrieve.match_expression("?! ...") == ""
-    assert retrieve.top_k(home, "?! ...", 8) == []
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://youtu.be/dQw4w9WgXcQ?t=30", ("dQw4w9WgXcQ", 30)),
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1h2m3s", ("dQw4w9WgXcQ", 3723)),
+        ("https://m.youtube.com/watch?v=dQw4w9WgXcQ", ("dQw4w9WgXcQ", None)),
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=later", ("dQw4w9WgXcQ", None)),
+    ],
+)
+def test_deep_links_handles_the_forms_youtube_writes(url, expected):
+    assert deep_links(f"prose {url} prose")[0][1:] == expected
 
 
-def test_a_term_fts5_would_tokenize_to_nothing_is_dropped(home):
-    # "___" is \w but not a word: fts5 refuses the empty phrase it becomes.
-    assert retrieve.match_expression("___ ---") == ""
-    assert retrieve.top_k(home, "___ core", 8)[0].start_s == 95
+def test_no_links_at_all_is_no_citations():
+    assert deep_links("A confident answer with no citations at all.") == []
 
 
-def test_terms_are_ored_so_partial_overlap_still_retrieves():
-    assert retrieve.match_expression("core idea") == '"core" OR "idea"'
+def test_unverified_names_fabricated_and_overrunning_citations():
+    known = {"dQw4w9WgXcQ": 720, "plainvide00": None}
+    links = deep_links(
+        "a https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s "
+        "b https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=720s "
+        "c https://www.youtube.com/watch?v=plainvide00&t=99999s "  # duration unknown: stands
+        "d https://www.youtube.com/watch?v=nosuchvid00&t=10s "
+        "e https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=9999s"
+    )
+    problems = unverified(links, known)
+    assert len(problems) == 2
+    assert "nosuchvid00" in problems[0]
+    assert "2:46:39" in problems[1] and "0:12:00" in problems[1]
 
 
-# --- retrieval ---------------------------------------------------------------
+# --- the numbering (fast mode) ---
 
 
-def test_top_k_ranks_the_answering_chunk_first(home):
-    hits = retrieve.top_k(home, "what is the core idea", 3)
-    assert hits[0].video_id == "dQw4w9WgXcQ"
-    assert hits[0].start_s == 95
-    assert hits[0].text == "The core idea is regeneration over maintenance."
-    assert hits[0].title == "Test Video: Building Things"
-    assert hits[0].channel == "Fixture Channel"
-
-
-def test_retrieval_carries_the_contract_deep_link(home):
-    hit = retrieve.top_k(home, "core idea", 1)[0]
-    assert hit.timestamp == "0:01:35"
-    assert hit.url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s"
-
-
-def test_or_semantics_find_chunks_no_single_and_query_would(home):
-    # No chunk holds all of content+sourdough+proofing; two hold two of them.
-    hits = retrieve.top_k(home, "content about sourdough proofing", 8)
-    assert {hit.start_s for hit in hits} == {0, 300}
-    assert all(hit.video_id == "plainvide00" for hit in hits)
-
-
-def test_k_bounds_the_result_count(home):
-    assert len(retrieve.top_k(home, "content about sourdough proofing", 1)) == 1
-
-
-def test_nothing_in_the_library_is_an_empty_list_not_an_error(home):
-    assert retrieve.top_k(home, "xylophone quantum blockchain", 8) == []
-
-
-def test_a_missing_index_says_how_to_get_one(tmp_path):
-    with pytest.raises(retrieve.IndexUnreadable, match="reindex"):
-        retrieve.top_k(tmp_path, "core idea", 8)
-
-
-def test_an_index_of_another_shape_is_reported_not_guessed_at(tmp_path):
-    (tmp_path / "tapedeck.db").write_bytes(b"not a database at all")
-    with pytest.raises(retrieve.IndexUnreadable):
-        retrieve.top_k(tmp_path, "core idea", 8)
-
-
-def test_retrieval_never_writes_to_the_index(home):
-    before = (home / "tapedeck.db").read_bytes()
-    retrieve.top_k(home, "core idea", 8)
-    assert (home / "tapedeck.db").read_bytes() == before
-    assert sorted(path.name for path in home.iterdir()) == ["tapedeck.db"]
-
-
-def test_a_long_section_is_cut_at_a_word_boundary():
-    text = "word " * 1000
-    cut = retrieve.excerpt(text)
-    assert len(cut) <= retrieve.EXCERPT_CHARS + 2
-    assert cut.endswith("…")
-    assert "wor …" not in cut
-
-
-# --- the prompt (SPEC-ask-002) ----------------------------------------------
-
-
-def test_prompt_carries_question_sources_and_the_rules():
-    text = citations.prompt("what is the core idea", [source()])
-    assert "Question: what is the core idea" in text
-    assert "The core idea is regeneration over maintenance." in text
-    assert "[1]" in text
+def test_prompt_carries_the_rules_the_numbering_and_the_question():
+    text = prompt("what is the core idea", [SRC, BARE])
+    assert INSTRUCTIONS in text
     assert "not in the library" in text
-    assert "Use only what the sources say" in text
+    assert "[1] Test Video — Fixture Channel @ 0:01:35 (The Core Idea)" in text
+    assert "[2] Sourdough @ 0:00:00" in text  # no channel, no section: no empty furniture
+    assert SRC.text in text
+    assert text.rstrip().endswith("Question: what is the core idea")
 
 
-def test_prompt_numbers_sources_in_retrieval_order():
-    text = citations.prompt("q", [source(), source(start_s=0, section="Intro", text="hello")])
-    assert text.index("[1]") < text.index("[2]")
-    assert "[2] Test Video: Building Things — Fixture Channel @ 0:00:00 (Intro)" in text
+def test_sources_block_lists_every_retrieved_chunk_with_its_deep_link():
+    block = sources_block([SRC])
+    assert "[1] Test Video — Fixture Channel @ 0:01:35" in block
+    assert "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s" in block
 
 
-# --- the citation gate -------------------------------------------------------
+def test_invented_finds_only_markers_that_were_never_offered():
+    assert invented("grounded [1] and [2]", 2) == []
+    assert invented("stray [9] and [3]", 2) == [3, 9]
+    assert invented("no markers here", 2) == []
 
 
-def test_markers_within_the_retrieved_set_pass():
-    assert citations.invented("a [1] b [2].", 2) == []
+def test_document_is_prose_then_sources():
+    out = document("  An answer [1].  ", [SRC])
+    assert out.startswith("An answer [1].\n\nSources:")
 
 
-def test_markers_outside_the_retrieved_set_are_caught():
-    assert citations.invented("confident [9] and [0].", 2) == [0, 9]
+def test_hms_leaves_hours_unpadded():
+    assert (hms(0), hms(95), hms(3723), hms(-4)) == ("0:00:00", "0:01:35", "1:02:03", "0:00:00")
 
 
-def test_sources_block_follows_the_citation_contract():
-    assert citations.sources_block([source()]) == (
-        "Sources:\n"
-        "[1] Test Video: Building Things — Fixture Channel @ 0:01:35\n"
-        "    https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s"
+# --- retrieval ---
+
+
+def test_terms_drop_grammar_but_never_everything():
+    assert terms("what is the core idea") == ["core", "idea"]
+    assert terms("what is it") == ["what", "is", "it"]  # nothing left to keep: keep it all
+    assert terms('"why not" the thing') == ["why not", "thing"]
+    assert terms("???") == []
+
+
+def test_match_expression_ors_quoted_phrases():
+    assert match_expression("what is the core idea") == '"core" OR "idea"'
+    assert match_expression("C++ don't") == '"C++" OR "don\'t"'
+    assert match_expression("???") == ""
+
+
+def test_excerpt_cuts_long_text_at_a_word_boundary():
+    assert excerpt("  short  ") == "short"
+    long = " ".join(["word"] * 900)
+    cut = excerpt(long)
+    assert cut.endswith(" …") and len(cut) <= 1602 and "wor …" not in cut
+
+
+def test_unanswerable_query_never_opens_the_database(home):
+    assert top_k(home, "???", 8) == []  # no index here at all — and none is needed
+
+
+# --- seams ---
+
+
+def test_command_reads_the_configured_seam(home):
+    home.mkdir(exist_ok=True)
+    (home / "config.toml").write_text('[ask]\nlibrarian_command = " sh librarian.sh "\n')
+    assert command(home, LIBRARIAN_KEY, "librarian") == "sh librarian.sh"
+    with pytest.raises(ConfigError, match="answerer"):
+        command(home, ANSWERER_KEY, "answerer")
+
+
+@pytest.mark.parametrize("config", ["", "# nothing\n", "[ask]\nlibrarian_command = 4\n", "{{{"])
+def test_a_seam_that_is_not_configured_is_a_config_error(home, config):
+    home.mkdir(exist_ok=True)
+    (home / "config.toml").write_text(config)
+    with pytest.raises(ConfigError):
+        command(home, LIBRARIAN_KEY, "librarian")
+
+
+def test_missing_brief_is_a_config_error(home):
+    with pytest.raises(ConfigError, match="brief"):
+        brief(home)
+    (home / "CLAUDE.md").write_text("# brief\n")
+    assert brief(home).name == "CLAUDE.md"
+
+
+def test_run_hands_stdin_over_and_returns_stdout(home):
+    out = run("cat; echo '  '", home, "the question", "librarian", cwd=home)
+    assert out == "the question"
+
+
+def test_run_in_the_library_home_sees_the_library_home(home):
+    assert run("pwd", home, "", "librarian", cwd=home) == str(home)
+    assert run('printf "%s" "$PWD $TAPEDECK_HOME"', home, "", "librarian", cwd=home) == (
+        f"{home} {home}"
     )
 
 
-def test_a_channelless_page_still_renders_a_clean_citation():
-    assert "[1] Test Video: Building Things @ 0:01:35" in citations.sources_block(
-        [source(channel="")]
-    )
-
-
-# --- the seam ----------------------------------------------------------------
-
-
-def test_missing_ask_section_is_a_config_error(tmp_path):
-    (tmp_path / "config.toml").write_text("# nothing here\n")
-    with pytest.raises(answerer.ConfigError, match="answerer"):
-        answerer.seam(tmp_path)
-
-
-def test_unparseable_config_is_a_config_error(tmp_path):
-    (tmp_path / "config.toml").write_text("[ask\n")
-    with pytest.raises(answerer.ConfigError):
-        answerer.seam(tmp_path)
-
-
-def test_the_prompt_reaches_the_answerer_on_stdin(tmp_path):
-    answerer_script(tmp_path, '#!/bin/sh\ncat > "$TAPEDECK_HOME/seen"\necho drafted\n')
-    assert answerer.run(answerer.seam(tmp_path), tmp_path, "the prompt") == "drafted"
-    assert (tmp_path / "seen").read_text() == "the prompt"
-
-
-def test_a_failing_answerer_is_an_answer_error(tmp_path):
-    answerer_script(tmp_path, "#!/bin/sh\ncat > /dev/null\nexit 3\n")
-    with pytest.raises(answerer.AnswerError, match="exited 3"):
-        answerer.run(answerer.seam(tmp_path), tmp_path, "prompt")
-
-
-def test_a_silent_answerer_is_an_answer_error(tmp_path):
-    answerer_script(tmp_path, "#!/bin/sh\ncat > /dev/null\n")
-    with pytest.raises(answerer.AnswerError):
-        answerer.run(answerer.seam(tmp_path), tmp_path, "prompt")
-
-
-def test_an_answerer_ignoring_stdin_does_not_break_the_pipe(tmp_path):
-    answerer_script(tmp_path, "#!/bin/sh\necho ignored\n")
-    assert answerer.run(answerer.seam(tmp_path), tmp_path, "x" * 200_000) == "ignored"
-
-
-# --- the boundary ------------------------------------------------------------
-
-
-def run_main(home, monkeypatch, argv):
-    monkeypatch.setenv("TAPEDECK_HOME", str(home))
-    return main(argv)
-
-
-def test_answer_is_prose_then_tapedeck_sources(home, monkeypatch, capsys):
-    answerer_script(home, "#!/bin/sh\ncat > /dev/null\necho 'regeneration wins [1].'\n")
-    assert run_main(home, monkeypatch, ["run", "what is the core idea", "-k", "3"]) == 0
-    out = capsys.readouterr().out
-    assert out.startswith("regeneration wins [1].\n\nSources:\n")
-    assert "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s" in out
-
-
-def test_the_cli_alias_is_the_same_verb(home, monkeypatch, capsys):
-    answerer_script(home, "#!/bin/sh\ncat > /dev/null\necho 'yes [1].'\n")
-    assert run_main(home, monkeypatch, ["answer", "-k", "2", "--", "core", "idea"]) == 0
-    assert "Sources:" in capsys.readouterr().out
-
-
-def test_no_sources_stops_before_the_answerer(home, monkeypatch, capsys):
-    answerer_script(home, '#!/bin/sh\ntouch "$TAPEDECK_HOME/ran"\necho hi\n')
-    assert run_main(home, monkeypatch, ["run", "xylophone quantum blockchain"]) == 1
-    assert "no sources in the library" in capsys.readouterr().err
-    assert not (home / "ran").exists()
-
-
-def test_an_invented_citation_is_refused(home, monkeypatch, capsys):
-    answerer_script(home, "#!/bin/sh\ncat > /dev/null\necho 'confident [9].'\n")
-    assert run_main(home, monkeypatch, ["run", "core idea"]) == 1
-    captured = capsys.readouterr()
-    assert "citation" in captured.err
-    assert "confident" not in captured.out
-
-
-def test_an_unconfigured_answerer_is_a_usage_error(home, monkeypatch, capsys):
-    (home / "config.toml").write_text("# no ask section\n")
-    assert run_main(home, monkeypatch, ["run", "core idea"]) == 2
-    assert "answerer" in capsys.readouterr().err
-
-
-def test_config_is_checked_before_the_index_is_touched(tmp_path, monkeypatch, capsys):
-    (tmp_path / "config.toml").write_text("# no ask section\n")
-    assert run_main(tmp_path, monkeypatch, ["run", "core idea"]) == 2
-
-
-def test_k_must_be_at_least_one(home, monkeypatch, capsys):
-    answerer_script(home, "#!/bin/sh\necho hi\n")
-    assert run_main(home, monkeypatch, ["run", "core idea", "-k", "0"]) == 2
-    assert "-k" in capsys.readouterr().err
+@pytest.mark.parametrize("script", ["cat > /dev/null; exit 3", "cat > /dev/null"])
+def test_a_seam_that_fails_or_says_nothing_has_not_answered(home, script):
+    with pytest.raises(AnswerError, match="answerer"):
+        run(script, home, "prompt", "answerer")

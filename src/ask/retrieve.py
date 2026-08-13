@@ -1,22 +1,18 @@
-"""Retrieval: a question in, the top-k library chunks out.
+"""Fast-mode retrieval: a question in, the top-k library chunks out.
 
 The chunks live in `tapedeck.db`, which the index owns and rebuilds from archive
 pages alone. ask only ever reads it — SPEC-core-001 gives ask write authority
-nowhere, so the connection is opened read-only and cannot create, journal or
-touch a file even by accident.
+nowhere — so the connection is opened read-only and cannot create, journal or touch
+a file even by accident. The schema is the index's, at the shape SPEC-index-001
+pins; a database that has moved on is reported as unreadable rather than guessed at.
 
-We read that database rather than shelling out to `index search` because the two
-retrievals are not the same act. A searcher types keywords and wants all of them
-present, so `search` joins the words with AND; a question is mostly grammar, and
-insisting that "what", "is" and "the" appear alongside "core idea" finds nothing
-at all. So ask drops the question words, ORs what is left and lets bm25 rank by
-overlap — and it needs each section's whole text (a search snippet is an
-excerpt to skim, not enough to answer from) and the channel the citation line
-names, neither of which crosses the search verb's surface.
-
-The schema below is the index's, at the shape SPEC-index-001 pins: chunks(video_id,
-start_s, section, text) with videos beside it. A database that has moved on is
-reported as unreadable rather than guessed at.
+We read it rather than shelling out to `index search` because the two retrievals are
+not the same act. A searcher types keywords and wants all of them, so `search` joins
+the words with AND; a question is mostly grammar, and insisting that "what", "is" and
+"the" appear alongside "core idea" finds nothing at all. So ask drops the question
+words, ORs what is left and lets bm25 rank by overlap — and it needs each section's
+whole text (a snippet is an excerpt to skim, not enough to answer from) and the
+channel the citation line names, neither of which crosses the search verb's surface.
 """
 
 from __future__ import annotations
@@ -26,6 +22,8 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+
+from .citations import deep_link, hms
 
 DB_NAME = "tapedeck.db"
 REINDEX_HINT = "run `tapedeck reindex`"
@@ -54,11 +52,10 @@ TERM = re.compile(r'"[^"]*"?|\S+')
 ALNUM = re.compile(r"[^\W_]", re.UNICODE)
 NOT_WORD = re.compile(r"\W+", re.UNICODE)
 
-# The grammar a question is made of. These words carry no retrieval signal but
-# would drag in every chunk that happens to contain them, so they are dropped —
-# unless dropping them would leave nothing to search for. Only function words
-# belong here: anything that could be what an asker is actually asking about
-# ("way", "make", "one") stays in, and bm25 is left to weigh it.
+# The grammar a question is made of: no retrieval signal, but they would drag in
+# every chunk containing them, so they are dropped unless dropping them would leave
+# nothing to search for. Only function words belong here — anything that could be
+# what an asker is asking about ("way", "make", "one") stays in for bm25 to weigh.
 STOPWORDS = frozenset(
     """
     a about after all also am an and any are as at be because been but by can could did
@@ -70,8 +67,8 @@ STOPWORDS = frozenset(
 )
 
 # One source is a passage to reason from, not a whole chapter to wade through: a
-# section long enough to blow past this is cut at a word boundary, so eight of
-# them stay a prompt an answerer can actually attend to.
+# section long enough to blow past this is cut at a word boundary, so eight of them
+# stay a prompt an answerer can actually attend to.
 EXCERPT_CHARS = 1600
 
 
@@ -81,7 +78,7 @@ class IndexUnreadable(RuntimeError):
 
 @dataclass(frozen=True)
 class Source:
-    """One retrieved chunk — the unit both the prompt and the citation are built from."""
+    """One retrieved chunk — what both the prompt and the citation are built from."""
 
     video_id: str
     title: str
@@ -97,17 +94,6 @@ class Source:
     @property
     def url(self) -> str:
         return deep_link(self.video_id, self.start_s)
-
-
-def hms(seconds) -> str:
-    """Seconds as h:mm:ss — hours unpadded, the shape citations are read in."""
-    total = max(int(seconds), 0)
-    return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
-
-
-def deep_link(video_id: str, seconds) -> str:
-    """A moment in a video, per system/contracts/library-layout.md."""
-    return f"https://www.youtube.com/watch?v={video_id}&t={int(seconds)}s"
 
 
 def db_path(home: Path) -> Path:
@@ -134,9 +120,8 @@ def match_expression(question: str) -> str:
     """An fts5 MATCH the question cannot break and every word is optional in.
 
     Each word becomes a phrase of its own, so punctuation an asker types ("C++",
-    "don't", "why?") is never read as query syntax, and the words are ORed: a
-    chunk answering half the question is still worth reading, and bm25 ranks the
-    one answering more of it above it.
+    "don't", "why?") is never read as query syntax, and the words are ORed: a chunk
+    answering half the question is worth reading, and bm25 ranks fuller ones above it.
     """
     return " OR ".join('"' + term.replace('"', '""') + '"' for term in terms(question))
 
@@ -146,8 +131,8 @@ def connect(home: Path) -> sqlite3.Connection:
     if not path.is_file():
         raise IndexUnreadable(f"no index at {path} — {REINDEX_HINT}")
     try:
-        # Read-only URI: ask has no write authority over tapedeck.db, and this is
-        # the enforcement rather than the intention.
+        # Read-only URI: ask has no write authority over tapedeck.db, and this is the
+        # enforcement rather than the intention.
         db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
     except sqlite3.Error as exc:
         raise IndexUnreadable(f"cannot open {path} — {exc}; {REINDEX_HINT}") from exc
