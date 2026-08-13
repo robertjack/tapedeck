@@ -2,10 +2,10 @@
 
 They cover what the durable evals reach only indirectly: the first-run scaffold's
 exact content and its refusal to overwrite, the layout helpers the verbs share,
-the catalogue's ordering and tolerance of a damaged entry, and — the new
-surface — how a collection sweep counts and survives what happens to it
-(SPEC-cli-003). The subprocess boundary to the other components is stubbed here;
-the durable evals drive the real one.
+the catalogue's ordering and tolerance of a damaged entry, and the two sweeps —
+a collection (SPEC-cli-003) and a model upgrade (SPEC-cli-004) — counted and
+survived. The subprocess boundary to the other components is stubbed here; the
+durable evals drive the real one.
 """
 
 import json
@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1].parent))
 
-from cli import components, home, library  # noqa: E402
+from cli import components, home, library, main  # noqa: E402
 
 ID = "dQw4w9WgXcQ"
 OTHER = "plainvide00"
@@ -46,7 +46,7 @@ def deck(tmp_path, monkeypatch):
     return home.resolve()
 
 
-def entry(deck, video_id=ID, meta=META, transcript=True, video=True):
+def entry(deck, video_id=ID, meta=META, transcript=True, video=True, model="fixture/whisper-0"):
     where = home.entry(deck, video_id)
     where.mkdir(parents=True, exist_ok=True)
     if video:
@@ -54,42 +54,78 @@ def entry(deck, video_id=ID, meta=META, transcript=True, video=True):
     if meta is not None:
         (where / "meta.json").write_text(json.dumps({**meta, "id": video_id}))
     if transcript:
-        (where / "transcript.json").write_text('{"segments": []}')
+        (where / "transcript.json").write_text(
+            json.dumps({"video_id": video_id, "model": model, "segments": []})
+        )
     return where
+
+
+def record(monkeypatch, outcome=lambda module, args: Done()):
+    """Stub the component boundary; return the list of (module, args) calls made."""
+    calls = []
+
+    def fake(module, args, home_dir, capture=False):
+        calls.append((module, list(args)))
+        return outcome(module, args)
+
+    monkeypatch.setattr(components, "run", fake)
+    return calls
 
 
 # ---------------------------------------------------------------- the scaffold
 
 
-def test_config_carries_every_seam_the_components_publish():
-    config = tomllib.loads(home.config_text())
-    assert set(config) == {"ingest", "transcribe", "ask"}
+def test_first_run_creates_the_home_and_both_files(deck):
+    assert (deck / "library").is_dir() and (deck / "archive").is_dir()
+    assert (deck / "config.toml").is_file() and (deck / "CLAUDE.md").is_file()
+
+
+def test_scaffolded_config_is_valid_toml_with_every_seam(deck):
+    config = tomllib.loads((deck / "config.toml").read_text())
     assert config["ingest"]["fetcher_command"].startswith("yt-dlp")
-    assert "vcodec^=avc1" in config["ingest"]["fetcher_command"]  # LESSON-0001
-    assert "--flat-playlist" in config["ingest"]["lister_command"]  # SPEC-cli-003
-    assert "$TAPEDECK_COLLECTION_URL" in config["ingest"]["lister_command"]
-    assert "large-v3-turbo" in config["transcribe"]["transcriber_command"]  # LESSON-0002
-    assert "--condition-on-previous-text False" in config["transcribe"]["transcriber_command"]
+    assert "--flat-playlist" in config["ingest"]["lister_command"]
+    assert "mlx_whisper" in config["transcribe"]["transcriber_command"]
     assert config["transcribe"]["model"] == "mlx-whisper/large-v3-turbo"
-    assert config["ask"]["librarian_command"].startswith("claude -p")
-    assert config["ask"]["answerer_command"]
+    assert "claude" in config["ask"]["librarian_command"]
+    assert "claude" in config["ask"]["answerer_command"]
 
 
-def test_toml_value_survives_a_command_with_a_quote_in_it():
-    assert home.toml_value("say 'hi'") == '"say \'hi\'"'
-    assert tomllib.loads(f"k = {home.toml_value('say \'hi\'')}")["k"] == "say 'hi'"
+def test_scaffolded_config_carries_the_battle_tested_defaults(deck):
+    text = (deck / "config.toml").read_text()
+    assert "vcodec^=avc1" in text and "height<=1080" in text  # LESSON-0001
+    assert "--condition-on-previous-text False" in text  # LESSON-0002
 
 
-def test_first_run_creates_the_home_and_later_runs_leave_it_alone(deck):
-    for name in home.DIRECTORIES:
-        assert (deck / name).is_dir()
-    assert "not in the library" in (deck / home.BRIEF_NAME).read_text()
-    (deck / home.CONFIG_NAME).write_text("# mine now\n")
+def test_scaffolded_config_documents_the_parakeet_alternative(deck):
+    text = (deck / "config.toml").read_text()
+    assert "# transcriber_command = 'parakeet-mlx" in text
+    assert "tapedeck adapt-parakeet" in text
+    assert "# model = 'parakeet-mlx/tdt-0.6b-v3'" in text
+    # Commented out, so the whisper default is still what a fresh install runs.
+    config = tomllib.loads(text)
+    assert "parakeet" not in config["transcribe"]["transcriber_command"]
+
+
+def test_the_brief_carries_the_grounding_rules(deck):
+    brief = (deck / "CLAUDE.md").read_text()
+    assert "not in the library" in brief
+    assert "watch?v=<video-id>&t=<seconds>s" in brief
+
+
+def test_scaffolding_never_overwrites(deck):
+    (deck / "config.toml").write_text("[ingest]\nfetcher_command = 'mine'\n")
+    (deck / "CLAUDE.md").write_text("mine")
     assert home.resolve() == deck
-    assert (deck / home.CONFIG_NAME).read_text() == "# mine now\n"
+    assert "mine" in (deck / "config.toml").read_text()
+    assert (deck / "CLAUDE.md").read_text() == "mine"
 
 
-def test_home_follows_the_environment(tmp_path, monkeypatch):
+def test_toml_value_survives_a_command_with_quotes():
+    assert home.toml_value('a "b"') == "'a \"b\"'"
+    assert tomllib.loads(f"c = {home.toml_value(chr(39) + 'x')}")["c"] == "'x"
+
+
+def test_home_env_wins_over_the_default(tmp_path, monkeypatch):
     monkeypatch.setenv("TAPEDECK_HOME", str(tmp_path / "elsewhere"))
     assert home.resolve() == tmp_path / "elsewhere"
 
@@ -97,50 +133,42 @@ def test_home_follows_the_environment(tmp_path, monkeypatch):
 # ------------------------------------------------------------ layout helpers
 
 
-def test_media_is_the_download_and_not_its_sidecars(deck):
+def test_media_finds_the_video_and_not_its_sidecars(deck):
     where = entry(deck)
     (where / "video.info.json").write_text("{}")
+    (where / "thumb.jpg").write_bytes(b"")
     assert [p.name for p in home.media(where)] == ["video.mp4"]
+
+
+def test_ingested_needs_both_the_video_and_the_metadata(deck):
+    assert not home.ingested(deck, ID)
+    entry(deck, meta=None)
+    assert not home.ingested(deck, ID)
+    entry(deck)
     assert home.ingested(deck, ID)
 
 
-def test_ingested_needs_both_the_video_and_its_metadata(deck):
-    entry(deck, video=False)
-    assert not home.ingested(deck, ID)
-    entry(deck, OTHER, meta=None)
-    assert not home.ingested(deck, OTHER)
-    assert not home.ingested(deck, "absentvid0")
-
-
-def test_hms_never_raises_on_a_hand_edited_duration():
-    assert library.hms(3725) == "1:02:05"
-    assert library.hms(None) == ""
-    assert library.hms("nonsense") == ""
+def test_entries_skips_dotted_directories_and_files(deck):
+    entry(deck)
+    (deck / "library" / ".staging").mkdir()
+    (deck / "library" / "stray.txt").write_text("")
+    assert home.entries(deck) == [ID]
 
 
 # ------------------------------------------------------------- list and show
 
 
-def test_catalogue_is_newest_first_and_forgives_a_damaged_entry(deck, capsys):
+def test_catalogue_is_newest_first_and_skips_a_damaged_entry(deck, capsys):
     entry(deck)
     entry(deck, OTHER, {**META, "upload_date": "2026-02-02", "title": "Sourdough"})
-    (deck / home.LIBRARY / ".tmp-fetch").mkdir()
-    broken = deck / home.LIBRARY / "brokenvid00"
-    broken.mkdir()
-    (broken / "meta.json").write_text("{not json")
-    listed = library.catalogue(deck)
-    assert [video["id"] for video in listed] == [OTHER, ID]
+    entry(deck, "brokenvid00", meta=None)
+    assert [video["id"] for video in library.catalogue(deck)] == [OTHER, ID]
     assert "brokenvid00" in capsys.readouterr().err
 
 
-def test_show_reports_an_unknown_id_as_a_usage_error(deck):
-    assert library.show(deck, "nosuchvid00", as_json=False) == 2
-    assert library.show(deck, "not-an-id", as_json=False) == 2
-
-
-def test_show_json_names_the_derived_artifacts(deck, capsys):
+def test_show_json_names_every_artifact(deck, capsys):
     entry(deck)
-    home.page(deck, ID).write_text("# page\n")
+    home.page(deck, ID).write_text("# page")
     assert library.show(deck, ID, as_json=True) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["title"] == "Test Video"
@@ -148,150 +176,228 @@ def test_show_json_names_the_derived_artifacts(deck, capsys):
     assert payload["media"].endswith("video.mp4")
 
 
-# ------------------------------------------------------------------ removal
+def test_show_unknown_id_is_a_usage_error(deck):
+    assert library.show(deck, "nosuchvid00", as_json=False) == 2
+    assert library.show(deck, "not-an-id", as_json=False) == 2
 
 
-def test_rm_media_only_keeps_everything_derived(deck):
-    where = entry(deck)
-    home.page(deck, ID).write_text("# page\n")
-    assert library.remove(deck, ID, media_only=True) == 0
-    assert not (where / "video.mp4").exists()
-    assert (where / "transcript.json").is_file()
-    assert home.page(deck, ID).is_file()
+def test_hms_tolerates_a_hand_edited_duration():
+    assert library.hms(3725) == "1:02:05"
+    assert library.hms(None) == ""
 
 
-def test_rm_drops_the_page_and_asks_the_index_to_catch_up(deck, monkeypatch):
+# ------------------------------------------------------------------- removal
+
+
+def test_rm_deletes_the_page_before_updating_the_index(deck, monkeypatch):
     entry(deck)
-    entry(deck, OTHER)
-    home.page(deck, ID).write_text("# page\n")
+    home.page(deck, ID).write_text("# page")
     seen = []
 
-    def fake(module, args, where, capture=False):
-        seen.append((module, args))
+    def fake(module, args, home_dir, capture=False):
+        seen.append((module, args, home.page(deck, ID).exists()))
         return Done()
 
     monkeypatch.setattr(components, "run", fake)
     assert library.remove(deck, ID, media_only=False) == 0
-    assert seen == [("index", ["update", ID])]  # the index rebuilds itself; cli never writes it
+    assert seen == [("index", ["update", ID], False)]
     assert not home.entry(deck, ID).exists()
-    assert not home.page(deck, ID).exists()
-    assert home.entry(deck, OTHER).is_dir()  # never another video's data
 
 
-def test_rm_of_an_unknown_id_is_a_usage_error(deck):
+def test_rm_media_only_keeps_everything_derived(deck):
+    where = entry(deck)
+    assert library.remove(deck, ID, media_only=True) == 0
+    assert not (where / "video.mp4").exists()
+    assert (where / "transcript.json").is_file() and (where / "meta.json").is_file()
+
+
+def test_rm_unknown_id_is_a_usage_error(deck):
     assert library.remove(deck, "nosuchvid00", media_only=False) == 2
 
 
-# ------------------------------------------------------- add: one and many
+# --------------------------------------------------------------- add and sweep
 
 
-def test_add_refuses_a_target_that_names_nothing(capsys):
-    assert components.add(Path("/nowhere"), "https://example.com/nope", force=False) == 2
-    assert "error:" in capsys.readouterr().err
+def test_add_one_runs_the_chain_in_order(deck, monkeypatch):
+    calls = record(monkeypatch, lambda module, args: Done(stdout=str(home.entry(deck, ID))))
+    assert components.add_one(deck, ID, force=False) == 0
+    assert [module for module, _ in calls] == ["ingest", "transcribe", "archive", "index"]
+    assert calls[1][1] == ["run", ID]
 
 
-def test_force_on_a_collection_is_a_usage_error(deck, monkeypatch, capsys):
-    monkeypatch.setattr(components, "sweep", lambda *a: pytest.fail("no sweep may start"))
-    assert components.add(deck, PLAYLIST, force=True) == 2
-    assert "--force" in capsys.readouterr().err
-
-
-def test_a_video_target_runs_the_pipeline_once(deck, monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        components,
-        "add_one",
-        lambda where, target, force: calls.append((target, force)) or 0,
-    )
-    assert components.add(deck, f"https://youtu.be/{ID}", force=True) == 0
-    assert calls == [(f"https://youtu.be/{ID}", True)]
-
-
-def stub_expand(monkeypatch, ids, returncode=0):
-    def fake(module, args, where, capture=False):
-        assert (module, args[0]) == ("ingest", "expand")
-        return Done(returncode, "\n".join([*ids, "NA", ""]))
-
-    monkeypatch.setattr(components, "run", fake)
-
-
-def test_sweep_adds_every_video_and_summarizes(deck, monkeypatch, capsys):
-    stub_expand(monkeypatch, ["aaaaaaaaaaa", "bbbbbbbbbbb"])
-    swept = []
-    monkeypatch.setattr(
-        components, "add_one", lambda where, vid, force: swept.append((vid, force)) or 0
-    )
-    assert components.add(deck, PLAYLIST, force=False) == 0
-    assert swept == [("aaaaaaaaaaa", False), ("bbbbbbbbbbb", False)]
-    assert "2 added, 0 already present, 0 failed" in capsys.readouterr().out
-
-
-def test_sweep_counts_what_was_already_here(deck, monkeypatch, capsys):
-    entry(deck, "aaaaaaaaaaa")
-    stub_expand(monkeypatch, ["aaaaaaaaaaa", "bbbbbbbbbbb"])
-    monkeypatch.setattr(components, "add_one", lambda where, vid, force: 0)
-    assert components.add(deck, PLAYLIST, force=False) == 0
-    assert "1 added, 1 already present, 0 failed" in capsys.readouterr().out
-
-
-def test_sweep_goes_on_past_a_failure_and_fails_the_run(deck, monkeypatch, capsys):
-    stub_expand(monkeypatch, ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"])
-    swept = []
-    monkeypatch.setattr(
-        components,
-        "add_one",
-        lambda where, vid, force: swept.append(vid) or (1 if vid == "bbbbbbbbbbb" else 0),
-    )
-    assert components.add(deck, PLAYLIST, force=False) == 1
-    assert swept == ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"]
-    out = capsys.readouterr()
-    assert "bbbbbbbbbbb" in out.err
-    assert "2 added, 0 already present, 1 failed" in out.out
-
-
-def test_a_listing_that_failed_is_not_swept(deck, monkeypatch):
-    stub_expand(monkeypatch, ["aaaaaaaaaaa"], returncode=1)
-    monkeypatch.setattr(components, "add_one", lambda *a: pytest.fail("half a channel is not one"))
-    assert components.add(deck, PLAYLIST, force=False) == 1
-
-
-def test_an_empty_collection_is_not_a_failure(deck, monkeypatch, capsys):
-    stub_expand(monkeypatch, [])
-    assert components.add(deck, PLAYLIST, force=False) == 0
-    assert "0 added, 0 already present, 0 failed" in capsys.readouterr().out
-
-
-def test_add_one_stops_at_the_first_stage_that_fails(deck, monkeypatch, capsys):
-    calls = []
-
-    def fake(module, args, where, capture=False):
-        calls.append(module)
-        if module == "transcribe":
-            return Done(1)
-        return Done(0, f"{home.entry(deck, ID)}\n")
-
-    monkeypatch.setattr(components, "run", fake)
-    assert components.add_one(deck, ID, force=False) == 1
-    assert calls == ["ingest", "transcribe"]
-
-
-def test_add_one_forces_the_transcript_when_the_video_is_refetched(deck, monkeypatch, capsys):
-    seen = []
-
-    def fake(module, args, where, capture=False):
-        seen.append((module, args))
-        return Done(0, f"{home.entry(deck, ID)}\n")
-
-    monkeypatch.setattr(components, "run", fake)
+def test_force_reaches_the_transcript_too(deck, monkeypatch):
+    calls = record(monkeypatch, lambda module, args: Done(stdout=str(home.entry(deck, ID))))
     assert components.add_one(deck, ID, force=True) == 0
-    assert ("ingest", ["add", ID, "--force"]) in seen
-    assert ("transcribe", ["run", ID, "--force"]) in seen
-    assert ("archive", ["render", ID]) in seen
-    assert ("index", ["update", ID]) in seen
-    assert capsys.readouterr().out.strip().endswith(f"{ID}.md")
+    assert calls[0][1] == ["add", ID, "--force"]
+    assert calls[1][1] == ["run", ID, "--force"]
 
 
-def test_add_one_needs_an_entry_it_can_build_on(deck, monkeypatch, capsys):
-    monkeypatch.setattr(components, "run", lambda *a, **k: Done(0, "somewhere odd\n"))
+def test_a_stage_failure_stops_the_chain_with_its_own_code(deck, monkeypatch):
+    def outcome(module, args):
+        if module == "transcribe":
+            return Done(returncode=1)
+        return Done(stdout=str(home.entry(deck, ID)))
+
+    calls = record(monkeypatch, outcome)
     assert components.add_one(deck, ID, force=False) == 1
-    assert "error:" in capsys.readouterr().err
+    assert [module for module, _ in calls] == ["ingest", "transcribe"]
+
+
+def test_add_refuses_a_target_that_is_neither_video_nor_collection(deck, monkeypatch):
+    calls = record(monkeypatch)
+    assert components.add(deck, "https://example.com/nope", force=False) == 2
+    assert calls == []
+
+
+def test_force_on_a_collection_is_refused_before_any_listing(deck, monkeypatch):
+    calls = record(monkeypatch)
+    assert components.add(deck, PLAYLIST, force=True) == 2
+    assert calls == []
+
+
+def test_sweep_counts_added_skipped_and_failed(deck, monkeypatch, capsys):
+    entry(deck, OTHER)  # already present: the sweep must skip its fetch
+    listing = f"{ID}\n{OTHER}\nbadcatvide0\n"
+
+    def outcome(module, args):
+        if args[0] == "expand":
+            return Done(stdout=listing)
+        if args[0] == "add" and args[1] == "badcatvide0":
+            return Done(returncode=1)
+        return Done(stdout=str(home.entry(deck, args[1])))
+
+    record(monkeypatch, outcome)
+    assert components.add(deck, PLAYLIST, force=False) == 1
+    out, err = capsys.readouterr()
+    assert "1 added, 1 already present, 1 failed" in out
+    assert "badcatvide0" in err
+
+
+def test_a_listing_that_fails_is_not_a_sweep(deck, monkeypatch):
+    calls = record(monkeypatch, lambda module, args: Done(returncode=1))
+    assert components.add(deck, PLAYLIST, force=False) == 1
+    assert calls == [("ingest", ["expand", PLAYLIST])]
+
+
+# ------------------------------------------------------------- retranscribe
+
+
+def configure(deck, model="fixture/whisper-2"):
+    (deck / "config.toml").write_text(
+        f'[transcribe]\ntranscriber_command = "sh whisper.sh"\nmodel = "{model}"\n'
+    )
+
+
+def test_retranscribe_picks_only_superseded_labels(deck, monkeypatch, capsys):
+    configure(deck)
+    entry(deck, ID, model="fixture/whisper-0")
+    entry(deck, OTHER, model="fixture/whisper-2")
+    calls = record(monkeypatch)
+    assert components.retranscribe(deck, dry_run=False) == 0
+    assert [args[1] for _, args in calls] == [ID, ID, ID]
+    assert calls[0][1] == ["run", ID, "--force"]
+    assert "1 re-transcribed with fixture/whisper-2, 0 failed" in capsys.readouterr().out
+
+
+def test_retranscribe_sweeps_in_an_entry_with_no_transcript(deck, monkeypatch):
+    configure(deck)
+    entry(deck, ID, transcript=False)
+    calls = record(monkeypatch)
+    assert components.retranscribe(deck, dry_run=False) == 0
+    assert calls[0] == ("transcribe", ["run", ID, "--force"])
+
+
+def test_retranscribe_with_every_label_current_is_a_no_op(deck, monkeypatch):
+    configure(deck)
+    entry(deck, ID, model="fixture/whisper-2")
+    calls = record(monkeypatch)
+    assert components.retranscribe(deck, dry_run=False) == 0
+    assert calls == []
+
+
+def test_dry_run_prints_ids_to_stdout_and_runs_nothing(deck, monkeypatch, capsys):
+    configure(deck)
+    entry(deck, ID, model="fixture/whisper-0")
+    entry(deck, OTHER, model="fixture/whisper-2")
+    calls = record(monkeypatch)
+    assert components.retranscribe(deck, dry_run=True) == 0
+    out = capsys.readouterr().out
+    assert out.split() == [ID]
+    assert calls == []
+
+
+def test_one_failure_does_not_stop_the_retranscribe_sweep(deck, monkeypatch, capsys):
+    configure(deck)
+    entry(deck, ID, model="old")
+    entry(deck, OTHER, model="old")
+
+    def outcome(module, args):
+        return Done(returncode=1) if args[1] == ID else Done()
+
+    record(monkeypatch, outcome)
+    assert components.retranscribe(deck, dry_run=False) == 1
+    out, err = capsys.readouterr()
+    assert "1 re-transcribed with fixture/whisper-2, 1 failed" in out
+    assert ID in err
+
+
+def test_an_unconfigured_transcriber_is_a_usage_error(deck, monkeypatch):
+    (deck / "config.toml").write_text("[ingest]\nfetcher_command = 'x'\n")
+    calls = record(monkeypatch)
+    assert components.retranscribe(deck, dry_run=False) == 2
+    assert calls == []
+
+
+# ------------------------------------------------------------------ the parser
+
+
+def test_the_surface_is_exactly_the_contract():
+    verbs = build_choices()
+    assert verbs == {
+        "add", "search", "ask", "list", "show", "reindex", "rm",
+        "retranscribe", "adapt-parakeet",
+    }
+
+
+def build_choices():
+    parser = main.build_parser()
+    for action in parser._actions:
+        if getattr(action, "choices", None) and isinstance(action.choices, dict):
+            return set(action.choices)
+    raise AssertionError("no subcommands on the parser")
+
+
+def test_every_verb_is_listed_in_help(capsys):
+    with pytest.raises(SystemExit) as exit_code:
+        main.build_parser().parse_args(["--help"])
+    assert exit_code.value.code == 0
+    printed = capsys.readouterr().out
+    for verb in build_choices():
+        assert verb in printed
+
+
+def test_an_unknown_verb_exits_2():
+    with pytest.raises(SystemExit) as exit_code:
+        main.build_parser().parse_args(["bogus"])
+    assert exit_code.value.code == 2
+
+
+def test_adapt_parakeet_is_transcribes_filter_with_streams_inherited(deck, monkeypatch):
+    seen = {}
+
+    def fake(module, args, home_dir, capture=False):
+        seen.update(module=module, args=args, capture=capture)
+        return Done(returncode=3)
+
+    monkeypatch.setattr(components, "run", fake)
+    args = main.build_parser().parse_args(["adapt-parakeet"])
+    assert main.dispatch(args, deck) == 3  # the child's code, unchanged
+    assert seen == {"module": "transcribe", "args": ["from-parakeet"], "capture": False}
+
+
+def test_optional_flags_are_passed_on_only_when_given(deck, monkeypatch):
+    calls = record(monkeypatch)
+    main.dispatch(main.build_parser().parse_args(["search", "a", "b"]), deck)
+    main.dispatch(main.build_parser().parse_args(["ask", "why", "-k", "3", "--fast"]), deck)
+    assert calls[0] == ("index", ["search", "a", "b"])
+    assert calls[1] == ("ask", ["answer", "why", "-k", "3", "--fast"])

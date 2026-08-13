@@ -1,12 +1,11 @@
 """The tapedeck executable (SPEC-cli-001, system/contracts/cli-surface.md).
 
-Seven verbs and almost no logic. The home is resolved — and scaffolded, if this
-is its first use — before any verb runs, then each verb is either handed to the
+Nine verbs and almost no logic. The home is resolved — and scaffolded, if this is
+its first use — before any verb runs, then each verb is either handed to the
 component that owns it or answered from the library directory itself. Exit codes
-are the contract's throughout: 0 success, 1 operation failure, 2 usage or
-validation error, the same three every component already returns.
+are the contract's throughout: 0 success, 1 operation failure, 2 usage error.
 
-The surface is deliberately narrow: an eighth verb is a change to the durable
+The surface is deliberately narrow: a tenth verb is a change to the durable
 layer, not to this file.
 """
 
@@ -61,6 +60,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="delete the video file only, keeping transcript, archive page and index",
     )
+
+    again = verbs.add_parser("retranscribe", help="re-derive every superseded transcript")
+    again.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the ids that would be redone, one per line, and change nothing",
+    )
+
+    verbs.add_parser(
+        "adapt-parakeet",
+        help="stdin→stdout filter: parakeet-mlx JSON to the whisper shape the seam wants",
+    )
     return parser
 
 
@@ -84,6 +95,10 @@ def dispatch(args, deck) -> int:
         return components.delegate("ask", asked, deck)
     if args.verb == "reindex":
         return components.delegate("index", ["reindex"], deck)
+    if args.verb == "retranscribe":
+        return components.retranscribe(deck, args.dry_run)
+    if args.verb == "adapt-parakeet":
+        return components.delegate("transcribe", ["from-parakeet"], deck)
     if args.verb == "list":
         return library.show_all(deck, args.json)
     if args.verb == "show":

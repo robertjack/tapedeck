@@ -3,11 +3,11 @@
 `$TAPEDECK_HOME` is resolved on every run (SPEC-cli-001) and the home is made
 whole before any verb executes, so nothing downstream has to wonder whether the
 directories exist. The cli owns `config.toml` and writes it exactly once, with
-every seam of SPEC-core-004 already filled in from the default each component
-publishes for itself — a fresh tapedeck works out of the box, and every external
-tool it reaches for is one editable line. The librarian brief (`CLAUDE.md`) is
-scaffolded the same way, because ask refuses to turn an agent loose in the
-library without the grounding rules (SPEC-ask-001).
+every seam of SPEC-core-004 filled in from the default each component publishes
+for itself — a fresh tapedeck works out of the box, and every external tool it
+reaches for is one editable line. The librarian brief (`CLAUDE.md`) is scaffolded
+the same way, because ask refuses to turn an agent loose in the library without
+the grounding rules (SPEC-ask-001).
 
 Both files are the user's from the moment they exist: scaffolding never
 overwrites, so an edited config survives every later run.
@@ -23,7 +23,12 @@ from pathlib import Path
 
 from ask.seams import DEFAULT_ANSWERER_COMMAND, DEFAULT_LIBRARIAN_COMMAND
 from ingest.fetch import DEFAULT_FETCHER_COMMAND, DEFAULT_LISTER_COMMAND
-from transcribe.transcriber import DEFAULT_MODEL, DEFAULT_TRANSCRIBER_COMMAND
+from transcribe.transcriber import (
+    DEFAULT_MODEL,
+    DEFAULT_TRANSCRIBER_COMMAND,
+    PARAKEET_MODEL,
+    PARAKEET_TRANSCRIBER_COMMAND,
+)
 
 DEFAULT_HOME = "~/dev/storage/tapedeck"
 LIBRARY = "library"
@@ -57,8 +62,14 @@ lister_command = {lister}
 # in:  $TAPEDECK_MEDIA, $TAPEDECK_VIDEO_ID, $TAPEDECK_OUT
 # out: whisper-shaped JSON ({{"segments": [{{start, end, text}}, ...]}}) at $TAPEDECK_OUT
 transcriber_command = {transcriber}
-# recorded in every transcript, so a better model can supersede this one later
+# recorded in every transcript, so a better model can supersede this one later —
+# change both lines together, then `tapedeck retranscribe` redoes the library
 model = {model}
+#
+# The published alternative: parakeet-mlx, via the `tapedeck adapt-parakeet`
+# filter. Swapping transcribers is these two lines and nothing else.
+# transcriber_command = {parakeet_command}
+# model = {parakeet_model}
 
 [ask]
 # librarian mode (the default): runs with cwd set to this directory, the question
@@ -101,9 +112,8 @@ on stdin, and your answer is going straight to them.
 
 tapedeck checks every link you write after you finish: each must name a video
 that is really here, at a timestamp inside its real duration. A fabricated
-citation fails the whole command, so the user never sees it. You are free to
-read anything in this directory to find the answer — you are not free to invent
-where it came from.
+citation fails the whole command, so the user never sees it. Read anything in
+this directory to find the answer — you are not free to invent where it came from.
 
 ## Style
 
@@ -127,6 +137,8 @@ def config_text() -> str:
         lister=toml_value(DEFAULT_LISTER_COMMAND),
         transcriber=toml_value(DEFAULT_TRANSCRIBER_COMMAND),
         model=toml_value(DEFAULT_MODEL),
+        parakeet_command=toml_value(PARAKEET_TRANSCRIBER_COMMAND),
+        parakeet_model=toml_value(PARAKEET_MODEL),
         librarian=toml_value(DEFAULT_LIBRARIAN_COMMAND),
         answerer=toml_value(DEFAULT_ANSWERER_COMMAND),
     )
@@ -164,6 +176,14 @@ def entry(home: Path, video_id: str) -> Path:
 def page(home: Path, video_id: str) -> Path:
     """`archive/<id>.md` — the readable render, and the index's only source."""
     return home / ARCHIVE / f"{video_id}.md"
+
+
+def entries(home: Path) -> list[str]:
+    """Every video the library holds, in id order. A dotted directory is a fetch
+    in flight or a crashed one, never a video."""
+    library = home / LIBRARY
+    found = sorted(library.iterdir()) if library.is_dir() else []
+    return [path.name for path in found if path.is_dir() and not path.name.startswith(".")]
 
 
 def media(entry_dir: Path) -> list[Path]:

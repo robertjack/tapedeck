@@ -8,8 +8,7 @@ Removal (SPEC-cli-002) is the one place the cli destroys anything, and it is
 careful about two things. It only ever touches paths named after the id it was
 given, so no other video can be caught by it. And it does not reach into
 `tapedeck.db` — dropping a video's rows means deleting its archive page and
-letting the index, which owns that file, update itself from the archive that no
-longer mentions it (SPEC-core-001).
+letting the index, which owns that file, update itself (SPEC-core-001).
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ import sys
 from pathlib import Path
 
 from . import components
-from .home import LIBRARY, META_NAME, TRANSCRIPT_NAME, VIDEO_ID, entry, media, page
+from .home import META_NAME, TRANSCRIPT_NAME, VIDEO_ID, entries, entry, media, page
 
 
 def error(message: str) -> None:
@@ -55,17 +54,13 @@ def row(video_id: str, meta: dict) -> dict:
 
 def catalogue(home: Path) -> list[dict]:
     """Every video in the library, newest first."""
-    library = home / LIBRARY
     videos = []
-    for where in sorted(library.iterdir()) if library.is_dir() else []:
-        # A dotted directory is a fetch in flight or a crashed one — not a video yet.
-        if not where.is_dir() or where.name.startswith("."):
-            continue
-        meta = load_meta(where)
+    for video_id in entries(home):
+        meta = load_meta(entry(home, video_id))
         if meta is None:
-            error(f"{where.name}: no readable {META_NAME} — skipping")
+            error(f"{video_id}: no readable {META_NAME} — skipping")
             continue
-        videos.append(row(where.name, meta))
+        videos.append(row(video_id, meta))
     videos.sort(key=lambda video: (video["upload_date"], video["id"]), reverse=True)
     return videos
 
@@ -148,9 +143,9 @@ def remove(home: Path, video_id: str, media_only: bool) -> int:
 
 
 def drop_media(where: Path, video_id: str) -> int:
-    """Reclaim the disk, keep the knowledge: the transcript, the archive page and the
-    index rows all outlive the file they came from — at the price of never being able
-    to re-derive them without downloading the video again (SPEC-cli-002)."""
+    """Reclaim the disk, keep the knowledge: the transcript, the archive page and
+    the index rows outlive the file they came from — at the price of never
+    re-deriving them without downloading the video again (SPEC-cli-002)."""
     files = media(where)
     for path in files:
         path.unlink()
