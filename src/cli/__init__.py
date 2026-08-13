@@ -1,1 +1,1 @@
-"""tapedeck's front door: one executable over five components (SPEC-cli-001)."""
+"""tapedeck's entrypoint: the seven verbs of system/contracts/cli-surface.md."""

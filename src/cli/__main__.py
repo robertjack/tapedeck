@@ -1,4 +1,6 @@
-"""`python -m cli` — the same entry point the `tapedeck` script installs."""
+"""`python -m cli` — the same entrypoint the installed `tapedeck` script runs."""
+
+from __future__ import annotations
 
 import sys
 

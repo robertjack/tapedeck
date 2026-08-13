@@ -1,116 +1,172 @@
-"""What the cli reads from the library, and what `rm` takes away.
+"""The verbs the cli answers itself: what is here (`list`, `show`) and what goes (`rm`).
 
-`list` and `show` answer from `library/<id>/meta.json` rather than from the
-index: a video is in the library the moment ingest has written it, index or no
-index, and those two verbs should say so.
+These read `library/` directly, in the shape the layout contract fixes, because
+the library directory *is* the record of what tapedeck has: `rm` removing an
+entry is `list` forgetting it, with nothing to keep in step.
 
-Removal (SPEC-cli-002) is the one place the cli touches paths another component
-writes — the layout contract gives `rm` no other owner. It still stops short of
-`tapedeck.db`: the cli takes the archive page away and lets the index component
-notice, so the database keeps exactly one writer (SPEC-core-001).
+Removal (SPEC-cli-002) is the one place the cli destroys anything, and it is
+careful about two things. It only ever touches paths named after the id it was
+given, so no other video can be caught by it. And it does not reach into
+`tapedeck.db` — dropping a video's rows means deleting its archive page and
+letting the index, which owns that file, update itself from the archive that no
+longer mentions it (SPEC-core-001).
 """
 
 from __future__ import annotations
 
 import json
-import re
 import shutil
+import sys
 from pathlib import Path
 
-VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
-VIDEO_STEM = "video"
-NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp")
-UNITS = ("B", "KB", "MB", "GB", "TB")
+from . import components, home as home_mod
+
+META_NAME = "meta.json"
+TRANSCRIPT_NAME = "transcript.json"
+MEDIA_STEM = "video"
 
 
-def entry(home: Path, video_id: str) -> Path:
-    return home / "library" / video_id
+def error(message: str) -> None:
+    print(f"error: {message}", file=sys.stderr)
 
 
-def page(home: Path, video_id: str) -> Path:
-    return home / "archive" / f"{video_id}.md"
-
-
-def is_media(path: Path) -> bool:
-    """`video.<ext>` — the download itself, as the layout contract names it."""
-    return path.is_file() and path.stem == VIDEO_STEM and path.suffix.lower() not in NOT_VIDEO
-
-
-def media(home: Path, video_id: str) -> list[Path]:
-    directory = entry(home, video_id)
-    return sorted(p for p in directory.iterdir() if is_media(p)) if directory.is_dir() else []
-
-
-def read_meta(home: Path, video_id: str) -> dict | None:
-    """The video's metadata, or None if there is no readable entry here."""
+def hms(seconds) -> str:
+    """A duration, or nothing at all: a hand-edited meta.json is not worth a crash."""
     try:
-        data = json.loads((entry(home, video_id) / "meta.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def known(home: Path, video_id: str) -> bool:
-    """Anything of this video still on disk — an entry, or a page left behind."""
-    return entry(home, video_id).is_dir() or page(home, video_id).is_file()
-
-
-def row(video_id: str, meta: dict) -> dict:
-    """The four things `list` shows, present and stringy whatever meta.json holds."""
-    def text(key):
-        value = meta.get(key)
-        return value if isinstance(value, str) else ""
-
-    return {
-        "id": video_id,
-        "upload_date": text("upload_date"),
-        "channel": text("channel"),
-        "title": text("title") or video_id,
-    }
-
-
-def videos(home: Path) -> list[dict]:
-    """Every ingested video, newest upload first. A directory with no readable
-    meta.json is not an ingested video yet, so it is not one of these."""
-    library = home / "library"
-    found = [
-        row(d.name, meta)
-        for d in (library.iterdir() if library.is_dir() else [])
-        if d.is_dir() and not d.name.startswith(".") and (meta := read_meta(home, d.name))
-    ]
-    return sorted(found, key=lambda v: (v["upload_date"], v["id"]), reverse=True)
-
-
-def delete_media(home: Path, video_id: str) -> list[tuple[str, int]]:
-    """Drop the download, keep everything derived from it (SPEC-cli-002).
-    Returns what went, and how big it was — reclaimed disk is the whole point."""
-    removed = []
-    for path in media(home, video_id):
-        removed.append((path.name, path.stat().st_size))
-        path.unlink()
-    return removed
-
-
-def delete_page(home: Path, video_id: str) -> None:
-    page(home, video_id).unlink(missing_ok=True)
-
-
-def delete_entry(home: Path, video_id: str) -> None:
-    directory = entry(home, video_id)
-    if directory.is_dir():
-        shutil.rmtree(directory)
-
-
-def clock(seconds) -> str:
-    """h:mm:ss, the way timestamps read everywhere else in tapedeck."""
-    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds < 0:
-        return "?"
-    s = int(seconds)
+        s = int(seconds)
+    except (TypeError, ValueError):
+        return ""
     return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
 
 
-def size(nbytes: float) -> str:
-    for unit in UNITS:
-        if nbytes < 1024 or unit == UNITS[-1]:
-            return f"{nbytes:.0f} {unit}" if unit == "B" else f"{nbytes:.1f} {unit}"
-        nbytes /= 1024
+def is_media(path: Path) -> bool:
+    """`library/<id>/video.<ext>` — the download itself, and nothing derived from it."""
+    return path.is_file() and path.stem == MEDIA_STEM and path.suffix.lower() != ".json"
+
+
+def media_files(entry: Path) -> list[Path]:
+    return sorted(path for path in entry.iterdir() if is_media(path)) if entry.is_dir() else []
+
+
+def load_meta(entry: Path) -> dict | None:
+    try:
+        meta = json.loads((entry / META_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def row(video_id: str, meta: dict) -> dict:
+    return {
+        "id": video_id,
+        "upload_date": str(meta.get("upload_date") or ""),
+        "channel": str(meta.get("channel") or ""),
+        "title": str(meta.get("title") or "(untitled)"),
+    }
+
+
+def catalogue(home: Path) -> list[dict]:
+    """Every video in the library, newest first."""
+    library = home / home_mod.LIBRARY
+    videos = []
+    for entry in sorted(library.iterdir()) if library.is_dir() else []:
+        # A dotted directory is a fetch in flight or a crashed one — not a video yet.
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        meta = load_meta(entry)
+        if meta is None:
+            error(f"{entry.name}: no readable {META_NAME} — skipping")
+            continue
+        videos.append(row(entry.name, meta))
+    videos.sort(key=lambda video: (video["upload_date"], video["id"]), reverse=True)
+    return videos
+
+
+def show_all(home: Path, as_json: bool) -> int:
+    videos = catalogue(home)
+    if as_json:
+        print(json.dumps(videos, ensure_ascii=False, indent=2))
+        return 0
+    if not videos:
+        print("no videos yet — `tapedeck add <url>` starts one", file=sys.stderr)
+        return 0
+    for video in videos:
+        print(f"{video['id']}  {video['upload_date']}  {video['channel']}  {video['title']}")
+    return 0
+
+
+def show(home: Path, video_id: str, as_json: bool) -> int:
+    entry = home_mod.entry(home, video_id)
+    if not home_mod.VIDEO_ID.fullmatch(video_id) or not (entry / META_NAME).is_file():
+        error(f"{video_id}: not in the library")
+        return 2
+    meta = load_meta(entry)
+    if meta is None:
+        error(f"{video_id}: {META_NAME} is unreadable")
+        return 1
+    page = home_mod.page(home, video_id)
+    media = media_files(entry)
+    transcript = entry / TRANSCRIPT_NAME
+    if as_json:
+        print(
+            json.dumps(
+                {
+                    **meta,
+                    "archive": str(page) if page.is_file() else None,
+                    "media": str(media[0]) if media else None,
+                    "transcript": str(transcript) if transcript.is_file() else None,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    listed = row(video_id, meta)
+    facts = " · ".join(
+        part
+        for part in (listed["channel"], listed["upload_date"], hms(meta.get("duration_s")))
+        if part
+    )
+    print(f"{listed['title']}\n{facts}\n{str(meta.get('url') or '')}\n")
+    print(f"id          {video_id}")
+    print(f"archive     {page if page.is_file() else '— run `tapedeck add` to re-render'}")
+    print(f"video       {media[0].name if media else '— removed; `tapedeck add` re-fetches it'}")
+    print(f"transcript  {transcript if transcript.is_file() else '— not transcribed yet'}")
+    return 0
+
+
+def remove(home: Path, video_id: str, media_only: bool) -> int:
+    entry = home_mod.entry(home, video_id)
+    page = home_mod.page(home, video_id)
+    if not home_mod.VIDEO_ID.fullmatch(video_id) or not (entry.is_dir() or page.is_file()):
+        error(f"{video_id}: not in the library — nothing to remove")
+        return 2
+    if media_only:
+        return drop_media(entry, video_id)
+
+    # Page first, then the index update it makes true, then the entry: interrupted
+    # anywhere, the id still resolves and a second `rm` finishes the job.
+    page.unlink(missing_ok=True)
+    indexed = components.run("index", ["update", video_id], home, capture=True).returncode
+    shutil.rmtree(entry, ignore_errors=True)
+    if entry.exists():
+        error(f"{video_id}: {entry} could not be removed")
+        return 1
+    if indexed != 0:
+        error(f"{video_id}: files removed, but the index still has it — run `tapedeck reindex`")
+        return 1
+    print(f"{video_id}: removed")
+    return 0
+
+
+def drop_media(entry: Path, video_id: str) -> int:
+    """Reclaim the disk, keep the knowledge: the transcript, the archive page and the
+    index rows all outlive the file they came from — at the price of never being able
+    to re-derive them without downloading the video again (SPEC-cli-002)."""
+    files = media_files(entry)
+    for path in files:
+        path.unlink()
+    if not files:
+        print(f"{video_id}: no video file to remove", file=sys.stderr)
+    print(f"{video_id}: media removed — transcript, archive page and index entries kept")
+    return 0
