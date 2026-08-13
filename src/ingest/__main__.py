@@ -1,11 +1,15 @@
-"""Component boundary: `python -m ingest add <url|id> [--force]`.
+"""Component boundary: `python -m ingest add <url> [--force]` and `expand <url>`.
 
-Writes `library/<id>/video.<ext>` and `library/<id>/meta.json` — nothing else,
-per the write-authority table in the layout contract. A transcript already
+`add` writes `library/<id>/video.<ext>` and `library/<id>/meta.json` — nothing
+else, per the write-authority table in the layout contract. A transcript already
 sitting beside them belongs to transcribe and survives a `--force` re-fetch
-untouched; the cli re-derives it. Exit codes follow contracts/cli-surface.md: 0
-success, 1 operation failure, 2 usage or validation error. The entry directory
-goes to stdout, progress and diagnostics to stderr.
+untouched; the cli re-derives it. `expand` writes nothing at all: it turns one
+target into the ids it names, one per line, so a caller can walk a playlist or a
+channel one video at a time (SPEC-ingest-002).
+
+Exit codes follow contracts/cli-surface.md: 0 success, 1 operation failure, 2
+usage or validation error. Answers go to stdout — the entry directory for `add`,
+the ids for `expand` — progress and diagnostics to stderr.
 """
 
 from __future__ import annotations
@@ -51,6 +55,8 @@ def install(entry: Path, video: Path, document: dict) -> None:
 
 
 def add(home: Path, target: str, force: bool) -> int:
+    # A collection is refused here, before any seam is read: `add` downloads one
+    # video per invocation, and the sweep over a playlist belongs to the caller.
     video_id = sources.video_id(target)
     entry = home / LIBRARY / video_id
     if fetch.has_video(entry) and (entry / meta.META_NAME).is_file() and not force:
@@ -59,7 +65,7 @@ def add(home: Path, target: str, force: bool) -> int:
         print(f"{video_id}: already in the library — skipping the fetch", file=sys.stderr)
         print(entry)
         return 0
-    command = fetch.seam(home)
+    command = fetch.fetcher(home)
     url = sources.canonical_url(video_id)
     staging = fetch.stage()
     try:
@@ -75,16 +81,43 @@ def add(home: Path, target: str, force: bool) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def expand(home: Path, target: str) -> int:
+    """The ids a target names, in collection order, one per line."""
+    kind, value = sources.resolve(target)
+    if kind == sources.VIDEO:
+        # A link that already carries its id is not a question for a network
+        # tool; asking one would cost a round trip to learn what we just read.
+        print(value)
+        return 0
+    command = fetch.lister(home)
+    print(f"listing {value}…", file=sys.stderr)
+    found = sources.video_ids(fetch.collect(command, home, value))
+    if not found:
+        print(f"no videos in {value}", file=sys.stderr)
+    for video_id in found:
+        print(video_id)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ingest", description=__doc__.splitlines()[0])
-    sub = parser.add_subparsers(dest="verb", required=True)
-    one = sub.add_parser("add", help="fetch one video into the library")
+    verbs = parser.add_subparsers(dest="verb", required=True)
+
+    one = verbs.add_parser("add", help="fetch one video into the library")
     one.add_argument("target", help="a watch, youtu.be or shorts URL, or a bare video id")
     one.add_argument("--force", action="store_true", help="re-fetch a video already here")
-    args = parser.parse_args(argv)
 
+    many = verbs.add_parser("expand", help="print the video ids a target names")
+    many.add_argument("target", help="any video target, or a playlist or channel URL")
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
     try:
-        return add(home_dir(), args.target, args.force)
+        if args.verb == "add":
+            return add(home_dir(), args.target, args.force)
+        return expand(home_dir(), args.target)
     except USAGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
