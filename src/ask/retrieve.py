@@ -3,8 +3,7 @@
 The chunks live in `tapedeck.db`, which the index owns and rebuilds from archive
 pages. ask only ever reads it — SPEC-core-001 gives ask write authority nowhere — so
 the connection is opened read-only and cannot create, journal or touch a file by
-accident. A database past the shape SPEC-index-001 pins is reported unreadable
-rather than guessed at.
+accident.
 
 We read it rather than shelling out to `index search` because the two retrievals are
 not the same act. A searcher wants all their keywords, so `search` ANDs them; a
@@ -12,6 +11,13 @@ question is mostly grammar, and demanding "what", "is" and "the" alongside "core
 idea" finds nothing. So ask drops the question words and ORs the rest — and it needs
 whole section text, the channel a citation names, and a `--video` scope clause, none
 of which crosses the search verb's surface.
+
+Reading the file directly means inheriting the duty that came with it (SPEC-ask-004):
+a database this build does not search under is not one ask may answer from, and it is
+refused with the hint a missing database gets, before the answerer is invoked. The
+shape is the index's to define, so `_shaped` asks the index what it is rather than
+keeping a second copy of the answer — a copy that drifts is how `tapedeck search` and
+`ask --fast` come to give two accounts of the same library.
 """
 
 from __future__ import annotations
@@ -21,6 +27,8 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+
+from index.store import SCHEMA_VERSION, TOKENIZE
 
 from .citations import deep_link, hms
 
@@ -120,17 +128,41 @@ def match_expression(question: str) -> str:
     return " OR ".join('"' + term.replace('"', '""') + '"' for term in terms(question))
 
 
+def _shaped(db: sqlite3.Connection) -> bool:
+    """Is this a database this build both understands and searches like?
+
+    The version alone is not enough: rows stemmed by another tokenizer answer
+    different queries under the same number, so the tokenizer is read off the
+    database itself (SPEC-index-003, SPEC-ask-004).
+    """
+    if db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+        return False
+    ddl = db.execute("SELECT sql FROM sqlite_master WHERE name = 'chunks'").fetchone()
+    return bool(ddl) and TOKENIZE in (ddl[0] or "")
+
+
 def connect(home: Path) -> sqlite3.Connection:
+    """A read-only handle on an index of the shape this build searches, or nothing."""
     path = db_path(home)
     if not path.is_file():
         raise IndexUnreadable(f"no index at {path} — {REINDEX_HINT}")
+    db = None
     try:
         # Read-only URI: ask has no write authority over tapedeck.db — enforced
         # here rather than merely intended.
         db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        db.row_factory = sqlite3.Row
+        shaped = _shaped(db)  # a file that is no database at all fails here too
     except sqlite3.Error as exc:
+        if db is not None:
+            db.close()
         raise IndexUnreadable(f"cannot open {path} — {exc}; {REINDEX_HINT}") from exc
-    db.row_factory = sqlite3.Row
+    if not shaped:
+        db.close()
+        raise IndexUnreadable(
+            f"{path} was built by another schema or tokenizer — it is not an index "
+            f"this build can search, so ask will not answer from it; {REINDEX_HINT}"
+        )
     return db
 
 
@@ -156,12 +188,14 @@ def _source(row: sqlite3.Row) -> Source:
 def top_k(home: Path, question: str, k: int, video_id: str | None = None) -> list[Source]:
     """The k chunks most worth answering from, best first; empty is an answer."""
     match = match_expression(question)
+    db = connect(home)  # the shape is settled first, question or no question
     if not match:
+        db.close()
         return []
     sql = SEARCH_SQL + (SCOPE_SQL if video_id else "") + ORDER_SQL
     params = [match, video_id, k] if video_id else [match, k]
     try:
-        with closing(connect(home)) as db:
+        with closing(db):
             rows = db.execute(sql, params).fetchall()
     except sqlite3.Error as exc:
         raise IndexUnreadable(

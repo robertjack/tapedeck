@@ -7,21 +7,32 @@ chunks, so `[2]` in the prose and `[2]` under Sources are one passage by constru
 and `invented` is the gate between.
 
 Librarian mode has no numbering to hold it, so the check moves after the fact:
-`deep_links` collects every link offered, `unverified` asks the library whether each
-is a real moment in a real video, and under `--video` `ask_for` states the scope
-going in while `unverified` holds the answer to it coming back (SPEC-ask-003).
-Either way the model picks its citations and never decides whether they stand.
+`deep_links` reads every link offered, `unverified` asks the library whether each is a
+real moment in a real video, and under `--video` `ask_for` states the scope going in
+while `unverified` holds the answer to it coming back (SPEC-ask-003). Either way the
+model picks its citations and never decides whether they stand.
+
+A verifier is only as good as its reading, and a citation lives in a sentence: the
+full stop that ends the sentence is prose, not URL and not part of the `t=` the URL
+carries. Both halves of that matter and they pull in opposite directions — swallow
+the punctuation into the id and a true citation is convicted; swallow it into the
+offset, fail to parse, and call the link one that claims no moment, and a fabricated
+9999s walks past the bounds check wearing a full stop. So the punctuation comes off
+the link before anything is read out of it, and a `t=` that still cannot be read is a
+citation that fails, never one that is waived.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
 MARKER = re.compile(r"\[(\d+)\]")
-# A citation link, stopping before the punctuation that closes a markdown link or
-# ends a sentence: the `)` of `](url).` is not part of the url.
-LINK = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com/watch\?|youtu\.be/)[^\s)\]<>\"']+")
+# A citation link: it ends where whitespace, a markdown `)`, or a bracket ends it.
+LINK = re.compile(r"""https?://(?:[\w-]+\.)*(?:youtube\.com|youtu\.be)/[^\s()\[\]<>"']+""")
+# The characters that end a sentence rather than a URL.
+PROSE = ".,;:!?\"'…»"
 # `t=` as YouTube writes it: bare seconds, `95s`, or `1h2m3s`.
 OFFSET = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?", re.IGNORECASE)
 
@@ -112,27 +123,49 @@ def ask_for(question: str, scope: str | None) -> str:
     return f"{SCOPE_NOTE.format(video_id=scope)}\n\n{question}\n"
 
 
-def _offset(raw: str) -> int | None:
-    """A `t=` value in seconds, or None when the link claims no moment."""
-    match = OFFSET.fullmatch(raw.strip())
+@dataclass(frozen=True)
+class Citation:
+    """One link an answer offers: where it points, and to what moment.
+
+    `stated` is whether the link carried a `t=` at all, which is not the same
+    question as whether `seconds` could be read out of it. A link with no `t=`
+    claims no moment and there is nothing to bound; a link whose `t=` is unreadable
+    claims a moment nobody can check, and that is a failed citation, not a free one.
+    """
+
+    url: str
+    video_id: str
+    seconds: int | None
+    stated: bool
+
+
+def _moment(raw: str) -> int | None:
+    """A `t=` value in seconds, or None when it cannot be read as one."""
+    match = OFFSET.fullmatch(raw.strip().strip(PROSE))
     if match is None or not any(match.groups()):
         return None
     hours, minutes, seconds = (int(part or 0) for part in match.groups())
     return hours * 3600 + minutes * 60 + seconds
 
 
-def deep_links(answer: str) -> list[tuple[str, str, int | None]]:
-    """Every citation the answer offers, as (url, video id, seconds into it)."""
+def deep_links(answer: str) -> list[Citation]:
+    """Every citation the answer offers, read exactly as the contract reads them."""
     found = []
-    for url in LINK.findall(answer):
+    for match in LINK.findall(answer):
+        # The sentence's punctuation comes off before the URL is taken apart, so it
+        # lands in neither the video id nor the offset.
+        url = match.rstrip(PROSE)
         parts = urlsplit(url)
-        query = parse_qs(parts.query)
+        query = parse_qs(parts.query, keep_blank_values=True)
         video_id = (query.get("v") or [parts.path.strip("/")])[0]
-        found.append((url, video_id, _offset(query.get("t", [""])[0])))
+        stamps = query.get("t") or []
+        found.append(
+            Citation(url, video_id, _moment(stamps[0]) if stamps else None, bool(stamps))
+        )
     return found
 
 
-def unverified(links, videos, scope: str | None = None) -> list[str]:
+def unverified(links, library, scope: str | None = None) -> list[str]:
     """The citations the library cannot vouch for — one printable line each.
 
     A link is good when the library holds that video, the moment is inside it, and —
@@ -140,14 +173,20 @@ def unverified(links, videos, scope: str | None = None) -> list[str]:
     disprove a moment: this checks fabrication, not gaps in metadata.
     """
     problems = []
-    for url, video_id, seconds in links:
-        duration = videos.get(video_id)
-        if video_id not in videos:
-            problems.append(f"{url} — no video {video_id!r} in the library")
-        elif scope and video_id != scope:
-            problems.append(f"{url} — {video_id} is outside the --video {scope} scope")
-        elif seconds is not None and duration is not None and seconds > duration:
+    for cite in links:
+        if not library.holds(cite.video_id):
+            problems.append(f"{cite.url} — no video {cite.video_id!r} in the library")
+            continue
+        if scope and cite.video_id != scope:
+            problems.append(f"{cite.url} — {cite.video_id} is outside the --video {scope} scope")
+            continue
+        if cite.stated and cite.seconds is None:
+            problems.append(f"{cite.url} — the moment this cites cannot be read")
+            continue
+        length = library.duration(cite.video_id)
+        if cite.seconds is not None and length is not None and cite.seconds > length:
             problems.append(
-                f"{url} — {hms(seconds)} is past the end of {video_id} ({hms(duration)})"
+                f"{cite.url} — {hms(cite.seconds)} is past the end of "
+                f"{cite.video_id} ({hms(length)})"
             )
     return problems

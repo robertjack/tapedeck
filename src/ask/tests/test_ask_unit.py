@@ -1,39 +1,65 @@
-"""Ephemeral unit tests: the seams the durable evals cannot see from outside.
+"""Ephemeral unit tests for ask — the seams and readings the durable evals bracket.
 
-Disposable — the durable evals in system/evals/ask/ are the real contract.
-Run with: uv run --with pytest pytest src/ask/tests -q
+These are disposable: they test the current implementation's units, where the suite
+under system/evals/ask/ tests the boundary that outlives it. Run:
+
+    uv run --with pytest pytest src/ask/tests -q
 """
+
+from __future__ import annotations
 
 import json
 import sqlite3
 
 import pytest
 
-from ask.citations import (
-    INSTRUCTIONS,
-    ask_for,
-    deep_link,
-    deep_links,
-    document,
-    hms,
-    invented,
-    prompt,
-    sources_block,
-    unverified,
-)
-from ask.library import videos
-from ask.retrieve import IndexUnreadable, Source, excerpt, match_expression, terms, top_k
-from ask.seams import ANSWERER_KEY, LIBRARIAN_KEY, AnswerError, ConfigError, brief, command, run
+from ask import citations, retrieve, seams
+from ask.__main__ import Failure, main
+from ask.citations import Citation, deep_links, hms, invented, prompt, sources_block, unverified
+from ask.library import Library
+from ask.retrieve import IndexUnreadable, Source, connect, excerpt, match_expression, terms
+from index.pages import Page, Section
+from index.store import DB_NAME, SCHEMA_VERSION, TOKENIZE, build
 
-SRC = Source(
-    video_id="dQw4w9WgXcQ",
-    title="Test Video",
-    channel="Fixture Channel",
-    section="The Core Idea",
-    start_s=95,
-    text="The core idea is regeneration over maintenance.",
-)
-BARE = Source("plainvide00", "Sourdough", "", "", 0, "Block one.")
+CHAPTERED = {
+    "id": "dQw4w9WgXcQ",
+    "title": "Test Video: Building Things",
+    "channel": "Fixture Channel",
+    "upload_date": "2026-01-15",
+    "duration_s": 720,
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+}
+
+
+def watch(video_id="dQw4w9WgXcQ", t=None):
+    stamp = "" if t is None else f"&t={t}"
+    return f"https://www.youtube.com/watch?v={video_id}{stamp}"
+
+
+class FakeLibrary:
+    """Just the two questions citations asks of a library."""
+
+    def __init__(self, videos):
+        self.videos = videos
+
+    def holds(self, video_id):
+        return video_id in self.videos
+
+    def duration(self, video_id):
+        return self.videos.get(video_id)
+
+
+ONE_VIDEO = {"dQw4w9WgXcQ": 720}
+
+
+# --- library: presence, duration, and what "unknown" means -------------------
+
+
+def stock(home, meta=CHAPTERED):
+    entry = home / "library" / meta["id"]
+    entry.mkdir(parents=True)
+    (entry / "meta.json").write_text(json.dumps(meta))
+    return entry
 
 
 @pytest.fixture
@@ -43,291 +69,424 @@ def home(tmp_path):
     return h
 
 
-def add(home, video_id, duration=720, meta=True):
-    entry = home / "library" / video_id
-    entry.mkdir(parents=True)
-    if meta:
-        (entry / "meta.json").write_text(json.dumps({"id": video_id, "duration_s": duration}))
-    return entry
+def test_holds_is_one_path_question(home):
+    stock(home)
+    library = Library(home)
+    assert library.holds("dQw4w9WgXcQ")
+    assert not library.holds("nosuchvid00")
+    assert library.duration("dQw4w9WgXcQ") == 720
 
 
-def build_index(home, rows):
-    """A minimal stand-in for the index's database, at the schema it pins."""
-    db = sqlite3.connect(home / "tapedeck.db")
-    with db:
-        db.execute(
-            "CREATE TABLE videos (video_id TEXT PRIMARY KEY, title TEXT, channel TEXT,"
-            " upload_date TEXT, url TEXT, duration_s INTEGER)"
-        )
-        db.execute(
-            "CREATE VIRTUAL TABLE chunks USING fts5(video_id UNINDEXED,"
-            " start_s UNINDEXED, section, text, tokenize = 'porter unicode61')"
-        )
-        for video_id, start_s, section, text in rows:
-            db.execute(
-                "INSERT OR IGNORE INTO videos (video_id, title, channel) VALUES (?, ?, ?)",
-                (video_id, f"Title of {video_id}", "Fixture Channel"),
-            )
-            db.execute(
-                "INSERT INTO chunks (video_id, start_s, section, text) VALUES (?, ?, ?, ?)",
-                (video_id, start_s, section, text),
-            )
-    db.close()
+def test_a_malformed_id_is_never_held(home):
+    stock(home)
+    assert not Library(home).holds("../../etc")
+    assert not Library(home).holds("dQw4w9WgXcQ.")  # a full stop is not part of an id
 
 
-CHUNKS = [
-    ("dQw4w9WgXcQ", 0, "Intro", "Welcome to the fixture show."),
-    ("dQw4w9WgXcQ", 95, "The Core Idea", "The core idea is regeneration over maintenance."),
-    ("plainvide00", 0, "Part 1", "Block one content about sourdough starters."),
-    ("plainvide00", 300, "Part 2", "The core idea of proofing is patience."),
-]
+def test_zero_duration_means_unknown_not_zero_seconds(home):
+    stock(home, {**CHAPTERED, "id": "unknownlen0", "duration_s": 0})
+    library = Library(home)
+    assert library.holds("unknownlen0")
+    assert library.duration("unknownlen0") is None
 
 
-# --- library ---
+def test_missing_or_unreadable_metadata_still_counts_as_present(home):
+    (home / "library" / "nometaonevi").mkdir(parents=True)
+    entry = stock(home, {**CHAPTERED, "id": "brokenmeta0"})
+    (entry / "meta.json").write_text("{not json")
+    library = Library(home)
+    for video_id in ("nometaonevi", "brokenmeta0"):
+        assert library.holds(video_id)
+        assert library.duration(video_id) is None
 
 
-def test_videos_maps_ids_to_durations(home):
-    add(home, "dQw4w9WgXcQ", 720)
-    add(home, "plainvide00", 90.6)
-    assert videos(home) == {"dQw4w9WgXcQ": 720, "plainvide00": 90}
+def test_facts_are_read_once_per_id(home):
+    stock(home)
+    library = Library(home)
+    assert library.duration("dQw4w9WgXcQ") == 720
+    (home / "library" / "dQw4w9WgXcQ" / "meta.json").unlink()
+    assert library.duration("dQw4w9WgXcQ") == 720  # remembered, not re-read
 
 
-def test_videos_is_empty_without_a_library(tmp_path):
-    assert videos(tmp_path / "nowhere") == {}
+def test_stocked_sees_a_video_and_an_empty_library(home):
+    assert not Library(home).stocked()
+    stock(home)
+    assert Library(home).stocked()
 
 
-def test_unreadable_meta_still_counts_as_present(home):
-    add(home, "dQw4w9WgXcQ", meta=False)
-    add(home, "plainvide00").joinpath("meta.json").write_text("{not json")
-    assert videos(home) == {"dQw4w9WgXcQ": None, "plainvide00": None}
+def test_a_dotted_directory_is_not_a_video(home):
+    (home / "library" / ".tmp-fetch").mkdir()
+    assert not Library(home).stocked()
 
 
-def test_non_video_directories_are_ignored(home):
-    add(home, "dQw4w9WgXcQ")
-    (home / "library" / "scratch").mkdir()
-    (home / "library" / "stray.txt").write_text("x")
-    assert set(videos(home)) == {"dQw4w9WgXcQ"}
+# --- citations: where a URL ends --------------------------------------------
 
 
-# --- retrieval ---
+def test_a_bare_link_ending_a_sentence_keeps_its_id():
+    (cite,) = deep_links(f"Covered at {watch()}.")
+    assert cite.video_id == "dQw4w9WgXcQ"
+    assert cite.url == watch()
+    assert cite.seconds is None and not cite.stated
 
 
-def test_terms_drop_question_grammar():
-    assert terms("what is the core idea") == ["core", "idea"]
+@pytest.mark.parametrize("punctuation", [".", ",", ";", ":", "!", "?", '"', "'", "…"])
+def test_prose_punctuation_never_lands_in_the_offset(punctuation):
+    (cite,) = deep_links(f"See {watch(t='95s')}{punctuation} and on we go")
+    assert cite.video_id == "dQw4w9WgXcQ"
+    assert cite.seconds == 95
+    assert cite.stated
 
 
-def test_terms_keep_everything_when_all_grammar():
-    assert terms("what is it") == ["what", "is", "it"]
-
-
-def test_terms_keep_quoted_groups_whole_even_when_grammar():
-    assert terms('why "the thing"') == ["the thing"]
-
-
-def test_match_expression_ors_and_quotes_every_word():
-    assert match_expression("what is the core idea") == '"core" OR "idea"'
-
-
-def test_match_expression_is_empty_for_wordless_questions():
-    assert match_expression("??? ...") == ""
-
-
-def test_match_expression_escapes_embedded_quotes():
-    # A stray quote inside a word must be doubled, not left to end the phrase.
-    assert match_expression('say"hi') == '"say""hi"'
-
-
-def test_excerpt_cuts_long_text_at_a_word_boundary():
-    cut = excerpt("word " * 1000)
-    assert len(cut) < 1700 and cut.endswith("…") and "wor …" not in cut
-
-
-def test_excerpt_leaves_short_text_alone():
-    assert excerpt("  short one  ") == "short one"
-
-
-def test_top_k_ranks_and_bounds(home):
-    build_index(home, CHUNKS)
-    found = top_k(home, "what is the core idea", 2)
-    assert [s.section for s in found] == ["The Core Idea", "Part 2"]
-    assert found[0].channel == "Fixture Channel"
-    assert found[0].url == deep_link("dQw4w9WgXcQ", 95)
-
-
-def test_top_k_scoped_returns_only_that_video(home):
-    build_index(home, CHUNKS)
-    found = top_k(home, "what is the core idea", 8, "plainvide00")
-    assert {s.video_id for s in found} == {"plainvide00"}
-
-
-def test_scoped_k_buys_k_chunks_of_the_scoped_video(home):
-    build_index(home, CHUNKS)
-    # Unscoped, the best two hits are both the other video's; scoping must not
-    # simply filter them away and leave nothing.
-    assert len(top_k(home, "core idea sourdough", 2, "plainvide00")) == 2
-
-
-def test_top_k_scope_with_no_match_is_empty(home):
-    build_index(home, CHUNKS)
-    assert top_k(home, "sourdough starters", 8, "dQw4w9WgXcQ") == []
-
-
-def test_top_k_on_a_wordless_question_never_opens_the_index(home):
-    assert top_k(home, "???", 8) == []
-
-
-def test_top_k_without_an_index_is_unreadable(home):
-    with pytest.raises(IndexUnreadable):
-        top_k(home, "anything", 8)
-
-
-def test_top_k_on_a_foreign_database_is_unreadable(home):
-    (home / "tapedeck.db").write_bytes(b"not a database")
-    with pytest.raises(IndexUnreadable):
-        top_k(home, "anything", 8)
-
-
-# --- fast-mode citation contract ---
-
-
-def test_hms_is_unpadded_hours():
-    assert (hms(0), hms(95), hms(3725), hms(-4)) == ("0:00:00", "0:01:35", "1:02:05", "0:00:00")
-
-
-def test_prompt_carries_the_rules_the_sources_and_the_question():
-    text = prompt("what is the core idea", [SRC, BARE])
-    assert INSTRUCTIONS in text
-    assert "not in the library" in text
-    assert "[1] Test Video — Fixture Channel @ 0:01:35 (The Core Idea)" in text
-    assert "The core idea is regeneration over maintenance." in text
-    assert "[2] Sourdough @ 0:00:00" in text
-    assert text.endswith("Question: what is the core idea\n")
-
-
-def test_sources_block_lists_every_retrieved_chunk_with_its_link():
-    block = sources_block([SRC, BARE])
-    assert block.startswith("Sources:")
-    assert "[1] Test Video — Fixture Channel @ 0:01:35" in block
-    assert "    https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s" in block
-    assert "[2] Sourdough @ 0:00:00" in block
-
-
-def test_invented_finds_markers_no_source_carries():
-    assert invented("a [1] b [9] c [2]", 2) == [9]
-    assert invented("a [1] b", 2) == []
-
-
-def test_document_is_prose_then_sources():
-    out = document("  Answer [1].  ", [SRC])
-    assert out == "Answer [1].\n\nSources:\n[1] Test Video — Fixture Channel @ 0:01:35\n" + (
-        "    https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s"
-    )
-
-
-# --- librarian-mode verification ---
-
-
-def test_ask_for_is_the_bare_question_when_unscoped():
-    assert ask_for("what is this about", None) == "what is this about\n"
-
-
-def test_ask_for_states_the_scope():
-    text = ask_for("what is this about", "dQw4w9WgXcQ")
-    assert "library/dQw4w9WgXcQ/" in text
-    assert "archive/dQw4w9WgXcQ.md" in text
-    assert text.endswith("what is this about\n")
-
-
-def test_deep_links_reads_markdown_links_without_their_punctuation():
-    found = deep_links("see [it](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s).")
-    assert found == [("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s", "dQw4w9WgXcQ", 95)]
-
-
-def test_deep_links_reads_youtu_be_and_clock_offsets():
-    found = deep_links("a https://youtu.be/dQw4w9WgXcQ?t=1h2m3s b")
-    assert found[0][1:] == ("dQw4w9WgXcQ", 3723)
-
-
-def test_deep_links_without_a_timestamp_claim_no_moment():
-    assert deep_links("https://www.youtube.com/watch?v=dQw4w9WgXcQ")[0][2] is None
-
-
-def test_deep_links_ignores_other_urls():
-    assert deep_links("https://example.com/watch?v=dQw4w9WgXcQ&t=1s") == []
-
-
-def test_unverified_accepts_a_real_moment():
-    links = deep_links(deep_link("dQw4w9WgXcQ", 95))
-    assert unverified(links, {"dQw4w9WgXcQ": 720}) == []
-
-
-def test_unverified_rejects_a_video_the_library_lacks():
-    links = deep_links(deep_link("nosuchvid00", 10))
-    assert "no video" in unverified(links, {"dQw4w9WgXcQ": 720})[0]
-
-
-def test_unverified_rejects_a_moment_past_the_end():
-    links = deep_links(deep_link("dQw4w9WgXcQ", 9999))
-    assert "past the end" in unverified(links, {"dQw4w9WgXcQ": 720})[0]
-
-
-def test_unverified_tolerates_an_unknown_duration():
-    links = deep_links(deep_link("dQw4w9WgXcQ", 9999))
-    assert unverified(links, {"dQw4w9WgXcQ": None}) == []
-
-
-def test_unverified_rejects_a_real_video_outside_the_scope():
-    links = deep_links(deep_link("plainvide00", 10))
-    known = {"dQw4w9WgXcQ": 720, "plainvide00": 720}
-    assert unverified(links, known) == []
-    assert "outside the --video" in unverified(links, known, "dQw4w9WgXcQ")[0]
-
-
-# --- seams ---
-
-
-def test_command_reads_the_configured_seam(home):
-    (home / "config.toml").write_text('[ask]\nlibrarian_command = " claude -p "\n')
-    assert command(home, LIBRARIAN_KEY, "librarian") == "claude -p"
+def test_a_markdown_link_stops_at_its_closing_paren():
+    (cite,) = deep_links(f"Covered [here]({watch(t='95s')}).")
+    assert cite.url == watch(t="95s")
+    assert cite.seconds == 95
 
 
 @pytest.mark.parametrize(
-    "text", ["", "# nothing\n", "[ask]\nanswerer_command = 4\n", "[ask]\nanswerer_command = ''\n"]
+    ("raw", "seconds"),
+    [("95", 95), ("95s", 95), ("1h2m3s", 3723), ("2m", 120), ("1m30s", 90)],
 )
-def test_command_without_a_usable_value_is_a_config_error(home, text):
-    (home / "config.toml").write_text(text)
-    with pytest.raises(ConfigError):
-        command(home, ANSWERER_KEY, "answerer")
+def test_youtube_offset_spellings(raw, seconds):
+    (cite,) = deep_links(f"See {watch(t=raw)}")
+    assert cite.seconds == seconds
 
 
-def test_command_on_broken_toml_is_a_config_error(home):
-    (home / "config.toml").write_text("[ask\n")
-    with pytest.raises(ConfigError):
-        command(home, ANSWERER_KEY, "answerer")
+def test_a_short_link_carries_its_id_in_the_path():
+    (cite,) = deep_links("See https://youtu.be/dQw4w9WgXcQ?t=95s.")
+    assert cite.video_id == "dQw4w9WgXcQ"
+    assert cite.seconds == 95
 
 
-def test_brief_is_required(home):
-    with pytest.raises(ConfigError):
-        brief(home)
+def test_several_citations_in_one_answer():
+    text = f"One {watch(t='95s')}, two [x]({watch('plainvide00', '10s')})."
+    assert [c.video_id for c in deep_links(text)] == ["dQw4w9WgXcQ", "plainvide00"]
+
+
+def test_prose_that_cites_nothing():
+    assert deep_links("A confident answer with no citations at all.") == []
+    assert deep_links("See https://example.com/watch?v=dQw4w9WgXcQ") == []
+
+
+# --- citations: what the library will vouch for ------------------------------
+
+
+def test_a_real_moment_in_a_real_video_stands():
+    assert unverified(deep_links(f"[x]({watch(t='95s')})"), FakeLibrary(ONE_VIDEO)) == []
+
+
+def test_the_end_of_a_video_is_inside_it():
+    assert unverified(deep_links(f"[x]({watch(t='720s')})"), FakeLibrary(ONE_VIDEO)) == []
+
+
+def test_a_video_the_library_does_not_hold_is_a_fabrication():
+    (problem,) = unverified(deep_links(f"[x]({watch('nosuchvid00')})"), FakeLibrary(ONE_VIDEO))
+    assert "nosuchvid00" in problem
+
+
+def test_a_moment_past_the_end_is_a_fabrication():
+    (problem,) = unverified(deep_links(f"[x]({watch(t='9999s')})"), FakeLibrary(ONE_VIDEO))
+    assert "9999" in problem and "2:46:39" in problem
+
+
+def test_a_moment_past_the_end_is_caught_through_trailing_punctuation():
+    """The bug this pins: `t=9999s.` must not parse to nothing and be waived."""
+    (problem,) = unverified(deep_links(f"Settled at {watch(t='9999s')}."), FakeLibrary(ONE_VIDEO))
+    assert "9999" in problem
+
+
+def test_an_unreadable_offset_fails_rather_than_passes():
+    """A `t=` the parser gives up on claims a moment nobody can check."""
+    (cite,) = deep_links(f"[x]({watch(t='soon')})")
+    assert cite == Citation(watch(t="soon"), "dQw4w9WgXcQ", None, stated=True)
+    (problem,) = unverified([cite], FakeLibrary(ONE_VIDEO))
+    assert "cannot be read" in problem
+
+
+def test_an_unknown_duration_bounds_nothing():
+    library = FakeLibrary({"unknownlen0": None})
+    assert unverified(deep_links(f"[x]({watch('unknownlen0', '9999s')})"), library) == []
+
+
+def test_an_unknown_duration_does_not_excuse_an_absent_video():
+    library = FakeLibrary({"unknownlen0": None})
+    assert unverified(deep_links(f"[x]({watch('nosuchvid00', '9s')})"), library)
+
+
+def test_a_scope_rejects_another_video_the_library_really_has():
+    library = FakeLibrary({"dQw4w9WgXcQ": 720, "plainvide00": 720})
+    links = deep_links(f"[x]({watch('plainvide00', '10s')})")
+    (problem,) = unverified(links, library, scope="dQw4w9WgXcQ")
+    assert "outside the --video" in problem
+    assert unverified(deep_links(f"[x]({watch(t='10s')})"), library, scope="dQw4w9WgXcQ") == []
+
+
+# --- citations: the fast-mode contract ---------------------------------------
+
+
+def source(number=1, section="The Core Idea"):
+    return Source(
+        video_id="dQw4w9WgXcQ",
+        title="Test Video: Building Things",
+        channel="Fixture Channel",
+        section=section,
+        start_s=95 * number,
+        text="The core idea is regeneration over maintenance.",
+    )
+
+
+def test_the_prompt_carries_the_rules_the_sources_and_the_question():
+    text = prompt("what is the core idea", [source()])
+    assert "what is the core idea" in text
+    assert "The core idea is regeneration over maintenance." in text
+    assert "not in the library" in text
+    assert "[1]" in text
+    assert "The Core Idea" in text
+
+
+def test_sources_are_numbered_as_retrieved_cited_or_not():
+    block = sources_block([source(1), source(2)])
+    assert "[1] Test Video: Building Things — Fixture Channel @ 0:01:35" in block
+    assert "[2] Test Video: Building Things — Fixture Channel @ 0:03:10" in block
+    assert "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=190s" in block
+
+
+def test_a_marker_no_source_carries_is_invented():
+    assert invented("Something confident [9].", 2) == [9]
+    assert invented("As shown [1] and [2].", 2) == []
+    assert invented("Nothing cited at all.", 2) == []
+
+
+def test_hms_and_the_scope_note():
+    assert (hms(0), hms(95), hms(3723)) == ("0:00:00", "0:01:35", "1:02:03")
+    assert citations.ask_for("q", None) == "q\n"
+    assert "dQw4w9WgXcQ" in citations.ask_for("q", "dQw4w9WgXcQ")
+
+
+# --- retrieval: what a question asks for -------------------------------------
+
+
+def test_question_grammar_is_dropped_and_the_rest_ored():
+    assert terms("what is the core idea") == ["core", "idea"]
+    assert match_expression("what is the core idea") == '"core" OR "idea"'
+
+
+def test_a_question_of_pure_grammar_keeps_its_words():
+    assert terms("what is it") == ["what", "is", "it"]
+
+
+def test_a_quoted_group_survives_and_punctuation_cannot_be_syntax():
+    assert terms('why "core idea" C++ ***') == ["core idea", "C++"]
+    assert match_expression('say "a b"') == '"say" OR "a b"'
+    assert match_expression("???") == ""
+
+
+def test_a_long_section_is_cut_at_a_word_boundary():
+    text = "word " * 500
+    cut = excerpt(text)
+    assert len(cut) <= retrieve.EXCERPT_CHARS + 2 and cut.endswith("…")
+    assert excerpt("  short  ") == "short"
+
+
+# --- retrieval: the shape gate (SPEC-ask-004) --------------------------------
+
+
+def page(video_id="dQw4w9WgXcQ"):
+    return Page(
+        video_id=video_id,
+        title="Test Video: Building Things",
+        channel="Fixture Channel",
+        upload_date="2026-01-15",
+        url=watch(video_id),
+        duration_s=720,
+        sections=(Section(95, "The Core Idea", "The core idea is regeneration."),),
+    )
+
+
+def indexed(home):
+    home.mkdir(parents=True, exist_ok=True)
+    build(home, [page()])
+    return home / DB_NAME
+
+
+def test_an_index_of_this_shape_answers(home):
+    indexed(home)
+    (found,) = retrieve.top_k(home, "what is the core idea", 8)
+    assert found.video_id == "dQw4w9WgXcQ"
+    assert found.channel == "Fixture Channel"
+    assert found.url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=95s"
+
+
+def test_no_index_at_all_names_the_reindex_hint(home):
+    with pytest.raises(IndexUnreadable, match="reindex"):
+        connect(home)
+
+
+def test_another_schema_version_is_refused(home):
+    path = indexed(home)
+    con = sqlite3.connect(path)
+    with con:
+        con.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    con.close()
+    with pytest.raises(IndexUnreadable, match="reindex"):
+        connect(home)
+
+
+def test_another_tokenizer_under_the_current_version_is_refused(home):
+    path = indexed(home)
+    con = sqlite3.connect(path)
+    with con:
+        con.executescript("DROP TABLE chunks;")
+        con.execute(
+            "CREATE VIRTUAL TABLE chunks USING fts5(video_id UNINDEXED, "
+            "start_s UNINDEXED, section, text, tokenize = 'unicode61')"
+        )
+        con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    con.close()
+    assert TOKENIZE not in "unicode61"
+    with pytest.raises(IndexUnreadable, match="reindex"):
+        connect(home)
+
+
+def test_a_file_that_is_no_database_is_refused(home):
+    home.mkdir(parents=True, exist_ok=True)
+    (home / DB_NAME).write_text("not a database")
+    with pytest.raises(IndexUnreadable, match="reindex"):
+        connect(home)
+
+
+def test_the_connection_cannot_write(home):
+    indexed(home)
+    db = connect(home)
+    with pytest.raises(sqlite3.OperationalError):
+        db.execute("DELETE FROM videos")
+    db.close()
+
+
+def test_a_scope_narrows_the_retrieval_itself(home):
+    home.mkdir(parents=True, exist_ok=True)
+    build(home, [page(), page("plainvide00")])
+    assert len(retrieve.top_k(home, "core idea", 8)) == 2
+    scoped = retrieve.top_k(home, "core idea", 8, "plainvide00")
+    assert [s.video_id for s in scoped] == ["plainvide00"]
+
+
+# --- the boundary: modes, order, exit codes ----------------------------------
+
+
+def seam(home, key, body):
+    script = home / f"{key}.sh"
+    script.write_text(body)
+    (home / "config.toml").write_text(f'[ask]\n{key} = "sh {script}"\n')
     (home / "CLAUDE.md").write_text("# brief\n")
-    assert brief(home).name == "CLAUDE.md"
 
 
-def test_run_returns_stdout_and_reports_where_it_ran(home):
-    out = run("pwd; cat", home, "hello\n", "librarian", cwd=home)
-    assert out.splitlines()[0] == str(home)
-    assert "hello" in out
+def run(home, monkeypatch, *argv):
+    monkeypatch.setenv("TAPEDECK_HOME", str(home))
+    return main(["run", *argv])
 
 
-def test_run_exports_the_home(home):
-    assert run('printf "%s" "$TAPEDECK_HOME"', home, "", "answerer") == str(home)
+CITES = "#!/bin/sh\ncat > /dev/null\nprintf 'See [x](%s).\\n' 'URL'\n"
 
 
-def test_run_on_a_failed_seam_raises(home):
-    with pytest.raises(AnswerError):
-        run("exit 3", home, "", "answerer")
+def librarian_saying(url):
+    return CITES.replace("URL", url)
 
 
-def test_run_on_an_empty_answer_raises(home):
-    with pytest.raises(AnswerError):
-        run("cat > /dev/null", home, "q", "answerer")
+def test_librarian_mode_prints_a_verified_answer(home, monkeypatch, capsys):
+    stock(home)
+    seam(home, "librarian_command", librarian_saying(watch(t="95s")))
+    assert run(home, monkeypatch, "what is this about") == 0
+    assert "dQw4w9WgXcQ&t=95s" in capsys.readouterr().out
+
+
+def test_librarian_mode_refuses_a_fabrication(home, monkeypatch):
+    stock(home)
+    seam(home, "librarian_command", librarian_saying(watch("nosuchvid00", "9s")))
+    assert run(home, monkeypatch, "what is this about") == 1
+
+
+def test_an_empty_library_never_reaches_the_librarian(home, monkeypatch):
+    seam(home, "librarian_command", "#!/bin/sh\ntouch \"$TAPEDECK_HOME/ran\"\n")
+    assert run(home, monkeypatch, "anything") == 1
+    assert not (home / "ran").exists()
+
+
+def test_a_missing_brief_is_a_config_error(home, monkeypatch):
+    stock(home)
+    seam(home, "librarian_command", librarian_saying(watch()))
+    (home / "CLAUDE.md").unlink()
+    assert run(home, monkeypatch, "anything") == 2
+
+
+def test_an_unknown_scope_is_settled_before_anything_runs(home, monkeypatch):
+    stock(home)
+    seam(home, "librarian_command", "#!/bin/sh\ntouch \"$TAPEDECK_HOME/ran\"\n")
+    assert run(home, monkeypatch, "anything", "--video", "nosuchvid00") == 2
+    assert not (home / "ran").exists()
+
+
+def test_a_bad_k_is_a_usage_error(home, monkeypatch):
+    stock(home)
+    assert run(home, monkeypatch, "anything", "-k", "0", "--fast") == 2
+
+
+def test_fast_mode_appends_the_sources_it_retrieved(home, monkeypatch, capsys):
+    indexed(home)
+    seam(home, "answerer_command", "#!/bin/sh\ncat > \"$TAPEDECK_HOME/seen\"\nprintf 'Yes [1].\\n'\n")
+    assert run(home, monkeypatch, "what is the core idea", "--fast") == 0
+    out = capsys.readouterr().out
+    assert "Yes [1]." in out and "Sources:" in out and "&t=95s" in out
+    assert "what is the core idea" in (home / "seen").read_text()
+
+
+def test_fast_mode_refuses_a_stale_index_without_invoking_the_answerer(home, monkeypatch):
+    path = indexed(home)
+    con = sqlite3.connect(path)
+    with con:
+        con.execute("PRAGMA user_version = 1")
+    con.close()
+    seam(home, "answerer_command", "#!/bin/sh\ntouch \"$TAPEDECK_HOME/ran\"\n")
+    assert run(home, monkeypatch, "what is the core idea", "--fast") == 1
+    assert not (home / "ran").exists()
+
+
+def test_fast_mode_refuses_an_invented_marker(home, monkeypatch):
+    indexed(home)
+    seam(home, "answerer_command", "#!/bin/sh\ncat > /dev/null\nprintf 'Sure [9].\\n'\n")
+    assert run(home, monkeypatch, "what is the core idea", "--fast") == 1
+
+
+def test_an_answerer_that_fails_or_says_nothing_is_a_clean_error(home, monkeypatch):
+    indexed(home)
+    seam(home, "answerer_command", "#!/bin/sh\ncat > /dev/null\nexit 1\n")
+    assert run(home, monkeypatch, "what is the core idea", "--fast") == 1
+    seam(home, "answerer_command", "#!/bin/sh\ncat > /dev/null\n")
+    assert run(home, monkeypatch, "what is the core idea", "--fast") == 1
+
+
+def test_the_cli_verb_name_answers_too(home, monkeypatch):
+    """`answer` is what src/cli/components.py calls; `run` is what the evals drive."""
+    stock(home)
+    seam(home, "librarian_command", librarian_saying(watch(t="95s")))
+    monkeypatch.setenv("TAPEDECK_HOME", str(home))
+    assert main(["answer", "what is this about"]) == 0
+
+
+def test_seams_report_a_missing_command_as_a_config_error(home):
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.toml").write_text("# no ask section\n")
+    with pytest.raises(seams.ConfigError, match="librarian"):
+        seams.command(home, seams.LIBRARIAN_KEY, "librarian")
+    (home / "config.toml").write_text("[ask]\nlibrarian_command = '   '\n")
+    with pytest.raises(seams.ConfigError):
+        seams.command(home, seams.LIBRARIAN_KEY, "librarian")
+
+
+def test_the_librarian_runs_in_the_library_home(home):
+    home.mkdir(parents=True, exist_ok=True)
+    assert seams.run("pwd", home, "", "librarian", cwd=home) == str(home)
+
+
+def test_failure_carries_its_exit_code():
+    assert Failure("nope", code=2).code == 2 and Failure("nope").code == 1
