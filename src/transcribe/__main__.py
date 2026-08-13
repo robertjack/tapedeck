@@ -1,9 +1,10 @@
 """Component boundary: `python -m transcribe run <id> [--force]`.
 
 Writes `library/<id>/transcript.json` — nothing else, per the write-authority
-table in the layout contract. Exit codes follow system/contracts/cli-surface.md:
-0 success, 1 operation failure, 2 usage or validation error. The transcript path
-goes to stdout, progress and diagnostics to stderr.
+table in the layout contract. The video beside it is the source of truth and is
+only ever read. Exit codes follow contracts/cli-surface.md: 0 success, 1
+operation failure, 2 usage or validation error. The transcript path goes to
+stdout, progress and diagnostics to stderr.
 """
 
 from __future__ import annotations
@@ -15,19 +16,19 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import transcriber
-from .document import TRANSCRIPT_NAME, BadTranscript, normalize, write
+from . import document, transcriber
 
-VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 DEFAULT_HOME = "~/dev/storage/tapedeck"
+LIBRARY = "library"
+VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 
 
 class BadRequest(ValueError):
-    """The command line does not name a transcribable video."""
+    """The target names no library entry."""
 
 
 USAGE_ERRORS = (BadRequest, transcriber.ConfigError)
-FAILURES = (transcriber.TranscribeError, BadTranscript, OSError)
+FAILURES = (transcriber.TranscribeError, document.BadTranscript, OSError)
 
 
 def home_dir() -> Path:
@@ -35,27 +36,35 @@ def home_dir() -> Path:
 
 
 def transcribe(home: Path, video_id: str, force: bool) -> int:
-    if not VIDEO_ID.fullmatch(video_id):
-        raise BadRequest(f"{video_id!r} is not an 11-character video id")
-    entry = home / "library" / video_id
-    target = entry / TRANSCRIPT_NAME
+    if not VIDEO_ID.fullmatch(video_id or ""):
+        # The id is written into transcript.json and into every deep link built
+        # from it, so it is checked before anything is derived under that name.
+        raise BadRequest(f"{video_id!r} is not a video id — expected 11 characters")
+    entry = home / LIBRARY / video_id
+    source = transcriber.media(entry, video_id)
+    target = entry / document.TRANSCRIPT_NAME
     if target.is_file() and not force:
-        # Idempotent by default (SPEC-core-003): transcription is the expensive part
-        # and a transcript is already here. `--force` re-derives it (SPEC-core-002).
+        # Idempotent by default (SPEC-core-003): transcription is the expensive
+        # step and this video already has one. `--force` re-derives it, which is
+        # how a better model comes to supersede an older transcript.
         print(f"{video_id}: already transcribed — skipping", file=sys.stderr)
         print(target)
         return 0
     command, model = transcriber.seam(home)
-    media = transcriber.find_media(entry, video_id)
     staging = transcriber.stage()
     try:
-        print(f"{video_id}: transcribing {media.name} with {model}…", file=sys.stderr)
-        output = transcriber.run(command, home, video_id, media, staging)
-        document = normalize(video_id, model, output)
+        out = transcriber.out_path(staging, source)
+        print(f"{video_id}: transcribing {source.name} with {model}…", file=sys.stderr)
+        transcriber.run(command, home, video_id, source, out)
+        # Nothing has touched the entry yet: the output has to read as JSON and
+        # normalize into real segments before a transcript exists at all, so a
+        # transcriber that failed halfway leaves the library exactly as it was.
+        payload = transcriber.read_output(out, video_id)
+        transcript = document.normalize(video_id, model, payload)
+        document.write(entry, transcript)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-    write(entry, document)
-    print(f"{video_id}: {len(document['segments'])} segments", file=sys.stderr)
+    print(f"{video_id}: {len(transcript['segments'])} segments ({model})", file=sys.stderr)
     print(target)
     return 0
 
@@ -63,9 +72,9 @@ def transcribe(home: Path, video_id: str, force: bool) -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="transcribe", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="verb", required=True)
-    one = sub.add_parser("run", help="transcribe one video already in the library")
-    one.add_argument("video_id", help="the 11-character video id")
-    one.add_argument("--force", action="store_true", help="re-derive an existing transcript")
+    one = sub.add_parser("run", help="derive the transcript for one video in the library")
+    one.add_argument("video_id", help="the 11-character id of a library entry")
+    one.add_argument("--force", action="store_true", help="re-transcribe a video that has one")
     args = parser.parse_args(argv)
 
     try:
