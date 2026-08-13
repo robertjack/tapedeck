@@ -6,7 +6,7 @@ Additive changes only; removals require superseding SPEC-cli-001.
 |---|---|---|
 | `tapedeck add <url> [--force]` | yes | ingest → transcribe → archive → index for one video |
 | `tapedeck search <query> [--json] [-k N]` | no | ranked timestamped excerpts with deep links |
-| `tapedeck ask <question> [-k N]` | no | retrieval + LLM answer with citations (SPEC-ask-001) |
+| `tapedeck ask <question> [-k N] [--fast]` | no | librarian agent over the library (default) with post-hoc-verified citations; `--fast` = strict retrieval pipeline (SPEC-ask-001) |
 | `tapedeck list [--json]` | no | one line per video: id, date, channel, title |
 | `tapedeck show <id> [--json]` | no | metadata + archive path for one video |
 | `tapedeck reindex` | yes (db only) | rebuild tapedeck.db from archive/ alone |

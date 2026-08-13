@@ -69,7 +69,11 @@ def test_first_run_scaffolds_home_and_config(tmp_path):
     cfg = (home / "config.toml").read_text()
     for tool in ("yt-dlp", "mlx_whisper", "claude"):
         assert tool in cfg, f"first-run config.toml missing default for {tool}"
+    assert "librarian_command" in cfg, "first-run config must configure the librarian seam"
     assert (home / "library").is_dir()
+    brief = (home / "CLAUDE.md").read_text()
+    assert "not in the library" in brief, "librarian brief must carry the grounding rule"
+    assert "cite" in brief.lower()
 
 
 def test_add_runs_the_full_pipeline(home):
@@ -128,14 +132,15 @@ printf 'It is about regeneration [1].\\n'
 
 def test_ask_end_to_end_through_the_executable(home):
     # the full brain: add a video, then ask about it — cli delegates to the ask
-    # component (python -m ask run "<question>" [-k N]) with the citation contract
+    # component (python -m ask run "<question>" [-k N] [--fast]); fast mode here
+    # so the pipeline's citation contract is exercised through the executable
     set_pipeline(home)
     answer = home / "answer.sh"
     answer.write_text(ANSWER_OK)
     with (home / "config.toml").open("a") as fh:
         fh.write(f'\n[ask]\nanswerer_command = "sh {answer}"\n')
     assert run_cli(["add", "dQw4w9WgXcQ"], home).returncode == 0
-    r = run_cli(["ask", "what is the core idea"], home)
+    r = run_cli(["ask", "what is the core idea", "--fast"], home)
     assert r.returncode == 0, r.stderr
     assert "It is about regeneration [1]" in r.stdout
     assert "Sources:" in r.stdout

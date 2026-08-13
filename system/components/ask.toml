@@ -1,6 +1,6 @@
 [component]
 name = "ask"
-purpose = "Question -> top-k retrieval via index -> prompt assembly -> configured answerer (default claude -p) -> answer with tapedeck-assembled citations per the citation contract. Probabilistic inside, deterministic at the edges (SPEC-ask-001, SPEC-ask-002)."
+purpose = "Question -> librarian agent run in the library home (default; answer accepted only after mechanical citation verification) or, with --fast, the strict pipeline: top-k retrieval via index -> answerer -> tapedeck-assembled citations. Probabilistic inside, deterministic at the edges (SPEC-ask-001, SPEC-ask-002)."
 pace = "fast"
 language = "python"
 

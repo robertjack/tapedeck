@@ -147,6 +147,20 @@ def set_answerer(home, script_body):
     (home / "config.toml").write_text(f'[ask]\nanswerer_command = "sh {script}"\n')
 
 
+def set_librarian(home, script_body):
+    """Configure the librarian seam (SPEC-ask-001 default mode) with a fake:
+    [ask].librarian_command runs as a shell command with cwd = the library home and
+    the question on stdin; it prints an answer with inline deep-link citations.
+    Also writes the CLAUDE.md brief the mode requires."""
+    script = home / "librarian.sh"
+    script.write_text(script_body)
+    (home / "config.toml").write_text(f'[ask]\nlibrarian_command = "sh {script}"\n')
+    (home / "CLAUDE.md").write_text(
+        "# Librarian brief (fixture)\nAnswer only from the library; cite deep links; "
+        "say \"not in the library\" when sources are insufficient.\n"
+    )
+
+
 def run_cli(args, home):
     """Drive the user-facing `tapedeck` executable (override via $TAPEDECK_BIN)."""
     cmd = os.environ.get("TAPEDECK_BIN", "tapedeck")
