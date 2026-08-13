@@ -1,63 +1,76 @@
-"""YouTube addresses → the canonical 11-character video id (SPEC-ingest-001).
+"""The string a user actually types → the canonical 11-character video id.
 
-The id is the library's primary key, so every form of an address for the same
-video has to land on the same `library/<id>/`. Anything we cannot read as a
-single YouTube video is a usage error rather than a guess — a wrong id would
-silently start a second entry for a video already in the library.
+`add` is the only door into the library, and everything past it is that id: the
+entry directory, meta.json's `id`, every deep link the archive ever renders. So
+the parsing happens exactly once, here, and it is strict — the four forms
+SPEC-ingest-001 names and nothing else. Anything else is a usage error rather
+than a fetch attempt, because a wrong guess costs a download and files a video
+under a name no deep link will ever resolve.
 """
 
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlsplit
 
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
-HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
-SUBDOMAINS = ("www.", "m.", "music.")
-# Paths that carry the id as their next segment: /shorts/<id>, /embed/<id>, …
-ID_PATHS = ("shorts", "embed", "live", "v")
+SITE = "youtube.com"
+SHORT_HOST = "youtu.be"
+SCHEMES = ("", "http", "https")
+WATCH_PATH = "/watch"
+SHORTS = "shorts"
 
 
-class Unrecognized(ValueError):
-    """Not an address for a single YouTube video."""
+class BadRequest(ValueError):
+    """The target names no YouTube video."""
 
 
-def watch_url(video_id: str) -> str:
-    """The canonical watch URL — the same form the layout contract deep-links to."""
+def canonical_url(video_id: str) -> str:
+    """The watch URL for an id: what the fetcher is handed (a bare id is not
+    something yt-dlp can resolve) and meta.json's url when the source names none.
+    Same form as the deep links in contracts/library-layout.md."""
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
-def _host(netloc: str) -> str:
-    host = netloc.rsplit("@", 1)[-1].split(":")[0].lower()
-    for prefix in SUBDOMAINS:
-        if host.startswith(prefix):
-            host = host[len(prefix) :]
-    return host
+def _host(url) -> str:
+    host = (url.hostname or "").lower()
+    return host.removeprefix("www.")
 
 
-def canonical_id(text: str) -> str:
-    """The 11-character id inside `text`, or Unrecognized."""
-    raw = text.strip()
-    if VIDEO_ID.fullmatch(raw):
-        return raw
-    if not raw:
-        raise Unrecognized("no video address given")
-    # A bare host/path ("youtu.be/<id>") is an address too; urlparse needs a scheme.
+def _from_url(text: str) -> str | None:
+    """The id a YouTube link carries, or None for a link that is not one."""
     try:
-        url = urlparse(raw if "//" in raw else f"https://{raw}")
-    except ValueError as exc:
-        raise Unrecognized(f"{text!r} is not a usable address — {exc}") from exc
-    host = _host(url.netloc)
-    if host not in HOSTS:
-        raise Unrecognized(f"{text!r} is not a YouTube video address")
-    segments = [segment for segment in url.path.split("/") if segment]
-    candidate = None
-    if host == "youtu.be":
-        candidate = segments[0] if segments else None
-    elif segments[:1] == ["watch"]:
-        candidate = parse_qs(url.query).get("v", [None])[0]
-    elif len(segments) > 1 and segments[0] in ID_PATHS:
-        candidate = segments[1]
-    if candidate and VIDEO_ID.fullmatch(candidate):
-        return candidate
-    raise Unrecognized(f"{text!r} has no video id in it")
+        # A scheme-less "youtu.be/<id>" is a path to urlsplit until it has an
+        # authority marker; give it one so the host is read as a host.
+        url = urlsplit(text if "//" in text else f"//{text}")
+        host, path = _host(url), url.path
+    except ValueError:  # malformed authority, e.g. an unclosed IPv6 bracket
+        return None
+    if url.scheme not in SCHEMES:
+        return None
+    parts = [part for part in path.split("/") if part]
+    if host == SHORT_HOST:
+        return parts[0] if len(parts) == 1 else None
+    if host != SITE and not host.endswith(f".{SITE}"):
+        return None
+    if path.rstrip("/") == WATCH_PATH:
+        return (parse_qs(url.query).get("v") or [None])[0]
+    if len(parts) == 2 and parts[0] == SHORTS:
+        return parts[1]
+    return None
+
+
+def video_id(target: str) -> str:
+    """The canonical id in `target` — never a guess."""
+    text = (target or "").strip()
+    # The bare id is checked first because it is the one form with no structure to
+    # read. Everything else must survive URL parsing: an 11-character path segment
+    # on some other host ("example.com/not-a-video") is not an id, and looking for
+    # a bare id *inside* an arbitrary string is exactly how it would become one.
+    found = text if VIDEO_ID.fullmatch(text) else _from_url(text)
+    if found and VIDEO_ID.fullmatch(found):
+        return found
+    raise BadRequest(
+        f"{target!r} is not a YouTube video — expected a watch, youtu.be or shorts "
+        "URL, or a bare 11-character video id"
+    )

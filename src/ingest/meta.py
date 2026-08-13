@@ -1,47 +1,37 @@
-"""The fetcher's info.json → meta.json (system/contracts/meta.schema.json).
+"""The fetcher's info.json → library/<id>/meta.json (contracts/meta.schema.json).
 
-Source metadata is whatever the fetcher hands us; meta.json is the shape every
-downstream component reads. So normalization happens exactly here — dates become
-ISO, durations become whole seconds, chapters become {title, start_s} — and only
-the schema's own properties are carried through: fields nobody agreed on must
-not reach the archive renderer as if they had been.
+A fetcher emits whatever its tool happens to know: a hundred keys, dates as
+`20260115`, chapters keyed `start_time`, durations as floats. meta.json is the
+shape every other component reads, so the narrowing happens exactly here — the
+schema's own properties and nothing else (`additionalProperties: false`), dates
+as YYYY-MM-DD, seconds as numbers. Downstream never sees yt-dlp's vocabulary.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .sources import watch_url
-
 META_NAME = "meta.json"
-INFO_NAME = "info.json"  # what the pinned fetcher interface writes
-INFO_GLOB = "*.info.json"  # what `yt-dlp --write-info-json` writes
+COMPACT_DATE = re.compile(r"(\d{4})(\d{2})(\d{2})")
+ISO_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")  # a full timestamp keeps its date
 
 
-class BadMetadata(ValueError):
+class BadMeta(ValueError):
     """The fetcher's metadata cannot be normalized into meta.json."""
 
 
-def find_info(dest: Path) -> Path:
-    direct = dest / INFO_NAME
-    if direct.is_file():
-        return direct
-    candidates = sorted(path for path in dest.glob(INFO_GLOB) if path.is_file())
-    if not candidates:
-        raise BadMetadata(f"the fetcher wrote no {INFO_NAME} in {dest}")
-    return candidates[0]
+def _text(value) -> str:
+    """A string field as the schema wants it: a real string, or nothing."""
+    return value.strip() if isinstance(value, str) else ""
 
 
-def read_info(path: Path) -> dict:
-    try:
-        info = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise BadMetadata(f"{path.name} is unreadable — {exc}") from exc
-    if not isinstance(info, dict):
-        raise BadMetadata(f"{path.name} is not a JSON object")
-    return info
+def _line(value) -> str:
+    """One-line fields (title, chapter names) with their whitespace tidied."""
+    return " ".join(_text(value).split())
 
 
 def _number(value):
@@ -51,72 +41,87 @@ def _number(value):
     return float(value)
 
 
-def _upload_date(info: dict) -> str:
-    """YYYYMMDD (or an epoch) → YYYY-MM-DD; the schema takes nothing else."""
-    for key in ("upload_date", "release_date"):
-        digits = str(info.get(key) or "").replace("-", "")
-        try:
-            return datetime.strptime(digits, "%Y%m%d").strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-    for key in ("timestamp", "release_timestamp"):
-        stamp = _number(info.get(key))
-        if stamp is not None:
-            return datetime.fromtimestamp(stamp, timezone.utc).strftime("%Y-%m-%d")
-    raise BadMetadata("the fetcher's metadata has no usable upload_date")
+def _round(seconds: float):
+    """Whole seconds stay whole, so meta.json reads like the timestamps it feeds."""
+    return int(seconds) if float(seconds).is_integer() else seconds
 
 
-def _duration_s(info: dict) -> int:
-    """Whole seconds; a source without a duration (a live stream) reports 0."""
-    seconds = _number(info.get("duration"))
-    try:
-        return max(0, round(seconds))
-    except (TypeError, ValueError, OverflowError):
-        return 0
-
-
-def _chapters(info: dict) -> list[dict]:
-    chapters = []
-    source = info.get("chapters")
-    for raw in source if isinstance(source, list) else []:
-        start = _number(raw.get("start_time")) if isinstance(raw, dict) else None
-        if start is None:
-            continue  # a chapter we cannot place is worse than no chapter at all
-        start = max(0.0, start)
-        chapters.append(
-            {
-                "title": str(raw.get("title") or ""),
-                "start_s": int(start) if start.is_integer() else start,
-            }
-        )
-    return chapters
+def _date(*values, fallback: str) -> str:
+    """The first value that is really a date, as YYYY-MM-DD."""
+    for value in values:
+        text = _line(value)
+        compact = COMPACT_DATE.fullmatch(text)
+        if compact:
+            return "-".join(compact.groups())
+        iso = ISO_DATE.match(text)
+        if iso:
+            return iso.group(1)
+    return fallback
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def normalize(video_id: str, info: dict, ingested_at: str | None = None) -> dict:
+def chapters(raw) -> list[dict]:
+    """Chapters as the schema has them: `start_s`, in order, time first."""
+    marks = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        start = _number(item.get("start_time"))
+        # A chapter we cannot place in time is not something a deep link could
+        # ever point at — drop it rather than store a heading with no moment.
+        if start is None:
+            continue
+        marks.append({"title": _line(item.get("title")), "start_s": _round(max(0.0, start))})
+    marks.sort(key=lambda mark: mark["start_s"])
+    return marks
+
+
+def normalize(video_id: str, url: str, info, ingested_at: str | None = None) -> dict:
     """info.json as meta.json: required keys first, optional ones only when real."""
-    meta = {
+    if not isinstance(info, dict):
+        raise BadMeta("the fetcher's info.json is not a JSON object")
+    stamp = ingested_at or _now()
+    duration = _number(info.get("duration")) or 0.0
+    dated = _date(info.get("upload_date"), info.get("release_date"), fallback=stamp[:10])
+    document = {
+        # The id is ours, not the fetcher's: it names the directory this is
+        # written into, and the two disagreeing would break every deep link.
         "id": video_id,
-        "title": str(info.get("title") or video_id),
-        "channel": str(info.get("channel") or info.get("uploader") or ""),
-        "upload_date": _upload_date(info),
-        "duration_s": _duration_s(info),
-        "url": str(info.get("webpage_url") or watch_url(video_id)),
+        # The download is already paid for. A source that withheld its title gets
+        # the id as one rather than stranding the video with no entry at all.
+        "title": _line(info.get("title")) or video_id,
+        "channel": _line(info.get("uploader")) or _line(info.get("channel")),
+        # Same reasoning, and the schema insists on a date: an undated source is
+        # dated the day we ingested it, which the stamp below makes visible.
+        "upload_date": dated,
+        "duration_s": max(0, round(duration)),
+        "url": _text(info.get("webpage_url")) or _text(info.get("original_url")) or url,
     }
-    description = info.get("description")
-    if isinstance(description, str) and description:
-        meta["description"] = description
-    chapters = _chapters(info)
-    if chapters:
-        meta["chapters"] = chapters
-    meta["ingested_at"] = ingested_at or _now()
-    return meta
+    description = _text(info.get("description"))  # multi-line: kept as written
+    if description:
+        document["description"] = description
+    marks = chapters(info.get("chapters"))
+    if marks:
+        document["chapters"] = marks
+    document["ingested_at"] = stamp
+    return document
 
 
-def write(dest: Path, meta: dict) -> Path:
-    path = dest / META_NAME
-    path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return path
+def write(entry: Path, document: dict) -> Path:
+    """Atomic swap: an interrupted write leaves the old meta.json intact, never a
+    half-parsed one — an entry with unreadable metadata is an entry no verb can
+    touch, and the video it describes is the expensive thing to replace."""
+    target = entry / META_NAME
+    # Dotted temp name: a crashed write stays invisible to anything listing an entry.
+    tmp = entry / f".{META_NAME}.{os.getpid()}.tmp"
+    try:
+        text = json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+    return target

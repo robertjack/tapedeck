@@ -1,37 +1,42 @@
-"""The fetcher seam (SPEC-core-004) and the staging dance around it.
+"""The fetcher seam (SPEC-core-004) and the staging ground around it.
 
 The fetcher is a shell command read from `$TAPEDECK_HOME/config.toml` — never a
-hardcoded yt-dlp invocation — and it always downloads into a staging directory
-beside the library entry. Only a complete fetch (a video plus normalized
-metadata) is moved into `library/<id>/`, so a failure leaves nothing behind
-(SPEC-ingest-001) and a re-fetch never half-destroys an entry that was already
-good. Staging also keeps the entry to the shape the layout contract names: the
-fetcher's own leftovers (info.json, .part files) stay out of the library.
+hardcoded yt-dlp invocation. It downloads into a scratch directory *outside* the
+library, and nothing moves into `library/<id>/` until the download is whole and
+its metadata has normalized. Downloading is the one step in tapedeck that
+routinely dies halfway (network, 403s, a full disk); staging is what keeps that
+from leaving a half-entry behind for every later verb to trip over.
 """
 
 from __future__ import annotations
 
+import json
 import os
-import shutil
 import subprocess
 import tempfile
 import tomllib
 from pathlib import Path
 
-from .meta import META_NAME
-from .sources import watch_url
-
 CONFIG_NAME = "config.toml"
 SECTION = "ingest"
-KEY = "fetcher_command"
+COMMAND_KEY = "fetcher_command"
 VIDEO_STEM = "video"
-NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp")
+INFO_SUFFIX = "info.json"
+# `video.<ext>` names the download; these are the siblings a fetcher leaves that
+# are plainly not it (part-files, sidecars, thumbnails).
+NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp", ".description", ".webp", ".jpg", ".png")
 STDERR_FD = 2
 
-# The cli writes this into config.toml on first run (it owns that file); it lives
-# here as the documented shape of the seam — env in, `video.<ext>` + info.json out.
+# What the cli scaffolds into config.toml on first run (it owns that file); the
+# default lives here because the seam's shape is ingest's to define.
+#
+# The format selector is LESSON-0001 and is not cosmetic: YouTube serves 403s on
+# AV1 streams in this setup, so the default prefers avc1 at <=1080p and falls
+# back twice. Shipping the naive `bv*+ba/b` would make every fresh install
+# re-suffer an incident that has already been solved once.
 DEFAULT_FETCHER_COMMAND = (
-    'yt-dlp --no-playlist --write-info-json -f "bv*+ba/b" '
+    "yt-dlp --no-playlist --write-info-json "
+    '-f "bv*[vcodec^=avc1][height<=1080]+ba/bv*[height<=1080]+ba/b" '
     '-o "$TAPEDECK_DEST/video.%(ext)s" "$TAPEDECK_VIDEO_URL"'
 )
 
@@ -41,48 +46,42 @@ class ConfigError(ValueError):
 
 
 class FetchError(RuntimeError):
-    """The fetcher ran but did not deliver a video."""
+    """The fetcher ran but did not deliver a usable video and its metadata."""
 
 
-def fetcher_command(home: Path) -> str:
+def seam(home: Path) -> str:
+    """The configured fetcher command."""
     path = home / CONFIG_NAME
     try:
         config = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     except (OSError, ValueError) as exc:  # unreadable, undecodable, or not TOML
-        raise ConfigError(f"{path} is unreadable — {exc}") from exc
+        raise ConfigError(f"cannot read {path} for the fetcher command — {exc}") from exc
     section = config.get(SECTION)
-    command = section.get(KEY) if isinstance(section, dict) else None
+    section = section if isinstance(section, dict) else {}
+    command = section.get(COMMAND_KEY)
     if not isinstance(command, str) or not command.strip():
-        raise ConfigError(f"no fetcher configured — set [{SECTION}] {KEY} in {path}")
-    return command
+        seat = f"[{SECTION}] {COMMAND_KEY} in {path}"
+        raise ConfigError(f"no fetcher configured — set {seat}")
+    return command.strip()
 
 
-def is_video(path: Path) -> bool:
-    return path.is_file() and path.stem == VIDEO_STEM and path.suffix.lower() not in NOT_VIDEO
+def stage() -> Path:
+    return Path(tempfile.mkdtemp(prefix="tapedeck-ingest-"))
 
 
-def has_video(entry: Path) -> bool:
-    return entry.is_dir() and any(is_video(path) for path in entry.iterdir())
-
-
-def stage(library: Path, video_id: str) -> Path:
-    """A staging dir inside library/ — same filesystem, so the commit is a rename.
-    The leading dot keeps a crashed fetch out of any `library/*/` listing."""
-    library.mkdir(parents=True, exist_ok=True)
-    return Path(tempfile.mkdtemp(prefix=f".{video_id}.", suffix=".partial", dir=library))
-
-
-def run(command: str, home: Path, video_id: str, dest: Path) -> None:
+def run(command: str, home: Path, video_id: str, url: str, dest: Path) -> None:
+    """Run the seam into `dest`. Raises FetchError unless it exits clean."""
     env = {
         **os.environ,
         "TAPEDECK_HOME": str(home),
         "TAPEDECK_VIDEO_ID": video_id,
-        "TAPEDECK_VIDEO_URL": watch_url(video_id),
+        "TAPEDECK_VIDEO_URL": url,
         "TAPEDECK_DEST": str(dest),
     }
     try:
-        # Download chatter is progress, not output: the fetcher's stdout goes to
-        # stderr so ours stays the entry path alone.
+        # A downloader narrates progress on stdout; ours carries the entry path
+        # alone, so the child's goes to stderr with the rest of the noise. cwd is
+        # the staging dir so anything it writes relative lands there too.
         result = subprocess.run(command, shell=True, cwd=dest, env=env, stdout=STDERR_FD)
     except OSError as exc:
         raise FetchError(f"could not run the fetcher — {exc}") from exc
@@ -90,33 +89,36 @@ def run(command: str, home: Path, video_id: str, dest: Path) -> None:
         raise FetchError(f"the fetcher exited {result.returncode}: {command}")
 
 
-def find_video(dest: Path) -> Path:
-    videos = sorted(path for path in dest.iterdir() if is_video(path))
-    if not videos:
-        raise FetchError(f"the fetcher wrote no {VIDEO_STEM}.<ext> in {dest}")
-    return videos[0]
+def videos(directory: Path) -> list[Path]:
+    """Every `video.<ext>` in a directory — the download, wherever it landed."""
+    contents = directory.iterdir() if directory.is_dir() else []
+    return sorted(
+        path
+        for path in contents
+        if path.is_file() and path.stem == VIDEO_STEM and path.suffix.lower() not in NOT_VIDEO
+    )
 
 
-def commit(staging: Path, entry: Path) -> Path:
-    """Move the finished entry into place, leaving other components' files alone."""
-    for path in staging.iterdir():
-        if is_video(path) or path.name == META_NAME:
-            continue
-        if path.is_dir():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
-    if not entry.exists():
-        entry.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(staging, entry)  # atomic: the entry appears whole or not at all
-        return entry
-    # A re-fetch: swap our own files only — transcript.json is transcribe's to keep.
-    for stale in entry.iterdir():
-        if is_video(stale):
-            stale.unlink()
-    # meta.json last, so an interrupted swap leaves an entry that reads as incomplete
-    # and is re-fetched rather than one that lies about the video beside it.
-    for path in sorted(staging.iterdir(), key=lambda p: p.name == META_NAME):
-        os.replace(path, entry / path.name)
-    staging.rmdir()
-    return entry
+def has_video(directory: Path) -> bool:
+    return bool(videos(directory))
+
+
+def find_video(dest: Path, video_id: str) -> Path:
+    found = videos(dest)
+    if not found:
+        raise FetchError(f"{video_id}: the fetcher produced no video file in {dest}")
+    return found[0]
+
+
+def read_info(dest: Path, video_id: str) -> dict:
+    """The metadata sidecar the fetcher left beside the video. yt-dlp's
+    `--write-info-json` lands on `video.info.json`; a hand-rolled fetcher may
+    write a plain `info.json`. Either is the same JSON object to us."""
+    contents = dest.iterdir() if dest.is_dir() else []
+    found = sorted(p for p in contents if p.is_file() and p.name.endswith(INFO_SUFFIX))
+    if not found:
+        raise FetchError(f"{video_id}: the fetcher wrote no info.json in {dest} — no metadata")
+    try:
+        return json.loads(found[0].read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FetchError(f"{video_id}: {found[0].name} is not readable JSON — {exc}") from exc
