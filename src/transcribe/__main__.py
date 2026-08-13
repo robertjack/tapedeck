@@ -1,22 +1,26 @@
-"""Component boundary: `python -m transcribe run <id> [--force]`.
+"""Component boundary: `python -m transcribe run <id> [--force] | from-parakeet`.
 
-Writes `library/<id>/transcript.json` — nothing else, per the write-authority
+`run` writes `library/<id>/transcript.json` — nothing else, per the write-authority
 table in the layout contract. The video beside it is the source of truth and is
-only ever read. Exit codes follow contracts/cli-surface.md: 0 success, 1
-operation failure, 2 usage or validation error. The transcript path goes to
-stdout, progress and diagnostics to stderr.
+only ever read. `from-parakeet` writes nothing at all: it is a filter, stdin to
+stdout, so that a parakeet transcriber is a config edit (SPEC-transcribe-002).
+
+Exit codes follow contracts/cli-surface.md: 0 success, 1 operation failure, 2
+usage or validation error. The answer goes to stdout — the transcript path for
+`run`, the adapted JSON for `from-parakeet` — progress and diagnostics to stderr.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
 import sys
 from pathlib import Path
 
-from . import document, transcriber
+from . import document, parakeet, transcriber
 
 DEFAULT_HOME = "~/dev/storage/tapedeck"
 LIBRARY = "library"
@@ -28,7 +32,12 @@ class BadRequest(ValueError):
 
 
 USAGE_ERRORS = (BadRequest, transcriber.ConfigError)
-FAILURES = (transcriber.TranscribeError, document.BadTranscript, OSError)
+FAILURES = (
+    transcriber.TranscribeError,
+    document.BadTranscript,
+    parakeet.NotParakeet,
+    OSError,
+)
 
 
 def home_dir() -> Path:
@@ -53,13 +62,13 @@ def transcribe(home: Path, video_id: str, force: bool) -> int:
     command, model = transcriber.seam(home)
     staging = transcriber.stage()
     try:
-        out = transcriber.out_path(staging, source)
+        out = transcriber.out_path(staging)
         print(f"{video_id}: transcribing {source.name} with {model}…", file=sys.stderr)
         transcriber.run(command, home, video_id, source, out)
         # Nothing has touched the entry yet: the output has to read as JSON and
         # normalize into real segments before a transcript exists at all, so a
         # transcriber that failed halfway leaves the library exactly as it was.
-        payload = transcriber.read_output(out, video_id)
+        payload = transcriber.read_output(out, source, video_id)
         transcript = document.normalize(video_id, model, payload)
         document.write(entry, transcript)
     finally:
@@ -69,16 +78,33 @@ def transcribe(home: Path, video_id: str, force: bool) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def from_parakeet(stdin, stdout) -> int:
+    """parakeet-mlx JSON in, whisper-shaped JSON out. Reads and writes nothing else."""
+    adapted = parakeet.adapt(stdin.read())
+    # Written in one go, after the parse: a failure here has printed nothing, which
+    # is what the shell's `> "$TAPEDECK_OUT"` needs it to have printed.
+    stdout.write(json.dumps(adapted, ensure_ascii=False) + "\n")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="transcribe", description=__doc__.splitlines()[0])
-    sub = parser.add_subparsers(dest="verb", required=True)
-    one = sub.add_parser("run", help="derive the transcript for one video in the library")
+    verbs = parser.add_subparsers(dest="verb", required=True)
+
+    one = verbs.add_parser("run", help="derive the transcript for one video in the library")
     one.add_argument("video_id", help="the 11-character id of a library entry")
     one.add_argument("--force", action="store_true", help="re-transcribe a video that has one")
-    args = parser.parse_args(argv)
 
+    verbs.add_parser("from-parakeet", help="adapt parakeet-mlx JSON on stdin to the whisper shape")
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
     try:
-        return transcribe(home_dir(), args.video_id, args.force)
+        if args.verb == "run":
+            return transcribe(home_dir(), args.video_id, args.force)
+        return from_parakeet(sys.stdin, sys.stdout)
     except USAGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

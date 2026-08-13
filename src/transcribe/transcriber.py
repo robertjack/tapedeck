@@ -22,6 +22,7 @@ SECTION = "transcribe"
 COMMAND_KEY = "transcriber_command"
 MODEL_KEY = "model"
 VIDEO_STEM = "video"
+OUT_NAME = "transcript.json"
 # `video.<ext>` names the download; these are the siblings a fetcher leaves that
 # are plainly not it (sidecars, part-files, thumbnails).
 NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp", ".description", ".webp", ".jpg", ".png")
@@ -33,8 +34,7 @@ STDERR_FD = 2
 # This is LESSON-0002 verbatim, and none of it is incidental: large-v3 with default
 # conditioning falls into repetition loops on long videos, so what ships is turbo
 # with conditioning off. `--output-dir "$(dirname "$TAPEDECK_OUT")"` is how a
-# whisper CLI is told where to land — it names the file itself, after the input —
-# and `out_path` below chooses a $TAPEDECK_OUT that meets it there.
+# whisper CLI is told where to land — it names the file itself, after the input.
 DEFAULT_TRANSCRIBER_COMMAND = (
     "mlx_whisper --model mlx-community/whisper-large-v3-turbo "
     "--condition-on-previous-text False --output-format json "
@@ -45,6 +45,25 @@ DEFAULT_TRANSCRIBER_COMMAND = (
 # a transcript made with conditioning left on must not be indistinguishable from
 # one made without it (LESSON-0002).
 DEFAULT_MODEL = "mlx-whisper/large-v3-turbo"
+
+# The published alternative (SPEC-transcribe-002), which the cli documents in a
+# comment beside the default: switching to parakeet is a config edit and nothing
+# more, which is the seam principle with something real at stake. Parakeet names
+# its output after the input, so the `video.<ext>` it is given yields `video.json`
+# in the same directory; `from-parakeet` then turns that into the whisper shape
+# the seam reads. Both halves write into the scratch directory, never the library.
+PARAKEET_TRANSCRIBER_COMMAND = (
+    'parakeet-mlx --output-format json --output-dir "$(dirname "$TAPEDECK_OUT")" '
+    '"$TAPEDECK_MEDIA" && tapedeck adapt-parakeet '
+    '< "$(dirname "$TAPEDECK_OUT")/video.json" > "$TAPEDECK_OUT"'
+)
+PARAKEET_MODEL = "parakeet-mlx/tdt-0.6b-v3"
+
+# Every transcriber tapedeck publishes, against the label naming what it runs.
+PUBLISHED_MODELS = {
+    DEFAULT_TRANSCRIBER_COMMAND: DEFAULT_MODEL,
+    PARAKEET_TRANSCRIBER_COMMAND: PARAKEET_MODEL,
+}
 
 
 class ConfigError(ValueError):
@@ -87,7 +106,7 @@ def _label(section: dict, command: str, path: Path) -> str:
 
     LESSON-0002: the label decides whether a later transcript supersedes an older
     one, so it has to name the configuration actually in use. We can supply it for
-    the command we ship — we know what that one runs. For a command someone has
+    the commands we publish — we know what those run. For a command someone has
     edited, a default would stamp `mlx-whisper/large-v3-turbo` onto transcripts
     that never saw it, quietly making them un-supersedable, so an unlabelled custom
     seam is a configuration error rather than a guess.
@@ -95,10 +114,10 @@ def _label(section: dict, command: str, path: Path) -> str:
     label = section.get(MODEL_KEY)
     if isinstance(label, str) and label.strip():
         return label.strip()
-    if command == DEFAULT_TRANSCRIBER_COMMAND:
-        return DEFAULT_MODEL
+    if command in PUBLISHED_MODELS:
+        return PUBLISHED_MODELS[command]
     raise ConfigError(
-        f"the transcriber command is not the one tapedeck ships — set [{SECTION}] "
+        f"the transcriber command is not one tapedeck publishes — set [{SECTION}] "
         f"{MODEL_KEY} in {path} to name the model it really runs, or its transcripts "
         "are labelled with a model that never saw them"
     )
@@ -119,16 +138,18 @@ def stage() -> Path:
     return Path(tempfile.mkdtemp(prefix="tapedeck-transcribe-"))
 
 
-def out_path(staging: Path, source: Path) -> Path:
+def out_path(staging: Path) -> Path:
     """Where the transcriber is told to write ($TAPEDECK_OUT).
 
-    Outside the library, so a run that dies halfway leaves nothing beside the video.
-    The stem is the media's because that is the one convention every whisper CLI
-    shares: pointed at an output directory it writes `<input-stem>.json` there.
-    Handing it `<staging>/video.json` makes the file it names and the file we read
-    the same file, so the shipped default needs no wrapper script to bridge them.
+    Outside the library, so a run that dies halfway leaves nothing beside the
+    video. The name is deliberately *not* the media's stem: a transcriber that
+    post-processes its own output filters `<dir>/video.json` into $TAPEDECK_OUT,
+    and if those were one path the shell would truncate the input before the
+    filter ever read it — which is exactly what the published parakeet command
+    does. Whisper, which names the file itself and cannot be told otherwise, is
+    met by `read_output` looking there too.
     """
-    return staging / f"{source.stem}.json"
+    return staging / OUT_NAME
 
 
 def run(command: str, home: Path, video_id: str, source: Path, out: Path) -> None:
@@ -151,14 +172,30 @@ def run(command: str, home: Path, video_id: str, source: Path, out: Path) -> Non
         raise TranscribeError(f"the transcriber exited {result.returncode}: {command}")
 
 
-def read_output(out: Path, video_id: str) -> dict:
-    """The whisper-shaped JSON the transcriber left at $TAPEDECK_OUT."""
-    try:
-        payload = json.loads(out.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
+def find_output(out: Path, source: Path) -> Path | None:
+    """The file the transcriber actually left, of the two places it can be.
+
+    $TAPEDECK_OUT is the asked-for one and wins whenever it is there. Pointed at
+    an output *directory* — the only way a whisper CLI can be aimed — the tool
+    names the file after its input instead, so `<staging>/<media-stem>.json` is
+    the other place a finished transcript legitimately turns up, and honouring it
+    is what lets the shipped default run with no wrapper script around it.
+    """
+    for candidate in (out, out.with_name(f"{source.stem}.json")):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def read_output(out: Path, source: Path, video_id: str) -> dict:
+    """The whisper-shaped JSON the transcriber left behind."""
+    found = find_output(out, source)
+    if found is None:
         raise TranscribeError(
             f"{video_id}: the transcriber exited clean but wrote no output at {out}"
-        ) from exc
+        )
+    try:
+        payload = json.loads(found.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise TranscribeError(
             f"{video_id}: the transcriber's output is not readable JSON — {exc}"
