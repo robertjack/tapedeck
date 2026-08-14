@@ -1,29 +1,27 @@
-"""The library home: where it is, what shape it has, and its first-run scaffold.
+"""`$TAPEDECK_HOME`: where the library is, and what a fresh one starts with.
 
-`$TAPEDECK_HOME` is resolved on every run (SPEC-cli-001) and the home is made
-whole before any verb executes, so nothing downstream wonders whether the
-directories exist. The cli owns `config.toml` and writes it exactly once, with
-every seam of SPEC-core-004 filled in from the default each component publishes
-for itself — a fresh tapedeck works out of the box, and every external tool it
-reaches for is one editable line. The librarian brief (`CLAUDE.md`) is scaffolded
-the same way, because ask refuses to turn an agent loose in the library without
-the grounding rules (SPEC-ask-001).
+Resolved on every run and created on first use (SPEC-cli-001). Two files are the
+cli's to write, both exactly once: `config.toml`, because a seam nobody can see
+is a seam nobody can change (SPEC-core-004), and `CLAUDE.md`, the standing brief
+the librarian reads in the directory it works in. Neither is ever rewritten —
+after the first run they are the user's, and a tapedeck that silently restored
+its own defaults over an edit would make the config a suggestion.
 
-Both files are the user's from the moment they exist: scaffolding never
-overwrites, so an edited config survives every later run.
+The defaults themselves belong to the components that run them: ingest's fetcher
+and lister, transcribe's transcriber and model label, ask's librarian and
+answerer. They are imported, not retyped, so a fresh install ships whatever those
+components currently know — including the incidents already paid for once
+(LESSON-0001's avc1 preference, LESSON-0002's conditioning flag and label).
 """
 
 from __future__ import annotations
 
-import json
 import os
-import re
-import sys
 from pathlib import Path
 
 from ask.seams import DEFAULT_ANSWERER_COMMAND, DEFAULT_LIBRARIAN_COMMAND
-from ingest.fetch import DEFAULT_FETCHER_COMMAND, DEFAULT_LISTER_COMMAND
-from transcribe.transcriber import (
+from ingest import DEFAULT_FETCHER_COMMAND, DEFAULT_LISTER_COMMAND
+from transcribe import (
     DEFAULT_MODEL,
     DEFAULT_TRANSCRIBER_COMMAND,
     PARAKEET_MODEL,
@@ -31,176 +29,120 @@ from transcribe.transcriber import (
 )
 
 DEFAULT_HOME = "~/dev/storage/tapedeck"
-LIBRARY = "library"
-ARCHIVE = "archive"
-DIRECTORIES = (LIBRARY, ARCHIVE)
 CONFIG_NAME = "config.toml"
 BRIEF_NAME = "CLAUDE.md"
-META_NAME = "meta.json"
-TRANSCRIPT_NAME = "transcript.json"
-MEDIA_STEM = "video"
-VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
-
-CONFIG_TEMPLATE = """\
-# tapedeck configuration — written on first run, yours from here on.
-#
-# Every external tool sits behind a command template (SPEC-core-004): to change
-# how tapedeck fetches, transcribes or answers, change the command, not the code.
-# Each runs as a shell command with the environment noted above it; the values
-# below are the defaults tapedeck ships with — edit them freely.
-
-[ingest]
-# in:  $TAPEDECK_VIDEO_URL, $TAPEDECK_VIDEO_ID, $TAPEDECK_DEST
-# out: $TAPEDECK_DEST/video.<ext> and a yt-dlp-shaped info.json beside it
-fetcher_command = {fetcher}
-# how `tapedeck add <playlist-or-channel-url>` learns what a collection contains
-# in:  $TAPEDECK_COLLECTION_URL
-# out: one video id per line on stdout, in collection order
-lister_command = {lister}
-
-[transcribe]
-# in:  $TAPEDECK_MEDIA, $TAPEDECK_VIDEO_ID, $TAPEDECK_OUT
-# out: whisper-shaped JSON ({{"segments": [{{start, end, text}}, ...]}}) at $TAPEDECK_OUT
-transcriber_command = {transcriber}
-# recorded in every transcript, so a better model can supersede this one later —
-# change both lines together, then `tapedeck retranscribe` redoes the library
-model = {model}
-#
-# The published alternative: parakeet-mlx, via the `tapedeck adapt-parakeet`
-# filter. Swapping transcribers is these two lines and nothing else.
-# transcriber_command = {parakeet_command}
-# model = {parakeet_model}
-
-[ask]
-# librarian mode (the default): runs with cwd set to this directory, the question
-# on stdin, and the CLAUDE.md brief beside this file as its standing instructions
-librarian_command = {librarian}
-# --fast mode: numbered source excerpts on stdin, prose with [n] markers on stdout
-answerer_command = {answerer}
-"""
-
-BRIEF = """\
-# tapedeck librarian brief
-
-You are the librarian of this video library. Someone has asked you the question
-on stdin, and your answer is going straight to them.
-
-## What is here
-
-- `archive/<video-id>.md` — one page per video: frontmatter (title, channel,
-  upload date, duration, url), then sections headed
-  `## [h:mm:ss](https://www.youtube.com/watch?v=<video-id>&t=<seconds>s) Title`.
-  These pages are the readable library — start here, and grep across them.
-- `library/<video-id>/meta.json` — the same metadata, structurally.
-- `library/<video-id>/transcript.json` — timestamped segments, when you need the
-  exact wording or a timestamp finer than a section heading.
-
-## How to answer
-
-1. **Only from the library.** Everything you assert must come from a file in
-   this directory. If what is here does not cover the question, say so plainly —
-   "that is not in the library" — and stop. Never fill the gap from your own
-   knowledge, and never tell the user what they probably wanted to hear.
-2. **Cite as you go.** Every claim carries an inline markdown deep link to the
-   moment that supports it:
-   `[what was said](https://www.youtube.com/watch?v=<video-id>&t=<seconds>s)`.
-   Write them into the prose, not into a list at the end.
-3. **Timestamps must be real.** Take `<seconds>` from a section heading or a
-   transcript segment's `start`. Never round to something tidy, never estimate,
-   never rebuild a link from memory.
-4. **At least one citation.** An answer with no deep link is not an answer.
-5. **A scoped question is a fence.** Asked about one video, cite only that one.
-
-tapedeck checks every link you write after you finish: each must name a video
-that is really here, at a timestamp inside its real duration. A fabricated
-citation fails the whole command, so the user never sees it. Read anything here
-to find the answer — but never invent where it came from.
-
-## Style
-
-Answer the question first, in prose. Be concrete about who said what and when.
-Where the library disagrees with itself, say so and cite both sides.
-"""
+LIBRARY = "library"
+ARCHIVE = "archive"
 
 
-def toml_value(text: str) -> str:
-    """TOML for a command line: a literal string keeps shell quoting readable, and
-    anything with a quote of its own falls back to an escaped basic string."""
-    if "'" not in text and "\n" not in text:
-        return f"'{text}'"
-    return json.dumps(text)  # a TOML basic string is a JSON string
+def home_dir() -> Path:
+    return Path(os.environ.get("TAPEDECK_HOME") or DEFAULT_HOME).expanduser()
+
+
+def toml_string(value: str) -> str:
+    """A command as TOML. Literal-quoted, because a shell command is full of the
+    characters a basic string would eat — `$`, `\\`, `"` — and a config the user
+    edits should read exactly like the command they would type."""
+    if "'" not in value:
+        return f"'{value}'"
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def config_text() -> str:
-    """The seams as each component documents them — the cli invents no defaults."""
-    return CONFIG_TEMPLATE.format(
-        fetcher=toml_value(DEFAULT_FETCHER_COMMAND),
-        lister=toml_value(DEFAULT_LISTER_COMMAND),
-        transcriber=toml_value(DEFAULT_TRANSCRIBER_COMMAND),
-        model=toml_value(DEFAULT_MODEL),
-        parakeet_command=toml_value(PARAKEET_TRANSCRIBER_COMMAND),
-        parakeet_model=toml_value(PARAKEET_MODEL),
-        librarian=toml_value(DEFAULT_LIBRARIAN_COMMAND),
-        answerer=toml_value(DEFAULT_ANSWERER_COMMAND),
-    )
+    """The first-run config: the shipped defaults, spelled out, with the reason
+    each is what it is — and the published alternative commented beside it."""
+    return f"""\
+# tapedeck configuration — written on first run and never rewritten. From here on
+# it is yours: no tapedeck command edits this file.
+#
+# Every external tool tapedeck runs is a command template here (SPEC-core-004), so
+# changing fetcher, transcriber or answerer is an edit to this file and never to
+# tapedeck. Below are the shipped defaults, written out rather than implied, each
+# with what running it for real has taught.
+
+[ingest]
+# Downloads one video. Env: TAPEDECK_VIDEO_ID, TAPEDECK_VIDEO_URL, TAPEDECK_DEST
+# (an existing directory) — leave video.<ext> and a yt-dlp-shaped info.json in it.
+# h264 at <=1080p is preferred deliberately: YouTube answers AV1 requests here
+# with 403s, and a solved incident is only solved if it ships (LESSON-0001).
+fetcher_command = {toml_string(DEFAULT_FETCHER_COMMAND)}
+
+# Lists a playlist or channel: one video id per line on stdout.
+# Env: TAPEDECK_COLLECTION_URL. `tapedeck add <channel-url>` sweeps what it prints,
+# and re-running the same URL later picks up only what is new.
+lister_command = {toml_string(DEFAULT_LISTER_COMMAND)}
+
+[transcribe]
+# Transcribes one video. Env: TAPEDECK_MEDIA, TAPEDECK_VIDEO_ID, TAPEDECK_OUT —
+# write whisper-shaped JSON ({{"segments": [{{"start", "end", "text"}}]}}) to
+# $TAPEDECK_OUT. `--condition-on-previous-text False` is not decoration: without
+# it large-v3 falls into repetition loops on quiet passages (LESSON-0002).
+transcriber_command = {toml_string(DEFAULT_TRANSCRIBER_COMMAND)}
+
+# Stamped on every transcript this seam produces, and the whole of how tapedeck
+# knows one is out of date: `tapedeck retranscribe` re-derives every video whose
+# label is not this string. Change the command, change this with it.
+model = {toml_string(DEFAULT_MODEL)}
+
+# The published alternative (SPEC-transcribe-002): parakeet-mlx, adapted to the
+# whisper shape by tapedeck's own `adapt-parakeet` filter. Swapping transcriber is
+# these two lines and nothing else — then `tapedeck retranscribe` to catch up.
+# transcriber_command = {toml_string(PARAKEET_TRANSCRIBER_COMMAND)}
+# model = {toml_string(PARAKEET_MODEL)}
+
+[ask]
+# The librarian (default mode): the question on stdin, prose with inline deep-link
+# citations on stdout, run in this directory so it reads CLAUDE.md and the archive
+# beside it. Every citation it writes is checked against the library afterwards.
+librarian_command = {toml_string(DEFAULT_LIBRARIAN_COMMAND)}
+
+# `ask --fast`: the retrieved passages arrive on stdin, the prose comes back on
+# stdout with [n] markers. tapedeck assembles the Sources list, never this command.
+answerer_command = {toml_string(DEFAULT_ANSWERER_COMMAND)}
+"""
 
 
-def write_once(path: Path, text: str) -> bool:
-    """Create `path` if it is not there. True when we wrote it; an existing file is
-    never reopened — after the first run these are the user's files, not ours."""
-    try:
-        with open(path, "x", encoding="utf-8", newline="\n") as fh:
-            fh.write(text)
-    except FileExistsError:
-        return False
-    return True
+BRIEF_TEXT = """\
+# The tapedeck library
+
+You are the librarian of this directory. It holds one person's watched videos:
+`archive/<video-id>.md` is a readable page per video — metadata, then timestamped
+sections — `library/<video-id>/` holds the video with its `meta.json` and
+`transcript.json`, and `tapedeck.db` is a full-text index over the archive pages.
+
+Answer from what is here and nothing else. Read the archive pages: grep them,
+follow the timestamps, quote what was actually said.
+
+Cite every claim with a deep link to the moment it came from, inline in the prose:
+
+    [what is said there](https://www.youtube.com/watch?v=<video-id>&t=<seconds>s)
+
+Each link must name a video that is in this library and a second that really falls
+inside it. tapedeck checks every citation against the library after you answer and
+refuses the whole answer if one cannot be traced; an answer with no citation at
+all is refused the same way. Do not guess a timestamp — read it off the page.
+
+If these files do not answer the question, say that it is not in the library. That
+is a true answer. A plausible one from what you already know about the subject is
+not, and is the one failure this library cannot tolerate.
+"""
 
 
-def resolve() -> Path:
-    """The library home, scaffolded if this is its first use."""
-    home = Path(os.environ.get("TAPEDECK_HOME") or DEFAULT_HOME).expanduser()
-    fresh = not home.exists()
-    for name in DIRECTORIES:
-        (home / name).mkdir(parents=True, exist_ok=True)
-    write_once(home / CONFIG_NAME, config_text())
-    write_once(home / BRIEF_NAME, BRIEF)
-    if fresh:
-        print(f"created a new tapedeck home at {home}", file=sys.stderr)
+def scaffold(home: Path) -> Path:
+    """Make sure the home exists, with the two files the cli owns. Idempotent:
+    what is already there is left exactly as it is."""
+    (home / LIBRARY).mkdir(parents=True, exist_ok=True)
+    (home / ARCHIVE).mkdir(parents=True, exist_ok=True)
+    _write_once(home / CONFIG_NAME, config_text())
+    _write_once(home / BRIEF_NAME, BRIEF_TEXT)
     return home
 
 
-def entry(home: Path, video_id: str) -> Path:
-    """`library/<id>/` — the video and everything derived from it."""
-    return home / LIBRARY / video_id
-
-
-def page(home: Path, video_id: str) -> Path:
-    """`archive/<id>.md` — the readable render, and the index's only source."""
-    return home / ARCHIVE / f"{video_id}.md"
-
-
-def entries(home: Path) -> list[str]:
-    """Every video the library holds, in id order. A dotted directory is a fetch
-    in flight or a crashed one, not a video."""
-    library = home / LIBRARY
-    found = sorted(library.iterdir()) if library.is_dir() else []
-    return [path.name for path in found if path.is_dir() and not path.name.startswith(".")]
-
-
-def media(entry_dir: Path) -> list[Path]:
-    """`library/<id>/video.<ext>` — the download itself, never a sidecar. The
-    layout contract names the file without fixing the container."""
-    contents = entry_dir.iterdir() if entry_dir.is_dir() else []
-    return sorted(
-        path
-        for path in contents
-        if path.is_file() and path.stem == MEDIA_STEM and path.suffix.lower() != ".json"
-    )
-
-
-def ingested(home: Path, video_id: str) -> bool:
-    """Whether this video is already downloaded — the question ingest asks before
-    skipping a fetch (SPEC-core-003), asked a moment earlier so a sweep can say
-    which of its videos it actually added."""
-    where = entry(home, video_id)
-    return bool(media(where)) and (where / META_NAME).is_file()
+def _write_once(path: Path, text: str) -> None:
+    """Create, or leave alone. `x` mode asks the filesystem rather than looking
+    first, so two tapedecks starting at once cannot both decide it is missing."""
+    try:
+        with open(path, "x", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+    except FileExistsError:
+        pass

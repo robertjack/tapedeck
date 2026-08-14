@@ -1,0 +1,47 @@
+{
+  "id": "gen-20260814T030009Z-cli-8578",
+  "component": "cli",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": []
+  },
+  "root_hash": "sha256:8578c0cf5b996cf813c4c5f5ae38ec8eda6f107f75132077cdd4d6a0fe8206a9",
+  "inputs": {
+    "manifest": "sha256:65b87b491536b99ffb83b3849fa7416944d0b6348ed047c43d7fc1c230dd5376",
+    "clauses": {
+      "SPEC-cli-001": "sha256:bfa6ebb1c3220f46ec25c3c409646d3ebdee6883c6fa657c57e51be88eef0cd4",
+      "SPEC-cli-002": "sha256:d93260f40d918251e700ce4185b44249bfa984eeab383f1011cbc7ff307828ad",
+      "SPEC-cli-003": "sha256:5fd4ef02cda9afdf75d1963a3ef769d4c36fef4973c6673f607dddf167e5f6cb",
+      "SPEC-cli-004": "sha256:1a2e5a8db8af8e2a3182b06eae8eca1b5e5ac0081509a3716045839ada36961e",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/cli-surface.md": "sha256:b9ce47efc4a482570d480bbb0ac754c1d1c8a5772ca604e9a78083ab1ad0fb31"
+    },
+    "eval_sources": {
+      "system/evals/cli/test_add_collection.py": "sha256:24e54181ad822acbcd0d3a527654680225a085130a12386f38cff7f2c91ff506",
+      "system/evals/cli/test_cli.py": "sha256:838a1a6d0cab4b6707bb5f11e20fceeead41a5bca5c672418bd0d3191c3589de",
+      "system/evals/cli/test_retranscribe.py": "sha256:52a8d9fc7a32ba51d819b5d33738f8ee415ff429321ef1f1857bd129c3d88d83",
+      "system/evals/cli/test_rm.py": "sha256:666a41c2155ce70b91f98e4d6772979d3571f6694c309df10bbf3e666d53aa1e"
+    },
+    "lessons": [
+      "LESSON-0003"
+    ]
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-opus-5",
+    "session_ref": "claude-code:workflow-audit-backlog"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "skipped"
+  },
+  "escape_hatch": null,
+  "attempts": 1,
+  "duration_s": 799.4,
+  "notes": "generated via: claude --model claude-opus-5 -p --permission-mode acceptEdits"
+}

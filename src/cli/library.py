@@ -1,155 +1,113 @@
-"""The verbs the cli answers itself: what is here (`list`, `show`) and what goes (`rm`).
+"""What the library holds, asked in the vocabulary of whoever owns the answer.
 
-These read `library/` directly, in the shape the layout contract fixes, because
-the library directory *is* the record of what tapedeck has: `rm` removing an
-entry is `list` forgetting it, with nothing to keep in step.
-
-Removal (SPEC-cli-002) is the one place the cli destroys anything, and it is
-careful about two things. It only touches paths named after the id it was given,
-so no other video can be caught by it. And it does not reach into
-`tapedeck.db` — dropping a video's rows means deleting its archive page and
-letting the index, which owns that file, update itself (SPEC-core-001).
+Every question below has an owner, and the owner is imported (LESSON-0003):
+`ingest.VIDEO_ID` decides what a video id is, `ingest.videos` / `ingest.has_video`
+decide whether an entry holds a downloaded video — `video.part` is a fetch in
+flight and never the video — and `ingest.meta.META_NAME` and
+`transcribe.document.TRANSCRIPT_NAME` are the names their writers write. The cli
+restates none of them; it composes them into the one question that is its own:
+is this entry complete, so that a sweep can skip it and cost nothing?
 """
 
 from __future__ import annotations
 
 import json
-import shutil
-import sys
 from pathlib import Path
 
-from . import components
-from .home import META_NAME, TRANSCRIPT_NAME, VIDEO_ID, entries, entry, media, page
+from ingest import VIDEO_ID, has_video, videos
+from ingest.meta import META_NAME
+from transcribe.document import TRANSCRIPT_NAME
+
+from .home import ARCHIVE, LIBRARY
+
+PAGE_SUFFIX = ".md"
 
 
-def error(message: str) -> None:
-    print(f"error: {message}", file=sys.stderr)
+def is_video_id(text: str) -> bool:
+    return bool(VIDEO_ID.fullmatch(text or ""))
 
 
-def hms(seconds) -> str:
-    """A duration, or nothing at all: a hand-edited meta.json is not worth a crash."""
+def entry_dir(home: Path, video_id: str) -> Path:
+    return home / LIBRARY / video_id
+
+
+def page_path(home: Path, video_id: str) -> Path:
+    return home / ARCHIVE / f"{video_id}{PAGE_SUFFIX}"
+
+
+def media_files(home: Path, video_id: str) -> list[Path]:
+    """The downloaded video files in an entry, by ingest's rule — the files
+    `rm --media-only` reclaims, and nothing that merely sits beside them."""
+    return videos(entry_dir(home, video_id))
+
+
+def media(home: Path, video_id: str) -> Path | None:
+    """The downloaded video of an entry, or None if there is none — which is also
+    what tells the reader that `add` would fetch it again."""
+    found = media_files(home, video_id)
+    return found[0] if found else None
+
+
+def entries(home: Path) -> list[str]:
+    """Every video in the library, in id order."""
+    return [name for name, _ in _directories(home) if is_video_id(name)]
+
+
+def _directories(home: Path) -> list[tuple[str, Path]]:
+    library = home / LIBRARY
+    contents = sorted(library.iterdir()) if library.is_dir() else []
+    # Dot-prefixed directories are somebody's work in progress — ingest stages a
+    # download in one — and are not the library's to report on either way.
+    return [(p.name, p) for p in contents if p.is_dir() and not p.name.startswith(".")]
+
+
+def foreign(home: Path) -> list[str]:
+    """Directories under `library/` that are not videos at all. A sweep leaves
+    them alone and says so, rather than failing on them forever."""
+    return [name for name, _ in _directories(home) if not is_video_id(name)]
+
+
+def read_json(path: Path) -> dict | None:
     try:
-        s = int(seconds)
-    except (TypeError, ValueError):
-        return ""
-    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
-
-
-def load_meta(where: Path) -> dict | None:
-    try:
-        meta = json.loads((where / META_NAME).read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return meta if isinstance(meta, dict) else None
+    return document if isinstance(document, dict) else None
 
 
-def row(video_id: str, meta: dict) -> dict:
-    return {
-        "id": video_id,
-        "upload_date": str(meta.get("upload_date") or ""),
-        "channel": str(meta.get("channel") or ""),
-        "title": str(meta.get("title") or "(untitled)"),
-    }
+def meta(home: Path, video_id: str) -> dict | None:
+    return read_json(entry_dir(home, video_id) / META_NAME)
 
 
-def catalogue(home: Path) -> list[dict]:
-    """Every video in the library, newest first."""
-    videos = []
-    for video_id in entries(home):
-        meta = load_meta(entry(home, video_id))
-        if meta is None:
-            error(f"{video_id}: no readable {META_NAME} — skipping")
-            continue
-        videos.append(row(video_id, meta))
-    videos.sort(key=lambda video: (video["upload_date"], video["id"]), reverse=True)
-    return videos
+def transcript(home: Path, video_id: str) -> dict | None:
+    return read_json(entry_dir(home, video_id) / TRANSCRIPT_NAME)
 
 
-def show_all(home: Path, as_json: bool) -> int:
-    videos = catalogue(home)
-    if as_json:
-        print(json.dumps(videos, ensure_ascii=False, indent=2))
-        return 0
-    if not videos:
-        print("no videos yet — `tapedeck add <url>` starts one", file=sys.stderr)
-        return 0
-    for video in videos:
-        print(f"{video['id']}  {video['upload_date']}  {video['channel']}  {video['title']}")
-    return 0
+def transcript_model(home: Path, video_id: str) -> str | None:
+    """The model a transcript is labelled with — the string supersession is judged
+    on (SPEC-transcribe-001). None when there is no transcript to judge."""
+    document = transcript(home, video_id) or {}
+    label = document.get("model")
+    return label if isinstance(label, str) and label.strip() else None
 
 
-def show(home: Path, video_id: str, as_json: bool) -> int:
-    where = entry(home, video_id)
-    if not VIDEO_ID.fullmatch(video_id) or not (where / META_NAME).is_file():
-        error(f"{video_id}: not in the library")
-        return 2
-    meta = load_meta(where)
-    if meta is None:
-        error(f"{video_id}: {META_NAME} is unreadable")
-        return 1
-    rendered = page(home, video_id)
-    files = media(where)
-    transcript = where / TRANSCRIPT_NAME
-    if as_json:
-        print(
-            json.dumps(
-                {
-                    **meta,
-                    "archive": str(rendered) if rendered.is_file() else None,
-                    "media": str(files[0]) if files else None,
-                    "transcript": str(transcript) if transcript.is_file() else None,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
-        return 0
-    listed = row(video_id, meta)
-    facts = " · ".join(
-        part
-        for part in (listed["channel"], listed["upload_date"], hms(meta.get("duration_s")))
-        if part
+def has_meta(home: Path, video_id: str) -> bool:
+    return (entry_dir(home, video_id) / META_NAME).is_file()
+
+
+def complete(home: Path, video_id: str) -> bool:
+    """Whether the whole derivation chain is already on disk for this video.
+
+    This is what a collection sweep skips on (SPEC-cli-003), so it asks about
+    every link: the video by ingest's rule, its metadata, its transcript, its
+    archive page. An entry holding only a partial download is not complete, and
+    an entry missing any derived artifact is not either — both get re-derived,
+    and everything else costs the sweep nothing at all.
+    """
+    entry = entry_dir(home, video_id)
+    return (
+        has_video(entry)
+        and (entry / META_NAME).is_file()
+        and (entry / TRANSCRIPT_NAME).is_file()
+        and page_path(home, video_id).is_file()
     )
-    print(f"{listed['title']}\n{facts}\n{str(meta.get('url') or '')}\n")
-    print(f"id          {video_id}")
-    print(f"archive     {rendered if rendered.is_file() else '— run `tapedeck add` to re-render'}")
-    print(f"video       {files[0].name if files else '— removed; `tapedeck add` re-fetches it'}")
-    print(f"transcript  {transcript if transcript.is_file() else '— not transcribed yet'}")
-    return 0
-
-
-def remove(home: Path, video_id: str, media_only: bool) -> int:
-    where = entry(home, video_id)
-    rendered = page(home, video_id)
-    if not VIDEO_ID.fullmatch(video_id) or not (where.is_dir() or rendered.is_file()):
-        error(f"{video_id}: not in the library — nothing to remove")
-        return 2
-    if media_only:
-        return drop_media(where, video_id)
-
-    # Page first, then the index update it makes true, then the entry: interrupted
-    # anywhere, the id still resolves and a second `rm` finishes the job.
-    rendered.unlink(missing_ok=True)
-    indexed = components.run("index", ["update", video_id], home, capture=True).returncode
-    shutil.rmtree(where, ignore_errors=True)
-    if where.exists():
-        error(f"{video_id}: {where} could not be removed")
-        return 1
-    if indexed != 0:
-        error(f"{video_id}: files removed, but the index still has it — run `tapedeck reindex`")
-        return 1
-    print(f"{video_id}: removed")
-    return 0
-
-
-def drop_media(where: Path, video_id: str) -> int:
-    """Reclaim the disk, keep the knowledge: transcript, archive page and index
-    rows outlive the file they came from — at the price of never re-deriving them
-    without downloading the video again (SPEC-cli-002)."""
-    files = media(where)
-    for path in files:
-        path.unlink()
-    if not files:
-        print(f"{video_id}: no video file to remove", file=sys.stderr)
-    print(f"{video_id}: media removed — transcript, archive page and index entries kept")
-    return 0

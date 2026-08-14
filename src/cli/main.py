@@ -1,12 +1,14 @@
-"""The tapedeck executable (SPEC-cli-001, system/contracts/cli-surface.md).
+"""The `tapedeck` surface: nine verbs, three exit codes, one home.
 
-Nine verbs and almost no logic. The home is resolved — and scaffolded, if this is
-its first use — before any verb runs, then each verb is either handed to the
-component that owns it or answered from the library directory itself. Exit codes
-are the contract's throughout: 0 success, 1 operation failure, 2 usage error.
+The verbs are exactly system/contracts/cli-surface.md's — adding one is a durable
+change, not a convenience (SPEC-cli-001). Read-only verbs that a component
+already implements are handed straight to it, streams and exit code and all; the
+verbs that orchestrate several components live in `pipeline` and `views`.
 
-The surface is deliberately narrow: a tenth verb is a change to the durable
-layer, not to this file.
+Exit codes: 0 done, 1 the operation failed, 2 the request could not be acted on.
+The mapping is the whole of the error handling here — a bad URL and a
+misconfigured seam are the user's to fix (2), a fetch or a render that fell over
+is the run's failure (1). Answers go to stdout, everything else to stderr.
 """
 
 from __future__ import annotations
@@ -14,113 +16,123 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import components, home, library
+import ingest
+from transcribe.transcriber import ConfigError as TranscriberConfigError
+
+from . import pipeline, views
+from .components import Failed, Usage, passthrough
+from .home import home_dir, scaffold
 
 DESCRIPTION = "A local video brain: download, transcribe, archive, ask."
+USAGE_ERRORS = (Usage, ingest.BadRequest, TranscriberConfigError)
+FAILURES = (Failed, OSError)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tapedeck", description=DESCRIPTION)
-    verbs = parser.add_subparsers(dest="verb", required=True, metavar="command")
+    verbs = parser.add_subparsers(dest="verb", required=True, metavar="<verb>")
 
-    add = verbs.add_parser("add", help="fetch, transcribe, archive and index a video, or many")
-    add.add_argument(
-        "url",
-        help="watch URL, youtu.be/shorts link, bare video id, or a playlist or channel URL",
-    )
-    add.add_argument(
+    adding = verbs.add_parser("add", help="fetch, transcribe, archive and index a video or a whole collection")
+    adding.add_argument("url", help="a video URL or id, or a playlist or channel URL")
+    adding.add_argument(
         "--force",
         action="store_true",
-        help="re-fetch and re-derive one video that is already here (never a collection)",
+        help="re-fetch a video that is already here, and re-derive from it (one video, never a collection)",
     )
 
-    find = verbs.add_parser("search", help="ranked timestamped excerpts with deep links")
-    find.add_argument("query", nargs="+")
-    find.add_argument("-k", type=int, help="how many results to return")
-    find.add_argument("--json", action="store_true", help="emit the same fields structurally")
+    finding = verbs.add_parser("search", help="ranked timestamped excerpts with deep links")
+    finding.add_argument("query", nargs="+", help="what to look for")
+    finding.add_argument("-k", type=int, help="how many results to print")
+    finding.add_argument("--json", action="store_true", help="emit the same fields structurally")
 
-    question = verbs.add_parser("ask", help="put a question to the librarian of the library")
-    question.add_argument("question", nargs="+")
-    question.add_argument("-k", type=int, help="sources to retrieve (--fast only)")
-    question.add_argument("--fast", action="store_true", help="skip the librarian: retrieve, answer")
-    question.add_argument("--video", help="answer from this one library video alone")
+    asking = verbs.add_parser("ask", help="answer a question from the library, with citations")
+    asking.add_argument("question", nargs="+", help="the question")
+    asking.add_argument("-k", type=int, help="sources to retrieve (--fast only)")
+    asking.add_argument("--fast", action="store_true", help="strict retrieval pipeline instead of the librarian")
+    asking.add_argument("--video", help="answer from this video alone")
 
-    catalogue = verbs.add_parser("list", help="one line per video: id, date, channel, title")
-    catalogue.add_argument("--json", action="store_true", help="emit the same fields structurally")
+    listing = verbs.add_parser("list", help="one line per video: id, date, channel, title")
+    listing.add_argument("--json", action="store_true", help="emit the same fields structurally")
 
-    one = verbs.add_parser("show", help="metadata and archive path for one video")
-    one.add_argument("video_id")
-    one.add_argument("--json", action="store_true", help="emit the same fields structurally")
+    showing = verbs.add_parser("show", help="metadata and archive path for one video")
+    showing.add_argument("video_id", help="an 11-character video id")
+    showing.add_argument("--json", action="store_true", help="emit the same fields structurally")
 
     verbs.add_parser("reindex", help="rebuild tapedeck.db from archive/ alone")
 
-    gone = verbs.add_parser("rm", help="remove a video everywhere, or just its media")
-    gone.add_argument("video_id")
-    gone.add_argument(
+    removing = verbs.add_parser("rm", help="remove a video everywhere, or reclaim just its disk")
+    removing.add_argument("video_id", help="an 11-character video id")
+    removing.add_argument(
         "--media-only",
         action="store_true",
-        help="delete the video file only, keeping transcript, archive page and index",
+        help="delete the video file(s) only — transcript, archive page and index stay",
     )
 
-    again = verbs.add_parser("retranscribe", help="re-derive every superseded transcript")
-    again.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="print the ids that would be redone, one per line, and change nothing",
+    redoing = verbs.add_parser(
+        "retranscribe", help="re-derive every transcript whose model label is out of date"
+    )
+    redoing.add_argument(
+        "--dry-run", action="store_true", help="print the ids that would be redone and change nothing"
     )
 
     verbs.add_parser(
-        "adapt-parakeet",
-        help="stdin→stdout filter: parakeet-mlx JSON to the whisper shape the seam wants",
+        "adapt-parakeet", help="stdin to stdout: parakeet-mlx JSON in the whisper shape"
     )
     return parser
 
 
-def option(name: str, value) -> list[str]:
-    """A valued flag, passed on only when given: the default belongs to the
-    component that owns it, not the cli."""
-    return [] if value is None else [name, str(value)]
+def _k(value: int | None) -> list[str]:
+    """Pass `-k` on only when asked. A default repeated here would be a second
+    opinion about a number the component already has one about."""
+    return [] if value is None else ["-k", str(value)]
 
 
-def flag(present: bool, name: str) -> list[str]:
-    return [name] if present else []
-
-
-def dispatch(args, deck) -> int:
+def dispatch(args, home) -> int:
     if args.verb == "add":
-        return components.add(deck, args.url, args.force)
+        return pipeline.add(home, args.url, args.force)
     if args.verb == "search":
-        query = ["search", *args.query, *option("-k", args.k), *flag(args.json, "--json")]
-        return components.delegate("index", query, deck)
+        flags = [*_k(args.k), *(["--json"] if args.json else [])]
+        # `--` first: a question or query that starts with a dash is text, not a flag.
+        return passthrough(home, "index", ["search", *flags, "--", *args.query])
     if args.verb == "ask":
-        asked = [
-            "answer",
-            *args.question,
-            *option("-k", args.k),
-            *option("--video", args.video),
-            *flag(args.fast, "--fast"),
+        flags = [
+            *_k(args.k),
+            *(["--fast"] if args.fast else []),
+            *(["--video", args.video] if args.video else []),
         ]
-        return components.delegate("ask", asked, deck)
-    if args.verb == "reindex":
-        return components.delegate("index", ["reindex"], deck)
-    if args.verb == "retranscribe":
-        return components.retranscribe(deck, args.dry_run)
-    if args.verb == "adapt-parakeet":
-        return components.delegate("transcribe", ["from-parakeet"], deck)
+        return passthrough(home, "ask", ["run", *flags, "--", *args.question])
     if args.verb == "list":
-        return library.show_all(deck, args.json)
+        return views.list_videos(home, args.json)
     if args.verb == "show":
-        return library.show(deck, args.video_id, args.json)
-    return library.remove(deck, args.video_id, args.media_only)
+        return views.show(home, args.video_id, args.json)
+    if args.verb == "reindex":
+        return passthrough(home, "index", ["reindex"])
+    if args.verb == "rm":
+        return views.remove(home, args.video_id, args.media_only)
+    if args.verb == "retranscribe":
+        return pipeline.retranscribe(home, args.dry_run)
+    return passthrough(home, "transcribe", ["from-parakeet"])
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)  # unknown verb, bad flags: argparse exits 2
+    args = build_parser().parse_args(argv)
     try:
-        return dispatch(args, home.resolve())
-    except OSError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        # The home is resolved and made real before any verb runs: every one of
+        # them reads config.toml, directly or through a component (SPEC-cli-001).
+        home = scaffold(home_dir())
+        return dispatch(args, home)
+    except USAGE_ERRORS as exc:
+        return _report(exc, 2)
+    except FAILURES as exc:
+        return _report(exc, 1)
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
         return 1
+
+
+def _report(exc, code: int) -> int:
+    print(f"error: {exc}", file=sys.stderr)
+    return code
 
 
 if __name__ == "__main__":
