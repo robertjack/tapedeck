@@ -4,22 +4,40 @@ Sole writer of `library/<id>/video.*` and `library/<id>/meta.json`
 (system/contracts/library-layout.md). Boundary: `python -m ingest add <url>
 [--force]` for one video, `python -m ingest expand <url>` for the ids a playlist
 or channel URL names.
+
+The names re-exported here are the system's shared vocabulary, published so no
+other component re-derives them (LESSON-0003): the canonical id grammar, what
+counts as a downloaded video, and the seam defaults. The DEFAULT_* commands are
+what the cli scaffolds into a fresh config.toml (SPEC-core-004) — the fetcher's
+carries LESSON-0001's avc1 format preference into every install, so a solved 403
+stays solved.
 """
 
-from .fetch import DEFAULT_FETCHER_COMMAND, DEFAULT_LISTER_COMMAND
+from .fetch import DEFAULT_FETCHER_COMMAND, DEFAULT_LISTER_COMMAND, has_video, videos
 from .meta import normalize
-from .sources import canonical_url, resolve, video_id, video_ids
+from .sources import (
+    COLLECTION,
+    VIDEO,
+    VIDEO_ID,
+    BadRequest,
+    canonical_url,
+    resolve,
+    video_id,
+    video_ids,
+)
 
-# The DEFAULT_* commands are exported for the cli's first-run config scaffolding
-# (SPEC-core-004): each seam's shape is ingest's to define, config.toml is cli's
-# to write. The fetcher's carries LESSON-0001 — the avc1 format preference — into
-# every fresh install, so a solved 403 incident stays solved.
 __all__ = [
+    "COLLECTION",
     "DEFAULT_FETCHER_COMMAND",
     "DEFAULT_LISTER_COMMAND",
+    "VIDEO",
+    "VIDEO_ID",
+    "BadRequest",
     "canonical_url",
+    "has_video",
     "normalize",
     "resolve",
     "video_id",
     "video_ids",
+    "videos",
 ]

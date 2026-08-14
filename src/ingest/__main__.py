@@ -1,15 +1,19 @@
-"""Component boundary: `python -m ingest add <url> [--force]` and `expand <url>`.
+"""The ingest boundary: `python -m ingest add <url> [--force] | expand <url>`.
 
-`add` writes `library/<id>/video.<ext>` and `library/<id>/meta.json` — nothing
-else, per the write-authority table in the layout contract. A transcript already
-sitting beside them belongs to transcribe and survives a `--force` re-fetch
-untouched; the cli re-derives it. `expand` writes nothing at all: it turns one
-target into the ids it names, one per line, so a caller can walk a playlist or a
-channel one video at a time (SPEC-ingest-002).
+`add` puts exactly one video in the library, and is the sole writer of
+`library/<id>/video.*` and `library/<id>/meta.json`. `expand` answers what a
+playlist or channel URL contains, so a caller can sweep it one video at a time.
 
-Exit codes follow contracts/cli-surface.md: 0 success, 1 operation failure, 2
-usage or validation error. Answers go to stdout — the entry directory for `add`,
-the ids for `expand` — progress and diagnostics to stderr.
+The order of `add` is the whole safety story of SPEC-ingest-001. Everything that
+can fail — the download, finding the video, reading the metadata, normalizing it
+— happens in a staging directory beside the library, before the entry is touched
+at all. Only when a complete, valid result is in hand does the entry change, by a
+rename on the same filesystem. So a fetch that dies mid-write leaves a fresh
+video unstarted rather than half-made, and leaves an existing one exactly as it
+was: the old video byte-identical beside its old meta.json, still usable.
+
+Exit codes are contracts/cli-surface.md's: 0 done, 1 the operation failed,
+2 usage.
 """
 
 from __future__ import annotations
@@ -33,91 +37,93 @@ def home_dir() -> Path:
     return Path(os.environ.get("TAPEDECK_HOME") or DEFAULT_HOME).expanduser()
 
 
-def install(entry: Path, video: Path, document: dict) -> None:
-    """Move a finished fetch into `library/<id>/`: the video first, then the
-    metadata that makes the entry complete. Interrupted between the two, the
-    entry reads as unfinished and the next `add` re-fetches it (SPEC-core-003).
-    An entry we created and could not finish is removed on the way out — a
-    failed fetch leaves nothing behind."""
-    created = not entry.exists()
-    try:
-        entry.mkdir(parents=True, exist_ok=True)
-        # A re-fetch can land on a different container (mp4 where mkv was), and
-        # two `video.*` files would leave every reader guessing which is real.
-        for stale in fetch.videos(entry):
-            stale.unlink()
-        shutil.move(str(video), entry / video.name)
-        meta.write(entry, document)
-    except OSError:
-        if created:
-            shutil.rmtree(entry, ignore_errors=True)
-        raise
+def install(entry: Path, staged: Path, document: dict) -> None:
+    """The only step that touches the entry, and the shortest one there is.
+
+    The rename is atomic and the entry's old video survives until it lands; the
+    leftovers go afterwards, so an entry never holds two videos and never holds a
+    video that is still arriving.
+    """
+    entry.mkdir(parents=True, exist_ok=True)
+    landed = entry / staged.name
+    os.replace(staged, landed)
+    for old in fetch.videos(entry):
+        if old != landed:
+            old.unlink()
+    meta.write(entry, document)
 
 
 def add(home: Path, target: str, force: bool) -> int:
-    # A collection is refused here, before any seam is read: `add` downloads one
-    # video per invocation, and the sweep over a playlist belongs to the caller.
+    """One video into `library/<id>/`, or a reason it is not there."""
     video_id = sources.video_id(target)
-    entry = home / LIBRARY / video_id
-    if fetch.has_video(entry) and (entry / meta.META_NAME).is_file() and not force:
-        # Idempotent by default (SPEC-core-003): the download is the expensive
-        # part and this video is already here. `--force` fetches it again.
-        print(f"{video_id}: already in the library — skipping the fetch", file=sys.stderr)
-        print(entry)
+    library = home / LIBRARY
+    entry = library / video_id
+    if not force and fetch.has_video(entry) and (entry / meta.META_NAME).is_file():
+        print(entry)  # already here: no download, and the entry is still the answer
         return 0
+
     command = fetch.fetcher(home)
     url = sources.canonical_url(video_id)
-    staging = fetch.stage()
+    existed = entry.exists()
+    dest = fetch.stage(library, video_id)
     try:
-        print(f"{video_id}: fetching {url}…", file=sys.stderr)
-        fetch.run(command, home, video_id, url, staging)
-        video = fetch.find_video(staging, video_id)
-        document = meta.normalize(video_id, url, fetch.read_info(staging, video_id))
+        fetch.run(command, home, video_id, url, dest)
+        video = fetch.find_video(dest, video_id)
+        document = meta.normalize(video_id, url, fetch.read_info(dest, video_id))
         install(entry, video, document)
+    except BaseException:
+        # A fetch that failed before the entry existed leaves nothing behind; one
+        # that failed on an entry already here leaves it untouched, because
+        # nothing above this line has touched it.
+        if not existed:
+            shutil.rmtree(entry, ignore_errors=True)
+        raise
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
-    print(f"{video_id}: {document['title']} ({document['duration_s']}s)", file=sys.stderr)
+        shutil.rmtree(dest, ignore_errors=True)
     print(entry)
     return 0
 
 
 def expand(home: Path, target: str) -> int:
-    """The ids a target names, in collection order, one per line."""
+    """The video ids a target names: its own, or its collection's (SPEC-ingest-002).
+
+    A single video is answered from the URL grammar alone — asking an external
+    tool what `youtu.be/<id>` contains would be a network round trip to learn what
+    the id already says. Nothing reaches stdout until the listing is complete, so
+    a failed lister prints no ids at all rather than a plausible-looking few.
+    """
     kind, value = sources.resolve(target)
     if kind == sources.VIDEO:
-        # A link that already carries its id is not a question for a network
-        # tool; asking one would cost a round trip to learn what we just read.
         print(value)
         return 0
-    command = fetch.lister(home)
-    print(f"listing {value}…", file=sys.stderr)
-    found = sources.video_ids(fetch.collect(command, home, value))
-    if not found:
-        print(f"no videos in {value}", file=sys.stderr)
-    for video_id in found:
+    listing = fetch.collect(fetch.lister(home), home, value)
+    for video_id in sources.video_ids(listing):
         print(video_id)
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ingest", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        prog="ingest", description="Put YouTube videos in the tapedeck library."
+    )
     verbs = parser.add_subparsers(dest="verb", required=True)
-
-    one = verbs.add_parser("add", help="fetch one video into the library")
-    one.add_argument("target", help="a watch, youtu.be or shorts URL, or a bare video id")
-    one.add_argument("--force", action="store_true", help="re-fetch a video already here")
-
-    many = verbs.add_parser("expand", help="print the video ids a target names")
-    many.add_argument("target", help="any video target, or a playlist or channel URL")
+    fetching = verbs.add_parser("add", help="download one video into the library")
+    fetching.add_argument("url", help="a watch/shorts/youtu.be URL, or a bare video id")
+    fetching.add_argument(
+        "--force", action="store_true", help="re-fetch a video that is already here"
+    )
+    listing = verbs.add_parser("expand", help="print the video ids a URL names")
+    listing.add_argument("url", help="a video URL, or a playlist or channel URL")
     return parser
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    home = home_dir()
     try:
         if args.verb == "add":
-            return add(home_dir(), args.target, args.force)
-        return expand(home_dir(), args.target)
+            return add(home, args.url, args.force)
+        return expand(home, args.url)
     except USAGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

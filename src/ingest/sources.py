@@ -1,16 +1,15 @@
-"""The string a user actually types → one canonical video id, or a collection.
+"""What a target names: one video, a collection of them, or nothing we can act on.
 
-`add` is the only door into the library, and everything past it is that id: the
-entry directory, meta.json's `id`, every deep link the archive ever renders. So
-the parsing happens exactly once, here, and it is strict — the forms
-SPEC-ingest-001 and SPEC-ingest-002 name and nothing else. A wrong guess costs a
-download and files a video under a name no deep link will ever resolve.
+This is the canonical id grammar of the whole system (SPEC-ingest-001). Any
+component that has to ask "is this a video id?" imports the answer from here
+rather than writing the regular expression again — a second copy is the defect
+even while it still agrees (LESSON-0003).
 
-Two kinds of target come through the door. A watch, youtu.be or shorts URL — or
-a bare id — names exactly one video, and still does when it carries a `list=`
-parameter, because the fetch is `--no-playlist`. A playlist or channel URL
-carries no video id of its own: it is a collection, and only the lister can say
-what is in it.
+The split between a video and a collection is decided by the URL alone
+(SPEC-ingest-002): a watch, shorts or youtu.be URL is one video even when it
+carries a `list=` parameter, because that is what `--no-playlist` means. Only a
+URL with no video id of its own — a playlist, a channel — names a collection,
+and only those are worth asking an external lister about.
 """
 
 from __future__ import annotations
@@ -19,125 +18,140 @@ import re
 from urllib.parse import parse_qs, urlsplit
 
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
-SITE = "youtube.com"
-SHORT_HOST = "youtu.be"
-SCHEMES = ("", "http", "https")
 VIDEO = "video"
 COLLECTION = "collection"
-WATCH = "watch"
-SHORTS = "shorts"
-PLAYLIST = "playlist"
-LIST_PARAM = "list"
-# `youtube.com/<root>/<name>` — the channel spellings YouTube has accumulated.
+
+SCHEMES = ("", "http", "https")
+SITE = "youtube.com"
+SHORT_HOST = "youtu.be"
+HOST_PREFIXES = ("www.", "m.", "music.")
+WATCH, SHORTS, PLAYLIST = "watch", "shorts", "playlist"
+VIDEO_PARAM, LIST_PARAM = "v", "list"
 CHANNEL_ROOTS = ("channel", "c", "user")
-# A channel may be linked at one of its tabs; the tab is not part of its identity.
+HANDLE = "@"
+# a channel or playlist URL may end on one of its tabs and still name the same
+# collection: /@handle and /@handle/videos are asked of the lister identically
 TABS = ("videos", "streams")
 
 
 class BadRequest(ValueError):
-    """The target names no YouTube video and no collection of them."""
+    """The target is neither a video nor a collection — a usage error (exit 2)."""
 
 
 def canonical_url(video_id: str) -> str:
-    """The watch URL for an id: what the fetcher is handed (a bare id is not
-    something yt-dlp can resolve) and meta.json's url when the source names none.
-    Same form as the deep links in contracts/library-layout.md."""
+    """The one URL shape tapedeck hands to external tools and writes into meta."""
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
-def _parse(text: str):
-    """`(host, path segments, query)` for a URL-ish string, or None."""
-    try:
-        # A scheme-less "youtu.be/<id>" is a path to urlsplit until it has an
-        # authority marker; give it one so the host is read as a host.
-        url = urlsplit(text if "//" in text else f"//{text}")
-        host = (url.hostname or "").lower().removeprefix("www.")
-    except ValueError:  # malformed authority, e.g. an unclosed IPv6 bracket
-        return None
-    if url.scheme not in SCHEMES:
-        return None
-    return host, [part for part in url.path.split("/") if part], parse_qs(url.query)
-
-
-def _youtube(host: str) -> bool:
-    return host == SITE or host.endswith(f".{SITE}")
-
-
-def _video(host, segments, query) -> str | None:
-    """The id a link carries, or None for a link that carries none."""
-    if host == SHORT_HOST:
-        return segments[0] if len(segments) == 1 else None
-    if not _youtube(host):
-        return None
-    if segments == [WATCH]:
-        # `&list=` rides along on plenty of shared links; it names the playlist
-        # the user happened to be in, not what they asked us to download.
-        return (query.get("v") or [None])[0]
-    if len(segments) == 2 and segments[0] == SHORTS:
-        return segments[1]
-    return None
-
-
-def _collection(host, segments, query) -> bool:
-    """Whether a link names a set of videos rather than one."""
-    if not _youtube(host):
-        return False
-    named = segments[:-1] if len(segments) > 1 and segments[-1] in TABS else segments
-    if named == [PLAYLIST]:
-        return bool((query.get(LIST_PARAM) or [""])[0].strip())
-    handle = len(named) == 1 and named[0].startswith("@") and len(named[0]) > 1
-    return handle or (len(named) == 2 and named[0] in CHANNEL_ROOTS and bool(named[1]))
-
-
 def resolve(target: str) -> tuple[str, str]:
-    """`(VIDEO, id)` or `(COLLECTION, url)` for a target — never a guess."""
+    """`(VIDEO, id)` or `(COLLECTION, url)`. Raises BadRequest on anything else.
+
+    The collection keeps its URL rather than an id of its own: the lister seam is
+    told where to look, and every channel form points at the same place.
+    """
     text = (target or "").strip()
-    # The bare id is checked first because it is the one form with no structure to
-    # read. Everything else must survive URL parsing: an 11-character path segment
-    # on another host ("example.com/not-a-video") is not an id, and hunting for a
-    # bare id *inside* an arbitrary string is exactly how it would become one.
     if VIDEO_ID.fullmatch(text):
         return VIDEO, text
-    parsed = _parse(text)
-    if parsed:
-        found = _video(*parsed)
-        if found and VIDEO_ID.fullmatch(found):
-            return VIDEO, found
-        if _collection(*parsed):
-            # A channel is not reducible to an id the way a video is, so the
-            # lister gets the user's own URL — plus the scheme they may have left
-            # off, since an external tool is going to have to fetch it.
-            return COLLECTION, text if "//" in text else f"https://{text}"
-    raise BadRequest(
-        f"{target!r} is not a YouTube video or collection — expected a watch, youtu.be "
-        "or shorts URL, a bare 11-character video id, or a playlist or channel URL"
-    )
+    host, segments, query = _parse(text)
+    if not _youtube(host):
+        raise BadRequest(f"{target!r} is not a YouTube URL")
+    found = _video(host, segments, query)
+    if found:
+        return VIDEO, found
+    if _collection(host, segments, query):
+        return COLLECTION, text
+    raise BadRequest(f"{target!r} names no YouTube video, playlist or channel")
 
 
 def video_id(target: str) -> str:
-    """The canonical id of a target that names exactly one video."""
+    """The canonical id of a single-video target, for callers that accept no other
+    kind — `add` downloads exactly one video per invocation."""
     kind, value = resolve(target)
-    if kind == COLLECTION:
+    if kind != VIDEO:
         raise BadRequest(
-            f"{target!r} is a playlist or channel — ingest downloads exactly one video "
-            "per invocation; expand it first and add the ids one at a time (`tapedeck "
-            "add` does that for you)"
+            f"{target!r} names a collection, not one video — expand it first "
+            "(`ingest expand <url>`, or `tapedeck add <url>` to sweep it)"
         )
     return value
 
 
 def video_ids(text: str) -> list[str]:
-    """A lister's stdout as ids: collection order, deduplicated, well-formed only.
-
-    An external tool prints whatever it prints — a banner, a blank line, `NA` for
-    an entry that has been taken down, the same video twice because it sits in
-    the playlist twice. Anything that is not an id would become a library
-    directory no deep link resolves, so only ids survive here.
-    """
-    found, seen = [], set()
-    for line in text.splitlines():
+    """The well-formed ids in a lister's output, in order, without repeats. A
+    listing is another program's stdout: it may carry blank lines, notices, or the
+    same video twice, and none of that should reach the library."""
+    found: list[str] = []
+    for line in (text or "").splitlines():
         token = line.strip()
-        if VIDEO_ID.fullmatch(token) and token not in seen:
-            seen.add(token)
+        if VIDEO_ID.fullmatch(token) and token not in found:
             found.append(token)
     return found
+
+
+def _parse(text: str) -> tuple[str, list[str], dict]:
+    """Host (normalized), path segments, query. Anything urlsplit cannot read is a
+    bad request, not a crash — this runs on whatever the user typed."""
+    try:
+        parts = urlsplit(text)
+        if parts.scheme.lower() not in SCHEMES:
+            raise BadRequest(f"{text!r} is not an http(s) URL")
+        if not parts.netloc:  # a URL written without its scheme: youtu.be/<id>
+            parts = urlsplit("//" + text)
+        host, path, query = (parts.hostname or ""), parts.path, parts.query
+    except ValueError as exc:  # a malformed netloc, e.g. an unclosed IPv6 literal
+        raise BadRequest(f"{text!r} is not a URL: {exc}") from exc
+    return _site(host), [s for s in path.split("/") if s], parse_qs(query)
+
+
+def _site(host: str) -> str:
+    """The host without the subdomains that mean the same site: www, m, music."""
+    host = host.lower()
+    for prefix in HOST_PREFIXES:
+        if host.startswith(prefix):
+            host = host[len(prefix) :]
+    return host
+
+
+def _youtube(host: str) -> bool:
+    return host in (SITE, SHORT_HOST)
+
+
+def _first(query: dict, key: str) -> str:
+    values = query.get(key) or [""]
+    return values[0].strip()
+
+
+def _id(candidate: str) -> str | None:
+    return candidate if VIDEO_ID.fullmatch(candidate) else None
+
+
+def _short(host: str) -> bool:
+    """youtu.be — the host that carries the id in its path, and never a collection."""
+    return host == SHORT_HOST
+
+
+def _video(host: str, segments: list[str], query: dict) -> str | None:
+    """The three single-video URL shapes, plus their scheme-less spellings."""
+    if _short(host):
+        return _id(segments[0]) if len(segments) == 1 else None
+    if segments == [WATCH]:
+        return _id(_first(query, VIDEO_PARAM))
+    if len(segments) == 2 and segments[0] == SHORTS:
+        return _id(segments[1])
+    return None
+
+
+def _collection(host: str, segments: list[str], query: dict) -> bool:
+    """A playlist, or a channel in any of the spellings YouTube hands out."""
+    if _short(host) or not segments:
+        return False
+    if segments[0] == PLAYLIST:
+        return len(segments) == 1 and bool(_first(query, LIST_PARAM))
+    if segments[0].startswith(HANDLE) and len(segments[0]) > 1:
+        return _tab_only(segments[1:])
+    if segments[0] in CHANNEL_ROOTS:
+        return len(segments) >= 2 and bool(segments[1]) and _tab_only(segments[2:])
+    return False
+
+
+def _tab_only(rest: list[str]) -> bool:
+    return not rest or (len(rest) == 1 and rest[0] in TABS)
