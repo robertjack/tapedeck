@@ -168,7 +168,41 @@ and search keep working, at the cost of ever re-transcribing that video.
 Videos are by far the biggest thing on disk, so a mature library can be
 mostly knowledge.
 
-### 9. Advanced moves
+### 9. When something is broken: doctor
+
+    tapedeck doctor
+    tapedeck doctor --json
+
+`doctor` reads your setup and reports; it changes nothing, downloads
+nothing, and runs none of the tools it asks about — it only checks that
+they are there. Run it when `add` failed and you cannot tell whether the
+problem is your machine, your config, or tapedeck.
+
+The list of things it checks is not a list at all: it is read off your
+`config.toml`. For every seam in §6 it takes the first word of the command
+— the executable — and looks for it on your `PATH`. Point
+`transcriber_command` at a different tool and `doctor` starts checking for
+that tool instead. Then it checks the few things the derivation chain needs
+whatever tools you fill it with: `ffmpeg` (the downloader merges the video
+and audio streams with it), that the library home resolves and is
+writable, that this python has SQLite FTS5 (no FTS5, no index), and that
+your transcriber can actually run here — an MLX transcriber on anything
+but an Apple Silicon Mac is a fail, and the fix is one line of config.
+
+Every check prints, passes included, so you can tell "checked and fine"
+from "never looked":
+
+    ingest.fetcher_command        pass      yt-dlp
+    transcribe.transcriber_command fail     mlx_whisper: not on PATH
+    ask.librarian_command         optional  claude: not on PATH — ask needs it, search does not
+
+The `[ask]` seams are the only optional ones: without them `ask` cannot
+run, but `add`, `search`, `list` and `show` are untouched, so they never
+fail the command. Exit 0 when nothing required failed, 1 when something
+did. `--json` gives the same checks as `{check, status, detail}` objects,
+in the same order, for scripting.
+
+### 10. Advanced moves
 
 Move the library — the home is `~/Tapedeck` unless `$TAPEDECK_HOME` says
 otherwise. It is resolved on every run, so pointing it at an external disk
@@ -211,6 +245,7 @@ Verbs:
     rm <id> [--media-only]                 remove, or reclaim disk only
     retranscribe [--dry-run]               re-derive superseded transcripts
     adapt-parakeet                         parakeet JSON -> whisper shape
+    doctor [--json]                        check the seams and this machine
     help [<verb> | manual]                 this manual, in tiers
 
 Global options:
@@ -233,8 +268,10 @@ What's where (in the library home):
     tapedeck.db                   the search index — fully disposable
     config.toml, CLAUDE.md        the seams and the librarian's brief
 
-Troubleshooting:
+Troubleshooting (start with `tapedeck doctor`):
 
+    add fails immediately, or "command not found"
+        A seam points at a tool that isn't installed; doctor names it.
     "the index could not be read ... run tapedeck reindex"
         The database predates a schema change; reindex is the migration.
     ask exits 1 refusing a citation
