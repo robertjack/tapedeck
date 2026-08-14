@@ -14,6 +14,7 @@ Additive changes only; removals require superseding SPEC-cli-001.
 | `tapedeck retranscribe [--dry-run]` | yes | re-derive transcript → archive → index for every video whose transcript model label differs from the configured `[transcribe].model` (SPEC-cli-004) |
 | `tapedeck adapt-parakeet` | no | stdin→stdout filter: parakeet-mlx JSON to the whisper shape the transcriber seam requires (SPEC-transcribe-002) |
 | `tapedeck doctor [--json]` | no | read-only diagnosis: each config seam's head executable on PATH, plus ffmpeg, the library home, SQLite FTS5, and the platform against the configured transcriber (SPEC-cli-007); the `[ask]` seams are optional and never fail the exit code |
+| `tapedeck setup [--yes]` | yes (home scaffold only) | first-run wizard: scaffold the home and name it, report exactly what `doctor` reports, then print the platform remedy command for every required gap; without `--yes` it executes nothing (exit 1 if anything required is missing, 0 when `ready`), with `--yes` it runs those remedies and re-checks (SPEC-cli-008) |
 | `tapedeck help [<verb> \| manual]` | no | tiered teaching: one-screen tour, per-verb usage + example, or the full MANUAL.md paged (SPEC-cli-005); `-h/--help` stays terse |
 
 ## Conventions
@@ -28,3 +29,7 @@ Additive changes only; removals require superseding SPEC-cli-001.
   exits 0 without resolving or creating a library home (SPEC-cli-006); `-h/--help`
   prints terse argparse usage.
 - Every verb is idempotent (SPEC-core-003): re-running is always safe.
+- Installing anything on the user's machine happens only under an explicit `--yes`, and
+  only the commands tapedeck printed first (SPEC-cli-008). The remedy commands are a
+  config seam like every other tool: `[setup]` `remedy.<executable>` in `config.toml`,
+  shipped with brew/uv defaults.

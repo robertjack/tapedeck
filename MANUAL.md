@@ -24,6 +24,43 @@ Two commands are enough to start:
     tapedeck add <url>
     tapedeck ask "your question"
 
+## Installing on a new Mac
+
+    uv tool install tapedeck
+    tapedeck setup
+
+`setup` is the first command of a new machine. It creates the library home
+and tells you where it put it, then runs exactly the checks `doctor` runs
+(§9) — but where `doctor` names the gap, `setup` names the command that
+closes it here:
+
+    transcribe.transcriber_command  fail  mlx_whisper: not on PATH
+        uv tool install mlx-whisper
+    ffmpeg                          fail  not on PATH
+        brew install ffmpeg
+
+Printing is all it does. Nothing is installed without your say-so:
+
+    tapedeck setup          # what is missing, and what would fix it
+    tapedeck setup --yes    # run those exact commands, then check again
+
+Exit 0 when nothing required is missing — it says `ready` — and 1 when
+something is. With `--yes` each printed command runs in turn, its output
+streaming past as it goes, and then setup checks again and the second
+report decides the exit code.
+
+The remedies are yours too: they are a table in `config.toml` under
+`[setup]`, one line per tool, `remedy.<tool> = '...'`. The defaults are
+Homebrew and uv because that is a Mac; if you prefer MacPorts, pip, or a
+tarball, edit the line and `--yes` runs yours. Homebrew missing gets said
+first, with the one-liner that installs it — but setup never installs
+Homebrew for you, no matter how many `--yes` you type. The `[ask]` seams
+are optional, so `claude` is pointed at and never installed.
+
+No model is downloaded here. When your transcriber is installed, setup
+reminds you that the first transcription pulls the weights (~2.4GB for
+parakeet). That wait belongs to your first `tapedeck add`, not to setup.
+
 ## SIDE A — GETTING STARTED
 
 ### 1. Add a video
@@ -246,6 +283,7 @@ Verbs:
     retranscribe [--dry-run]               re-derive superseded transcripts
     adapt-parakeet                         parakeet JSON -> whisper shape
     doctor [--json]                        check the seams and this machine
+    setup [--yes]                          first run: scaffold, check, remedy
     help [<verb> | manual]                 this manual, in tiers
 
 Global options:
@@ -271,7 +309,8 @@ What's where (in the library home):
 Troubleshooting (start with `tapedeck doctor`):
 
     add fails immediately, or "command not found"
-        A seam points at a tool that isn't installed; doctor names it.
+        A seam points at a tool that isn't installed; doctor names it,
+        and `tapedeck setup` prints the command that installs it.
     "the index could not be read ... run tapedeck reindex"
         The database predates a schema change; reindex is the migration.
     ask exits 1 refusing a citation
