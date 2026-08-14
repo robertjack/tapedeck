@@ -1,111 +1,161 @@
-"""`list` and `show`: what the library holds, for a person and for a program.
+"""The verbs that read the library, and the one that unmakes part of it.
 
-Read-only, and both shapes carry the same facts — `--json` is the same answer
-with the formatting taken out (SPEC-cli-001), never a different query.
+`list` and `show` answer from `library/<id>/meta.json` — the only thing the cli
+reads out of another component's files — and both are read-only. `rm` is the
+opposite: it is the one verb whose whole purpose is to remove, so it says exactly
+what it removed and touches nothing else (SPEC-cli-002).
+
+The two questions these verbs ask about an entry belong to ingest, and are asked
+of it: whether a name is a video id, and whether the media is really there.
+`show` reporting `video.part` as the video would tell a user their download is
+fine when what they have is half of one — the same wrong answer that would make
+`add` skip re-fetching it (LESSON-0003).
 """
 
 from __future__ import annotations
 
 import json
-import sys
+import shutil
 from pathlib import Path
 
-from archive import hms  # the timestamp format is archive's (LESSON-0003)
+import ingest
+from archive import hms
 
-from . import FAILURE, USAGE, Failure, library
+from . import Failure, Usage, components
+from .home import LIBRARY
+from .pipeline import META_NAME, TRANSCRIPT_NAME, entry_of, label, page_of
 
-ROW_KEYS = ("id", "upload_date", "channel", "title")
+UNKNOWN = "{0!r} is not a video in the library — `tapedeck list` shows what is"
 
 
-def _row(document: dict) -> dict:
-    return {key: document.get(key) or "" for key in ROW_KEYS}
+def entries(home: Path) -> list[Path]:
+    """Every library entry, by ingest's grammar. A user's own directory under
+    `library/` is not one, and is left out rather than reported as a broken video."""
+    library = home / LIBRARY
+    found = library.iterdir() if library.is_dir() else []
+    return sorted(p for p in found if p.is_dir() and ingest.VIDEO_ID.fullmatch(p.name))
+
+
+def read_meta(entry: Path) -> dict | None:
+    try:
+        document = json.loads((entry / META_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return document if isinstance(document, dict) else None
+
+
+def known(home: Path, video_id: str) -> Path:
+    """The entry for an id, or a usage error naming what was asked for."""
+    entry = entry_of(home, video_id)
+    if not ingest.VIDEO_ID.fullmatch(video_id or "") or not entry.is_dir():
+        raise Usage(UNKNOWN.format(video_id))
+    return entry
 
 
 def listing(home: Path, as_json: bool) -> int:
     """One line per video: id, date, channel, title. Newest first."""
-    rows, unreadable = [], []
-    for video_id in library.ids(home):
-        document = library.meta(home, video_id)
-        if document is None:
-            # An entry mid-fetch, or one whose metadata did not survive. It is
-            # not a video anyone can browse yet, so it is not in the listing —
-            # but silence would make it look as though it were gone.
-            unreadable.append(video_id)
-            continue
-        rows.append(_row({**document, "id": video_id}))
-    rows.sort(key=lambda row: (row["upload_date"], row["title"]), reverse=True)
-
-    for video_id in unreadable:
-        print(f"{video_id}: no readable meta.json — not listed", file=sys.stderr)
+    rows = []
+    for entry in entries(home):
+        meta = read_meta(entry)
+        if meta is None:
+            continue  # an entry mid-fetch has no metadata yet; it is not a video
+        rows.append(
+            {
+                "id": entry.name,
+                "upload_date": str(meta.get("upload_date") or ""),
+                "channel": str(meta.get("channel") or ""),
+                "title": str(meta.get("title") or ""),
+                "duration_s": meta.get("duration_s"),
+            }
+        )
+    rows.sort(key=lambda row: (row["upload_date"], row["id"]), reverse=True)
     if as_json:
         print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
+    width = max((len(row["channel"]) for row in rows), default=0)
     for row in rows:
-        print(f"{row['id']}  {row['upload_date']:<10}  {row['channel']}  {row['title']}")
+        date = row["upload_date"] or "----------"
+        print(f"{row['id']}  {date}  {row['channel']:<{width}}  {row['title']}")
     return 0
 
 
 def show(home: Path, video_id: str, as_json: bool) -> int:
-    """One video: its metadata, and where each of its files is — or is not."""
-    if not library.is_video_id(video_id):
-        raise Failure(f"{video_id!r} is not a video id", code=USAGE)
-    if not library.entry(home, video_id).is_dir():
-        raise Failure(
-            f"no video {video_id} in the library — `tapedeck list` shows what is",
-            code=USAGE,
-        )
-    document = library.meta(home, video_id)
-    if document is None:
-        raise Failure(
-            f"{video_id}: meta.json is missing or unreadable — "
-            f"`tapedeck add {video_id}` re-fetches it",
-            code=FAILURE,
-        )
-
-    # Media is present exactly when ingest says it is: a half-finished download
-    # beside the entry is not a video here either, which is also what tells the
-    # reader that `add` would fetch it again.
-    media = library.media(home, video_id)
-    transcript = library.transcript(home, video_id)
-    page = library.page(home, video_id)
+    """Everything the library knows about one video, and where to open it."""
+    entry = known(home, video_id)
+    meta = read_meta(entry) or {}
+    media = ingest.videos(entry)
+    page = page_of(home, video_id)
+    transcript = entry / TRANSCRIPT_NAME
+    document = {
+        **meta,
+        "id": video_id,
+        "media": str(media[0]) if media else None,
+        "transcript": str(transcript) if transcript.is_file() else None,
+        "model": label(entry),
+        "archive": str(page) if page.is_file() else None,
+    }
     if as_json:
-        print(
-            json.dumps(
-                {
-                    **document,
-                    "id": video_id,
-                    "media": str(media) if media else None,
-                    "transcript": str(transcript) if transcript else None,
-                    "archive": str(page) if page.is_file() else None,
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        print(json.dumps(document, ensure_ascii=False, indent=2))
         return 0
-    print("\n".join(_human(video_id, document, media, transcript, page)))
+
+    duration = document.get("duration_s")
+    print(f"{video_id}  {document.get('title') or '(no title)'}")
+    for field, value in (
+        ("channel", document.get("channel")),
+        ("date", document.get("upload_date")),
+        ("duration", hms(duration) if isinstance(duration, (int, float)) else None),
+        ("url", document.get("url")),
+        ("media", document["media"] or f"gone — `tapedeck add {video_id} --force` refetches it"),
+        ("transcript", document["model"] or "none — `tapedeck retranscribe` derives it"),
+        ("archive", document["archive"] or "none — `tapedeck add <id>` re-renders it"),
+    ):
+        print(f"  {field:<11} {value or '(unknown)'}")
     return 0
 
 
-def _human(video_id: str, document: dict, media, transcript, page) -> list[str]:
-    duration = document.get("duration_s")
-    lines = [f"{video_id}  {document.get('title', '')}"]
-    for label, value in (
-        ("channel", document.get("channel", "")),
-        ("uploaded", document.get("upload_date", "")),
-        ("duration", hms(duration) if isinstance(duration, (int, float)) else "unknown"),
-        ("url", document.get("url", "")),
-    ):
-        lines.append(f"  {label:<10} {value}")
-    lines.append(f"  {'archive':<10} {page if page.is_file() else 'not rendered yet'}")
-    lines.append(
-        f"  {'video':<10} "
-        + (str(media) if media else f"gone — `tapedeck add {video_id}` fetches it again")
-    )
-    lines.append(
-        f"  {'transcript':<10} " + (str(transcript) if transcript else "none yet")
-    )
-    chapters = document.get("chapters") or []
-    if chapters:
-        lines.append(f"  {'chapters':<10} {len(chapters)}")
-    return lines
+def remove(home: Path, video_id: str, media_only: bool) -> int:
+    """Forget a video, or reclaim just its disk (SPEC-cli-002)."""
+    entry = known(home, video_id)
+    if media_only:
+        # The knowledge stays: metadata, transcript, archive page and index rows
+        # all keep working. The cost is that this video can never be
+        # re-transcribed without downloading it again.
+        for path in ingest.videos(entry):
+            path.unlink()
+        print(f"{video_id}: media deleted; transcript, archive page and index kept")
+        return 0
+    shutil.rmtree(entry)
+    page_of(home, video_id).unlink(missing_ok=True)
+    # The page is gone, so index update is what drops the rows — the index owns
+    # its own database, and it derives from archive pages alone.
+    code = components.stage("index", ["update", video_id], home)
+    if code:
+        raise Failure(
+            f"{video_id}: removed from the library, but the index still lists it "
+            f"(index exited {code}) — `tapedeck reindex` settles it"
+        )
+    print(f"{video_id}: removed from the library, the archive and the index")
+    return 0
+
+
+def search(home: Path, query, limit, as_json: bool) -> int:
+    args = ["search", *query]
+    if limit is not None:
+        args += ["-k", str(limit)]
+    return components.passthrough("index", args + (["--json"] if as_json else []), home)
+
+
+def ask(home: Path, question, limit, fast: bool, video: str | None) -> int:
+    args = ["run", " ".join(question)]
+    if limit is not None:
+        args += ["-k", str(limit)]
+    if fast:
+        args.append("--fast")
+    if video is not None:
+        args += ["--video", video]
+    return components.passthrough("ask", args, home)
+
+
+def reindex(home: Path) -> int:
+    """The index rebuilt from archive pages alone — the component's verb, whole."""
+    return components.passthrough("index", ["reindex"], home)

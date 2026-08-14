@@ -1,30 +1,24 @@
-"""cli — the `tapedeck` executable: the one surface a person types at.
+"""cli — the tapedeck executable: the home, the surface, the pipeline.
 
-Sole writer of `$TAPEDECK_HOME/config.toml` (system/contracts/library-layout.md)
-and the sole authority on where the home is (SPEC-cli-001). Everything else it
-does is orchestration: each verb drives the component that owns the work through
-that component's module CLI, in the order of the derivation chain.
+Sole writer of `$TAPEDECK_HOME/config.toml` (system/contracts/library-layout.md),
+which a first run scaffolds with commented defaults and every run after that
+leaves alone. Everything else the cli does it does by calling the component that
+owns the path: `python -m ingest add`, `python -m transcribe run`, `python -m
+archive render`, `python -m index update`, `python -m ask run` — the same
+boundaries those components are evaluated at.
 
-The exit codes are the contract's (system/contracts/cli-surface.md) and they are
-named here because every module in the package raises against them.
+It never re-derives another component's vocabulary (LESSON-0003). The video-id
+grammar and the rule for what counts as a downloaded video are ingest's and are
+imported from it; the seam defaults written into config.toml are published by the
+components that run them; the model label supersession is judged on comes from
+transcribe. Where the cli asks one of those questions — in `add`, `show`, `list`,
+`rm`, `retranscribe` — it gets the owner's answer, not a second opinion.
 """
 
-SUCCESS = 0
-FAILURE = 1  # the operation was understood and did not succeed
-USAGE = 2  # the request was malformed, or names something that is not here
+
+class Usage(ValueError):
+    """A mistake in the asking — exit 2 (system/contracts/cli-surface.md)."""
 
 
-class Failure(Exception):
-    """An operation that could not complete; carries the process exit code.
-
-    A component we drove has already said what went wrong on its own stderr, so
-    the message here says which video or which verb it happened to — never a
-    second translation of the child's error.
-    """
-
-    def __init__(self, message, code=FAILURE):
-        super().__init__(message)
-        self.code = code
-
-
-__all__ = ["FAILURE", "SUCCESS", "USAGE", "Failure"]
+class Failure(RuntimeError):
+    """An operation that was attempted and did not complete — exit 1."""

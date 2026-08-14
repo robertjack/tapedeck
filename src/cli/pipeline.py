@@ -1,213 +1,182 @@
-"""The verbs that drive the derivation chain: add, retranscribe, rm.
+"""The derivation chain as a verb: `add` and `retranscribe`.
 
-The chain is always the same and always in the same order — ingest, transcribe,
-archive, index (SPEC-core-002) — and every step is another component's program.
-The cli's own work is deciding *which* videos go through it and what to do when
-one of them doesn't make it.
+One video is derived by running the four owners in order — ingest, transcribe,
+archive, index (SPEC-core-002). Both sweeps here are built for repetition rather
+than for a first run: one video's failure is reported and the sweep goes on
+(SPEC-cli-003, SPEC-cli-004), so a channel of five hundred videos is not held
+hostage by one that has been taken down, and running it again is how the rest
+catch up.
+
+What the sweeps refuse to do is as important as what they do. `add` on an
+unchanged collection derives nothing at all — no ingest, transcribe, archive or
+index invocation for a video that is already complete — because a re-derivation
+that lands identical bytes still costs two thousand subprocesses on a big
+channel, and that is the difference between "re-run the channel URL" being a
+habit and being an hour. `retranscribe` selects only what it could actually
+re-derive, so a library holding entries whose media was reclaimed still converges
+on a no-op instead of failing forever.
+
+Every question about an entry is asked of the component that owns the answer
+(LESSON-0003): whether a name is a video id and whether the media is really there
+are ingest's, and the model label supersession is judged on is transcribe's.
 """
 
 from __future__ import annotations
 
-import shutil
+import json
 import sys
 from pathlib import Path
 
-from ingest import VIDEO
-from ingest import resolve as classify
-from ingest import video_ids
-from transcribe.transcriber import ConfigError, seam
+import ingest
+from transcribe.transcriber import seam
 
-from . import USAGE, Failure, components, library
+from . import Failure, Usage, components
+from .home import ARCHIVE, LIBRARY
+
+# Names pinned by system/contracts/library-layout.md, which the cli reads as
+# directly as any other component does.
+META_NAME = "meta.json"
+TRANSCRIPT_NAME = "transcript.json"
+
+CHAIN = (("transcribe", ["run"]), ("archive", ["render"]), ("index", ["update"]))
 
 
-def _steps(home: Path, steps: list[tuple[str, list[str]]]) -> int:
-    """Run a chain, stopping at the first link that fails and keeping its code."""
-    for module, args in steps:
-        code = components.run(module, args, home, quiet=True)
+def entry_of(home: Path, video_id: str) -> Path:
+    return home / LIBRARY / video_id
+
+
+def page_of(home: Path, video_id: str) -> Path:
+    return home / ARCHIVE / f"{video_id}.md"
+
+
+def derive(home: Path, video_id: str, force: bool = False) -> None:
+    """ingest -> transcribe -> archive -> index, for one video. Raises on a break.
+
+    Each stage is idempotent on its own (SPEC-core-003): ingest skips a download
+    it already has, transcribe skips a transcript it already has, and the last two
+    are pure re-renders. So this is safe to run on a half-derived entry, and it is
+    what fills whichever link is missing.
+    """
+    stages = [("ingest", ["add", video_id, *(["--force"] if force else [])])]
+    stages += [(module, [*args, video_id]) for module, args in CHAIN]
+    for module, args in stages:
+        code = components.stage(module, args, home)
         if code:
-            return code
-    return 0
+            raise Failure(f"{video_id}: {module} failed (exit {code})")
 
 
-def _render(video_id: str) -> list[tuple[str, list[str]]]:
-    """Everything downstream of the transcript: the page, then the rows."""
-    return [("archive", ["render", video_id]), ("index", ["update", video_id])]
+def complete(home: Path, video_id: str) -> bool:
+    """Is every link of this video's chain already here? The media question is
+    ingest's — an entry holding only `video.part` has a fetch in flight, not a
+    video, and answering it any other way would skip a download that never
+    finished."""
+    entry = entry_of(home, video_id)
+    return (
+        ingest.has_video(entry)
+        and (entry / META_NAME).is_file()
+        and (entry / TRANSCRIPT_NAME).is_file()
+        and page_of(home, video_id).is_file()
+    )
 
 
-def _derive(video_id: str) -> list[tuple[str, list[str]]]:
-    """Everything downstream of the video itself."""
-    return [("transcribe", ["run", video_id]), *_render(video_id)]
-
-
-def _pipeline(video_id: str, force: bool) -> list[tuple[str, list[str]]]:
-    fetch = ["add", video_id] + (["--force"] if force else [])
-    return [("ingest", fetch), *_derive(video_id)]
-
-
-# --- add ---------------------------------------------------------------------
+def expand(home: Path, url: str) -> list[str]:
+    """The video ids a collection URL names, in the collection's own order."""
+    code, listing = components.capture("ingest", ["expand", url], home)
+    if code:
+        raise Failure(f"could not list {url} — ingest exited {code}")
+    return ingest.video_ids(listing)
 
 
 def add(home: Path, target: str, force: bool) -> int:
-    """One video, or every video of a playlist or channel (SPEC-cli-003).
-
-    Which of the two it is comes from ingest's URL grammar and nothing else, and
-    it is settled before any work starts — including before the lister is asked
-    anything, so `--force` on a channel is refused without a network round trip.
-    """
-    kind, value = classify(target)  # BadRequest for anything that is neither
-    if kind == VIDEO:
-        return _add_one(home, value, force)
-    if force:
-        raise Failure(
-            "--force re-fetches one video at a time — re-downloading a whole "
-            "collection has to be deliberate, so name the videos you mean",
-            code=USAGE,
-        )
-    return _sweep(home, value)
+    """One video, or every video a playlist or channel names (SPEC-cli-003)."""
+    kind, value = ingest.resolve(target)  # BadRequest is a usage error, exit 2
+    if kind == ingest.COLLECTION:
+        if force:
+            raise Usage(
+                "--force on a collection is refused: re-fetching a whole channel "
+                "must be deliberate, one video at a time (`tapedeck add <id> --force`)"
+            )
+        return sweep(home, expand(home, value), skip_complete=True)
+    # A single video is always re-derived, never skipped: it is how a lost
+    # archive page or a lost index row comes back (SPEC-core-002).
+    return sweep(home, [value], skip_complete=False, force=force)
 
 
-def _add_one(home: Path, video_id: str, force: bool) -> int:
-    """The whole chain for one video, refreshing whatever is stale.
-
-    Nothing is skipped here on the cli's say-so: each stage already knows when
-    its own artifact is current (ingest skips a download it has, transcribe skips
-    a transcript it has), and running the chain is how a lost archive page or a
-    dropped index row comes back from a plain `tapedeck add <id>`.
-    """
-    code = _steps(home, _pipeline(video_id, force))
-    if code:
-        raise Failure(f"{video_id}: the pipeline did not finish", code=code)
-    print(f"{video_id}: {library.page(home, video_id)}")
-    return 0
-
-
-def _sweep(home: Path, url: str) -> int:
-    """Every video of a collection, in collection order, one failure at a time.
-
-    Re-running the same URL is the intended way to pick up new uploads, so the
-    common case — nothing new — has to cost one listing and nothing else.
-    """
-    code, listing = components.capture("ingest", ["expand", url], home)
-    if code:
-        raise Failure(f"could not list {url}", code=code)
-    found = video_ids(listing)  # ingest's rule for reading another tool's stdout
-    if not found:
-        print(f"no videos in {url}", file=sys.stderr)
-
-    added = present = failed = 0
-    for position, video_id in enumerate(found, start=1):
-        where = f"[{position}/{len(found)}] {video_id}"
-        if library.complete(home, video_id):
-            present += 1
-            print(f"{where}: already present", file=sys.stderr)
+def sweep(home: Path, ids, *, skip_complete: bool, force: bool = False) -> int:
+    added = skipped = failed = 0
+    for video_id in ids:
+        if skip_complete and complete(home, video_id):
+            skipped += 1
             continue
-        print(f"{where}: deriving…", file=sys.stderr)
-        if _steps(home, _pipeline(video_id, force=False)):
-            failed += 1
-            # One video's failure is not the sweep's: say which one, and go on.
-            print(f"error: {video_id}: failed — continuing the sweep", file=sys.stderr)
-        else:
+        try:
+            derive(home, video_id, force)
             added += 1
-
-    print(f"{added} added, {present} already present, {failed} failed")
+        except Failure as exc:
+            failed += 1
+            print(f"error: {exc}", file=sys.stderr)
+    print(f"{added} added, {skipped} already present, {failed} failed")
     return 1 if failed else 0
 
 
-# --- retranscribe ------------------------------------------------------------
+def label(entry: Path) -> str | None:
+    """The model that made this transcript, or None if there is no transcript to
+    read. None is not "current": a video whose transcript went missing is one the
+    sweep can put back, which is what makes `retranscribe` the recovery verb."""
+    try:
+        document = json.loads((entry / TRANSCRIPT_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return document.get("model") if isinstance(document, dict) else None
+
+
+def superseded(home: Path, model: str) -> list[str]:
+    """The videos this sweep would redo, and a note on stderr for each entry it
+    cannot (SPEC-cli-004). Anything under `library/` that is not a well-formed id,
+    or whose media is gone, could never be re-transcribed without downloading the
+    video again — selecting it would mean the sweep never reaches a no-op."""
+    library = home / LIBRARY
+    stale = []
+    for entry in sorted(library.iterdir()) if library.is_dir() else []:
+        if not entry.is_dir():
+            continue
+        video_id = entry.name
+        if not ingest.VIDEO_ID.fullmatch(video_id):
+            print(f"{video_id}: not a video id — skipped, it is not tapedeck's", file=sys.stderr)
+        elif not ingest.has_video(entry):
+            print(
+                f"{video_id}: no video file — skipped; its transcript can only be "
+                f"redone by fetching the video again (`tapedeck add {video_id}`)",
+                file=sys.stderr,
+            )
+        elif label(entry) != model:
+            stale.append(video_id)
+    return stale
+
+
+def redo(home: Path, video_id: str) -> None:
+    """SPEC-core-002's "a better model regenerates its whole layer": the transcript
+    is forced, and everything derived from it follows."""
+    stages = [("transcribe", ["run", video_id, "--force"])]
+    stages += [(module, [*args, video_id]) for module, args in CHAIN[1:]]
+    for module, args in stages:
+        code = components.stage(module, args, home)
+        if code:
+            raise Failure(f"{video_id}: {module} failed (exit {code})")
 
 
 def retranscribe(home: Path, dry_run: bool) -> int:
-    """SPEC-core-002's "a better model regenerates its whole layer", as a verb.
-
-    Supersession is judged on the transcript's model label against the configured
-    one, both read through transcribe (SPEC-transcribe-001) — the component that
-    stamps the label decides what the configured model is called.
-    """
-    try:
-        _, model = seam(home)
-    except ConfigError as exc:
-        raise Failure(str(exc), code=USAGE) from exc
-
-    selected = []
-    for name in library.names(home):
-        note = _unre_derivable(home, name)
-        if note:
-            # Selecting these would fail forever and the sweep could never reach
-            # the no-op it promises; they are reported and left exactly as they
-            # are (SPEC-cli-004).
-            print(f"{name}: skipped — {note}", file=sys.stderr)
-            continue
-        if library.label(home, name) != model:
-            selected.append(name)
-
+    _, model = seam(home)  # transcribe owns the label; ConfigError is exit 2
+    stale = superseded(home, model)
     if dry_run:
-        # A promise of exactly what the sweep would redo: ids on stdout, one per
-        # line, nothing else — the skip notes have already gone to stderr.
-        for video_id in selected:
+        for video_id in stale:
             print(video_id)
         return 0
-    return _redo(home, selected, model)
-
-
-def _unre_derivable(home: Path, name: str) -> str | None:
-    """Why this entry could never be re-transcribed, or None if it could."""
-    if not library.is_video_id(name):
-        return "not a video id, so not tapedeck's to touch"
-    if library.media(home, name) is None:
-        return (
-            "no video to re-transcribe from — its media was reclaimed "
-            "(`tapedeck add <id> --force` downloads it again)"
-        )
-    return None
-
-
-def _redo(home: Path, selected: list[str], model: str) -> int:
-    if not selected:
-        print(f"nothing to re-transcribe — every transcript is {model}")
-        return 0
     failed = 0
-    for position, video_id in enumerate(selected, start=1):
-        print(f"[{position}/{len(selected)}] {video_id}: re-transcribing…", file=sys.stderr)
-        steps = [("transcribe", ["run", video_id, "--force"]), *_render(video_id)]
-        if _steps(home, steps):
+    for video_id in stale:
+        try:
+            redo(home, video_id)
+        except Failure as exc:
             failed += 1
-            print(f"error: {video_id}: failed — continuing the sweep", file=sys.stderr)
-    print(f"{len(selected) - failed} re-transcribed, {failed} failed ({model})")
+            print(f"error: {exc}", file=sys.stderr)
+    print(f"{len(stale) - failed} retranscribed, {failed} failed ({model})")
     return 1 if failed else 0
-
-
-# --- rm ----------------------------------------------------------------------
-
-
-def remove(home: Path, video_id: str, media_only: bool) -> int:
-    """Forget a video everywhere, or reclaim its disk and keep the knowledge."""
-    if not library.is_video_id(video_id):
-        raise Failure(f"{video_id!r} is not a video id", code=USAGE)
-    if not library.known(home, video_id):
-        raise Failure(
-            f"no video {video_id} here — `tapedeck list` shows what is", code=USAGE
-        )
-    if media_only:
-        return _reclaim(home, video_id)
-
-    # The page goes before the index is told, so index update sees a video with
-    # no archive page — which is how it knows to drop its rows.
-    shutil.rmtree(library.entry(home, video_id), ignore_errors=True)
-    library.page(home, video_id).unlink(missing_ok=True)
-    code = components.run("index", ["update", video_id], home, quiet=True)
-    if code:
-        raise Failure(f"{video_id}: removed, but the index still knows it", code=code)
-    print(f"{video_id}: removed — library entry, archive page and index rows")
-    return 0
-
-
-def _reclaim(home: Path, video_id: str) -> int:
-    """Just the video file(s): the transcript, the page and the index stay, and
-    the video can never be re-transcribed without downloading it again."""
-    removed = library.media_files(home, video_id)
-    for path in removed:
-        path.unlink(missing_ok=True)
-    if not removed:
-        print(f"{video_id}: no video file here to reclaim", file=sys.stderr)
-    print(f"{video_id}: media removed, knowledge kept ({len(removed)} file(s))")
-    return 0

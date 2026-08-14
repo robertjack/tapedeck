@@ -1,70 +1,60 @@
-"""Driving the other components — always at their own boundary.
+"""How the cli talks to the components that own the library's paths.
 
-Each component is a program: `python -m ingest add <url>`, `python -m transcribe
-run <id>`, and so on. The cli calls them that way rather than importing their
-internals, because that is the boundary they are evaluated at and the boundary
-they are replaceable at — a component rewritten in another language keeps this
-caller working. (Their *vocabulary* is a different matter and is imported: see
-library.py and LESSON-0003.)
+Each component is a module CLI — `python -m ingest add`, `python -m transcribe
+run`, `python -m archive render`, `python -m index update`, `python -m ask run` —
+and the cli drives exactly that boundary, the same one each component's own
+durable evaluations use. Nothing here reaches past it into an internal the
+component never promised to keep.
 
-Two rules hold for every call. The resolved home goes into the child's
-environment, so a component never has to guess where the library is and its own
-default can never be reached. And a child's stderr is inherited — progress from a
-download or a transcription belongs on the user's terminal as it happens, not in
-a buffer that appears when the work is already over.
+The resolved home travels in the environment because the cli is the sole
+authority on where the library is (SPEC-cli-001); a child left to work out its
+own default could find a different one.
+
+Three ways to run a child, and the difference is whose answer stdout carries.
+A `stage` is one link of the derivation chain: its stdout is the path it just
+wrote — progress, not the answer — so it is folded into our stderr, leaving
+`add`'s stdout for the summary alone. `passthrough` is for the read-only verbs
+the cli delegates whole; there the component's stdout *is* the answer and its
+exit code is ours. `capture` is for the one case where the cli reads a
+component's output itself: the ids in a collection.
 """
 
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 import sys
 from pathlib import Path
 
-# Each component may be pointed somewhere else for a run — the same override the
-# durable evaluations use to drive components in isolation.
-COMMAND_VAR = "TAPEDECK_{}_CMD"
+STDERR_FD = 2
 
 
-def command(module: str) -> list[str]:
-    override = (os.environ.get(COMMAND_VAR.format(module.upper())) or "").strip()
-    if override:
-        return shlex.split(override)
-    # sys.executable, not "python": the components are installed beside the cli,
-    # in this interpreter's environment, and PATH may not agree about which
-    # python that is.
-    return [sys.executable, "-m", module]
+def _argv(module: str, args) -> list[str]:
+    # This interpreter, so the components found are the ones installed beside us.
+    return [sys.executable, "-m", module, *args]
 
 
 def _env(home: Path) -> dict:
     return {**os.environ, "TAPEDECK_HOME": str(home)}
 
 
-def run(module: str, args: list[str], home: Path, quiet: bool = False) -> int:
-    """Run one component and return its exit code.
+def stage(module: str, args, home: Path) -> int:
+    """One link of the chain. Its stdout joins our diagnostics on stderr."""
+    sys.stderr.flush()
+    return subprocess.run(_argv(module, args), env=_env(home), stdout=STDERR_FD).returncode
 
-    `quiet` swallows the child's stdout: inside a pipeline the paths each stage
-    prints are its answer to its own caller, not this run's human output. Where
-    the child's stdout *is* the answer — search results, an ask, a manual — it is
-    inherited untouched, so nothing is buffered, reformatted or truncated on the
-    way through.
-    """
+
+def passthrough(module: str, args, home: Path) -> int:
+    """Hand the verb over whole: the child's stdio is ours, and so is its exit."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    return subprocess.run(_argv(module, args), env=_env(home)).returncode
+
+
+def capture(module: str, args, home: Path) -> tuple[int, str]:
+    """Run a component for its output. Its stderr still reaches the user."""
+    sys.stderr.flush()
     result = subprocess.run(
-        [*command(module), *args],
-        env=_env(home),
-        stdout=subprocess.DEVNULL if quiet else None,
-    )
-    return result.returncode
-
-
-def capture(module: str, args: list[str], home: Path) -> tuple[int, str]:
-    """Run one component and read its stdout — for the answers the cli acts on."""
-    result = subprocess.run(
-        [*command(module), *args],
-        env=_env(home),
-        stdout=subprocess.PIPE,
-        text=True,
-        errors="replace",
+        _argv(module, args), env=_env(home), stdout=subprocess.PIPE, text=True, errors="replace"
     )
     return result.returncode, result.stdout or ""
