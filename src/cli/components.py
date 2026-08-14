@@ -1,16 +1,17 @@
-"""The other components, reached where their own evaluations reach them.
+"""Driving the other components — always at their own boundary.
 
-Each one is a program — `python -m ingest add <url>`, `python -m archive render
-<id>` — and the cli composes them across process boundaries rather than importing
-their behaviour. A component can then be regenerated in another language without
-the orchestrator noticing, and a step that dies takes only its own process down.
-(Vocabulary is the exception and is imported, never re-derived: see library.py.)
+Each component is a program: `python -m ingest add <url>`, `python -m transcribe
+run <id>`, and so on. The cli calls them that way rather than importing their
+internals, because that is the boundary they are evaluated at and the boundary
+they are replaceable at — a component rewritten in another language keeps this
+caller working. (Their *vocabulary* is a different matter and is imported: see
+library.py and LESSON-0003.)
 
-stdout is a component's answer. For the links of the derivation chain it is
-captured, because `tapedeck add` reports what happened rather than four paths; for
-the verbs the cli merely routes — search, ask, reindex, adapt-parakeet — the child
-writes straight to ours, so results and stdin stream untouched. stderr is progress
-either way and is never captured.
+Two rules hold for every call. The resolved home goes into the child's
+environment, so a component never has to guess where the library is and its own
+default can never be reached. And a child's stderr is inherited — progress from a
+download or a transcription belongs on the user's terminal as it happens, not in
+a buffer that appears when the work is already over.
 """
 
 from __future__ import annotations
@@ -21,40 +22,49 @@ import subprocess
 import sys
 from pathlib import Path
 
-INGEST, TRANSCRIBE, ARCHIVE, INDEX, ASK = "ingest", "transcribe", "archive", "index", "ask"
+# Each component may be pointed somewhere else for a run — the same override the
+# durable evaluations use to drive components in isolation.
+COMMAND_VAR = "TAPEDECK_{}_CMD"
 
 
 def command(module: str) -> list[str]:
-    """How to run one component: this interpreter — the one tapedeck was installed
-    into, whatever python happens to be on PATH — unless an environment override
-    names something else, which is the seam the eval harness drives."""
-    override = os.environ.get(f"TAPEDECK_{module.upper()}_CMD")
-    return shlex.split(override) if override else [sys.executable, "-m", module]
+    override = (os.environ.get(COMMAND_VAR.format(module.upper())) or "").strip()
+    if override:
+        return shlex.split(override)
+    # sys.executable, not "python": the components are installed beside the cli,
+    # in this interpreter's environment, and PATH may not agree about which
+    # python that is.
+    return [sys.executable, "-m", module]
 
 
-def run(module: str, args: list[str], home: Path, capture: bool = False):
-    # Our own lines are buffered when stdout is a pipe; the child's are not. Flush
-    # first or a summary printed before a forwarded verb lands after it.
-    sys.stdout.flush()
-    return subprocess.run(
+def _env(home: Path) -> dict:
+    return {**os.environ, "TAPEDECK_HOME": str(home)}
+
+
+def run(module: str, args: list[str], home: Path, quiet: bool = False) -> int:
+    """Run one component and return its exit code.
+
+    `quiet` swallows the child's stdout: inside a pipeline the paths each stage
+    prints are its answer to its own caller, not this run's human output. Where
+    the child's stdout *is* the answer — search results, an ask, a manual — it is
+    inherited untouched, so nothing is buffered, reformatted or truncated on the
+    way through.
+    """
+    result = subprocess.run(
         [*command(module), *args],
-        env={**os.environ, "TAPEDECK_HOME": str(home)},
-        stdout=subprocess.PIPE if capture else None,
-        text=True,
+        env=_env(home),
+        stdout=subprocess.DEVNULL if quiet else None,
     )
+    return result.returncode
 
 
-def step(module: str, args: list[str], home: Path) -> int:
-    """One link of the chain: its exit code kept, its stdout swallowed."""
-    return run(module, args, home, capture=True).returncode
-
-
-def output(module: str, args: list[str], home: Path) -> tuple[int, str]:
-    """A component asked a question — exit code and what it said."""
-    result = run(module, args, home, capture=True)
+def capture(module: str, args: list[str], home: Path) -> tuple[int, str]:
+    """Run one component and read its stdout — for the answers the cli acts on."""
+    result = subprocess.run(
+        [*command(module), *args],
+        env=_env(home),
+        stdout=subprocess.PIPE,
+        text=True,
+        errors="replace",
+    )
     return result.returncode, result.stdout or ""
-
-
-def forward(module: str, args: list[str], home: Path) -> int:
-    """A verb the cli only routes: the component's stdout is the user's answer."""
-    return run(module, args, home).returncode

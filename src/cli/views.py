@@ -1,16 +1,7 @@
-"""What `list` and `show` put on stdout, in both dialects.
+"""`list` and `show`: what the library holds, for a person and for a program.
 
-Two read-only views over the library, and the only place the cli formats facts of
-its own. Both put the id first, because every other verb takes one. `--json` is
-the same facts structurally: the entry's `meta.json` as ingest wrote it, plus
-where the derived files are — a reshaped copy would be a second metadata format
-for readers to learn.
-
-`show` reports presence, never guesses: a video the library does not have is said
-to be missing rather than named hopefully, because that answer is what tells the
-user `add` will fetch it again. What counts as having it is ingest's rule, so a
-`video.part` left by an interrupted download reads here exactly as it reads there
-— not the video (LESSON-0003).
+Read-only, and both shapes carry the same facts — `--json` is the same answer
+with the formatting taken out (SPEC-cli-001), never a different query.
 """
 
 from __future__ import annotations
@@ -19,91 +10,102 @@ import json
 import sys
 from pathlib import Path
 
-from archive.render import hms
+from archive import hms  # the timestamp format is archive's (LESSON-0003)
 
-from . import Failure, library
-from .library import Entry
+from . import FAILURE, USAGE, Failure, library
 
-UNKNOWN = "unknown"
+ROW_KEYS = ("id", "upload_date", "channel", "title")
 
 
-def _row(entry: Entry, meta: dict) -> dict:
-    return {
-        "id": entry.video_id,
-        "upload_date": str(meta.get("upload_date") or UNKNOWN),
-        "channel": str(meta.get("channel") or ""),
-        "title": str(meta.get("title") or ""),
-        "duration_s": meta.get("duration_s"),
-    }
+def _row(document: dict) -> dict:
+    return {key: document.get(key) or "" for key in ROW_KEYS}
 
 
 def listing(home: Path, as_json: bool) -> int:
-    rows = []
-    for entry in library.entries(home):
-        meta = entry.meta()
-        if not meta:
-            print(f"{entry.video_id}: no readable meta.json — not listed", file=sys.stderr)
+    """One line per video: id, date, channel, title. Newest first."""
+    rows, unreadable = [], []
+    for video_id in library.ids(home):
+        document = library.meta(home, video_id)
+        if document is None:
+            # An entry mid-fetch, or one whose metadata did not survive. It is
+            # not a video anyone can browse yet, so it is not in the listing —
+            # but silence would make it look as though it were gone.
+            unreadable.append(video_id)
             continue
-        rows.append(_row(entry, meta))
-    rows.sort(key=lambda row: (row["upload_date"], row["id"]))
+        rows.append(_row({**document, "id": video_id}))
+    rows.sort(key=lambda row: (row["upload_date"], row["title"]), reverse=True)
+
+    for video_id in unreadable:
+        print(f"{video_id}: no readable meta.json — not listed", file=sys.stderr)
     if as_json:
-        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
         return 0
-    # One line per video, columns aligned to this library rather than to a guess
-    # about channel-name lengths.
-    width = max((len(row["channel"]) for row in rows), default=0)
     for row in rows:
-        print(f"{row['id']}  {row['upload_date']}  {row['channel']:<{width}}  {row['title']}")
+        print(f"{row['id']}  {row['upload_date']:<10}  {row['channel']}  {row['title']}")
     return 0
-
-
-def _duration(meta: dict) -> str:
-    """`duration_s: 0` is a duration the source withheld, not a zero-second video
-    (contracts/ask-citations.md) — so it is reported as the unknown it is."""
-    seconds = meta.get("duration_s")
-    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0:
-        return UNKNOWN
-    return hms(seconds)
 
 
 def show(home: Path, video_id: str, as_json: bool) -> int:
-    entry = Entry(home, video_id)
-    if not library.is_video_id(video_id) or not entry.known():
+    """One video: its metadata, and where each of its files is — or is not."""
+    if not library.is_video_id(video_id):
+        raise Failure(f"{video_id!r} is not a video id", code=USAGE)
+    if not library.entry(home, video_id).is_dir():
         raise Failure(
-            f"no video {video_id!r} in the library — `tapedeck list` shows what is",
-            code=2,
+            f"no video {video_id} in the library — `tapedeck list` shows what is",
+            code=USAGE,
         )
-    meta = entry.meta()
-    media = entry.media()
-    derived = {
-        "media": str(media) if media else None,
-        "transcript": _path(entry.transcript_path),
-        "model": entry.model(),
-        "archive": _path(entry.page),
-    }
+    document = library.meta(home, video_id)
+    if document is None:
+        raise Failure(
+            f"{video_id}: meta.json is missing or unreadable — "
+            f"`tapedeck add {video_id}` re-fetches it",
+            code=FAILURE,
+        )
+
+    # Media is present exactly when ingest says it is: a half-finished download
+    # beside the entry is not a video here either, which is also what tells the
+    # reader that `add` would fetch it again.
+    media = library.media(home, video_id)
+    transcript = library.transcript(home, video_id)
+    page = library.page(home, video_id)
     if as_json:
-        print(json.dumps({**meta, **derived}, indent=2, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    **document,
+                    "id": video_id,
+                    "media": str(media) if media else None,
+                    "transcript": str(transcript) if transcript else None,
+                    "archive": str(page) if page.is_file() else None,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
-    print(f"{video_id}  {meta.get('title', '')}".rstrip())
-    for label, value in (
-        ("channel", meta.get("channel") or UNKNOWN),
-        ("uploaded", meta.get("upload_date") or UNKNOWN),
-        ("duration", _duration(meta)),
-        ("url", meta.get("url") or UNKNOWN),
-    ):
-        print(f"  {label:<10}  {value}")
-    print(f"  {'video':<10}  {derived['media'] or _gone('add ' + video_id + ' --force')}")
-    transcript = derived["transcript"]
-    if transcript and derived["model"]:
-        transcript = f"{transcript}  ({derived['model']})"
-    print(f"  {'transcript':<10}  {transcript or _gone('retranscribe')}")
-    print(f"  {'archive':<10}  {derived['archive'] or _gone('add ' + video_id)}")
+    print("\n".join(_human(video_id, document, media, transcript, page)))
     return 0
 
 
-def _path(path: Path) -> str | None:
-    return str(path) if path.is_file() else None
-
-
-def _gone(verb: str) -> str:
-    return f"missing — `tapedeck {verb}` derives it again"
+def _human(video_id: str, document: dict, media, transcript, page) -> list[str]:
+    duration = document.get("duration_s")
+    lines = [f"{video_id}  {document.get('title', '')}"]
+    for label, value in (
+        ("channel", document.get("channel", "")),
+        ("uploaded", document.get("upload_date", "")),
+        ("duration", hms(duration) if isinstance(duration, (int, float)) else "unknown"),
+        ("url", document.get("url", "")),
+    ):
+        lines.append(f"  {label:<10} {value}")
+    lines.append(f"  {'archive':<10} {page if page.is_file() else 'not rendered yet'}")
+    lines.append(
+        f"  {'video':<10} "
+        + (str(media) if media else f"gone — `tapedeck add {video_id}` fetches it again")
+    )
+    lines.append(
+        f"  {'transcript':<10} " + (str(transcript) if transcript else "none yet")
+    )
+    chapters = document.get("chapters") or []
+    if chapters:
+        lines.append(f"  {'chapters':<10} {len(chapters)}")
+    return lines

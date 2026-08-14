@@ -1,131 +1,115 @@
-"""The library as the cli reads it, in the vocabulary of whoever owns each answer.
+"""What the library holds — asked in the vocabulary of whoever owns the answer.
 
-Four questions run through `add`, `show`, `list`, `rm` and `retranscribe`: is this
-an id, is the video here, is this entry finished, what model made its transcript.
-Not one of them is the cli's to answer. The id grammar and what counts as a
-downloaded video are ingest's (SPEC-ingest-001) — `video.part` is a fetch in
-flight, and only ingest gets to say so; the transcript's name is transcribe's; the
-archive page's location is the layout contract's. Imported, so a verb here can
-never reach a different verdict from the component that writes the file
-(LESSON-0003).
+LESSON-0003 is the whole design of this module. Whether a name is a video id and
+whether an entry holds a downloaded video are ingest's rules (SPEC-ingest-001);
+the transcript's filename is transcribe's; the deep-link and timestamp formats
+are archive's. Every one of them is imported from its owner, so `add`, `show`,
+`list`, `rm` and `retranscribe` cannot answer these questions differently from
+the components that do the work — a second copy of a rule is the defect even
+while it still agrees.
 
-Reading only: every path this module deletes belongs to `rm`, which is the one
-verb licensed to unmake what other components made (SPEC-cli-002).
+Nothing here writes. The paths come from system/contracts/library-layout.md,
+which every component reads and none of them may rewrite.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
-from dataclasses import dataclass
 from pathlib import Path
 
-from ingest.fetch import has_video, videos
+from ingest import VIDEO_ID, videos
 from ingest.meta import META_NAME
-from ingest.sources import VIDEO_ID
 from transcribe.document import TRANSCRIPT_NAME
 
 from .home import ARCHIVE, LIBRARY
 
-
-def is_video_id(text: str) -> bool:
-    """ingest's grammar, asked rather than repeated."""
-    return bool(VIDEO_ID.fullmatch(text or ""))
+PAGE_SUFFIX = ".md"
 
 
-@dataclass(frozen=True)
-class Entry:
-    """One video's files, wherever they live in the layout."""
-
-    home: Path
-    video_id: str
-
-    @property
-    def path(self) -> Path:
-        return self.home / LIBRARY / self.video_id
-
-    @property
-    def page(self) -> Path:
-        return self.home / ARCHIVE / f"{self.video_id}.md"
-
-    @property
-    def meta_path(self) -> Path:
-        return self.path / META_NAME
-
-    @property
-    def transcript_path(self) -> Path:
-        return self.path / TRANSCRIPT_NAME
-
-    def media(self) -> Path | None:
-        """The downloaded video, by ingest's rule — a part-file is not one."""
-        found = videos(self.path)
-        return found[0] if found else None
-
-    def has_media(self) -> bool:
-        return has_video(self.path)
-
-    def known(self) -> bool:
-        """Has this id anything in the library at all? `rm` refuses ids that
-        name nothing, and an entry stripped by `rm --media-only` still counts."""
-        return self.path.is_dir() or self.page.is_file()
-
-    def complete(self) -> bool:
-        """Nothing `add` could do for this video that is not already done: the
-        video itself, its metadata, its transcript, its page. This is what a
-        collection sweep skips on, so it is the difference between re-running a
-        500-video channel for one listing and re-running it for two thousand
-        no-ops (SPEC-cli-003)."""
-        return (
-            self.has_media()
-            and self.meta_path.is_file()
-            and self.transcript_path.is_file()
-            and self.page.is_file()
-        )
-
-    def meta(self) -> dict:
-        return _document(self.meta_path)
-
-    def model(self) -> str | None:
-        """The transcript's model label — what supersession is judged on
-        (SPEC-transcribe-001). No transcript and no label are the same answer
-        here: neither is the configured model, so both are re-derived."""
-        label = _document(self.transcript_path).get("model")
-        return label if isinstance(label, str) and label.strip() else None
+def is_video_id(name: str) -> bool:
+    """ingest's grammar, not ours (SPEC-ingest-001)."""
+    return bool(VIDEO_ID.fullmatch(name or ""))
 
 
-def _document(path: Path) -> dict:
-    """A JSON object on disk, or nothing. An unreadable file is a video that
-    tells us less, never a crashed verb."""
+def entry(home: Path, video_id: str) -> Path:
+    return home / LIBRARY / video_id
+
+
+def page(home: Path, video_id: str) -> Path:
+    return home / ARCHIVE / f"{video_id}{PAGE_SUFFIX}"
+
+
+def media_files(home: Path, video_id: str) -> list[Path]:
+    """The downloaded video file(s) of an entry, by ingest's published rule: a
+    `video.part` is a fetch in flight and a sidecar is not a video, so neither
+    counts here any more than it counts there."""
+    return videos(entry(home, video_id))
+
+
+def media(home: Path, video_id: str) -> Path | None:
+    found = media_files(home, video_id)
+    return found[0] if found else None
+
+
+def transcript(home: Path, video_id: str) -> Path | None:
+    path = entry(home, video_id) / TRANSCRIPT_NAME
+    return path if path.is_file() else None
+
+
+def names(home: Path) -> list[str]:
+    """Every directory under `library/`, in order — including the ones that are
+    not videos. A sweep has to know they are there to say it left them alone."""
+    library = home / LIBRARY
+    if not library.is_dir():
+        return []
+    return sorted(path.name for path in library.iterdir() if path.is_dir())
+
+
+def ids(home: Path) -> list[str]:
+    """The library entries that are videos, in id order."""
+    return [name for name in names(home) if is_video_id(name)]
+
+
+def known(home: Path, video_id: str) -> bool:
+    """Whether tapedeck holds anything at all under this id — an entry, or a page
+    left behind by one. `rm` refuses an id it has never heard of."""
+    return entry(home, video_id).is_dir() or page(home, video_id).is_file()
+
+
+def complete(home: Path, video_id: str) -> bool:
+    """Whether every link of the derivation chain is already here (SPEC-cli-003).
+
+    This is what makes re-running a 500-video channel affordable: complete means
+    the sweep has nothing to do for this video, so it does nothing — no ingest,
+    no transcribe, no archive, no index. An entry missing any link is not
+    complete, and is re-derived rather than counted as present.
+    """
+    return (
+        media(home, video_id) is not None
+        and transcript(home, video_id) is not None
+        and page(home, video_id).is_file()
+    )
+
+
+def _document(path: Path) -> dict | None:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        loaded = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
-    return document if isinstance(document, dict) else {}
+        return None
+    return loaded if isinstance(loaded, dict) else None
 
 
-def children(home: Path) -> list[Path]:
-    """Every directory under `library/`, ids and strangers alike — the sweep in
-    SPEC-cli-004 has to see what it is choosing not to touch."""
-    root = home / LIBRARY
-    return sorted(path for path in root.iterdir() if path.is_dir()) if root.is_dir() else []
+def meta(home: Path, video_id: str) -> dict | None:
+    """`meta.json` as ingest wrote it, or None if it is not there to be read."""
+    return _document(entry(home, video_id) / META_NAME)
 
 
-def entries(home: Path) -> list[Entry]:
-    return [Entry(home, path.name) for path in children(home) if is_video_id(path.name)]
-
-
-def remove(entry: Entry) -> None:
-    """Everything the library holds for one video, except its rows — those are
-    the index's to drop, once its page is gone."""
-    shutil.rmtree(entry.path, ignore_errors=True)
-    entry.page.unlink(missing_ok=True)
-
-
-def remove_media(entry: Entry) -> list[Path]:
-    """Just the video file(s): the disk back, the knowledge kept. What is a video
-    file is ingest's rule again, so this reclaims exactly what `add` fetched."""
-    removed = []
-    for path in videos(entry.path):
-        path.unlink(missing_ok=True)
-        removed.append(path)
-    return removed
+def label(home: Path, video_id: str) -> str | None:
+    """The model that made this transcript (SPEC-transcribe-001), against which
+    supersession is judged. No transcript, or one with no label, is not current
+    with any configured model — which is exactly the answer `retranscribe` wants:
+    a video with no transcript at all is one it should derive."""
+    path = transcript(home, video_id)
+    document = _document(path) if path else None
+    model = (document or {}).get("model")
+    return model if isinstance(model, str) and model.strip() else None

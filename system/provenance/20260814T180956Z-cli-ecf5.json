@@ -1,0 +1,51 @@
+{
+  "id": "gen-20260814T180956Z-cli-ecf5",
+  "component": "cli",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": []
+  },
+  "root_hash": "sha256:ecf5cdd059931b16d830f3209b1973c4f3c1701b477990ad7dfe90c6112096e1",
+  "inputs": {
+    "manifest": "sha256:1d75ce4977f907d256ad1a26f8c8dc19683600d7e60cac2af46f1c8aa322f2fa",
+    "clauses": {
+      "SPEC-cli-001": "sha256:a27aa671df81c36ee389455fa03cf2ef5b0c79dee5a3eed815569446f6f17003",
+      "SPEC-cli-002": "sha256:d93260f40d918251e700ce4185b44249bfa984eeab383f1011cbc7ff307828ad",
+      "SPEC-cli-003": "sha256:5fd4ef02cda9afdf75d1963a3ef769d4c36fef4973c6673f607dddf167e5f6cb",
+      "SPEC-cli-004": "sha256:1a2e5a8db8af8e2a3182b06eae8eca1b5e5ac0081509a3716045839ada36961e",
+      "SPEC-cli-005": "sha256:e244ac3111380ec3bc0a030a000659274774e945430a5ad8c4abebbfa9ea40d9",
+      "SPEC-cli-006": "sha256:15418ed31b76937913a91277ce0a6ae8746c13893f1308103579e20fef757cda",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/cli-surface.md": "sha256:05985bd55e34a67bf6396d1bf5201c21c01770de47ed6a305f26fe940cdefb17"
+    },
+    "eval_sources": {
+      "system/evals/cli/test_add_collection.py": "sha256:24e54181ad822acbcd0d3a527654680225a085130a12386f38cff7f2c91ff506",
+      "system/evals/cli/test_cli.py": "sha256:dbd37869dc897cb4fced6823e8648e50fef97f199dc9ce3f84a6535791b4366b",
+      "system/evals/cli/test_help.py": "sha256:bccc4522447f7f56fc48d56619303ce06bf9effff2cbed9955851ac34f3499fe",
+      "system/evals/cli/test_portability.py": "sha256:35909122ce6649f2e3f27cb73f856cc305822d17600ab9a479c1a171390e1563",
+      "system/evals/cli/test_retranscribe.py": "sha256:52a8d9fc7a32ba51d819b5d33738f8ee415ff429321ef1f1857bd129c3d88d83",
+      "system/evals/cli/test_rm.py": "sha256:666a41c2155ce70b91f98e4d6772979d3571f6694c309df10bbf3e666d53aa1e"
+    },
+    "lessons": [
+      "LESSON-0003"
+    ]
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-opus-5",
+    "session_ref": "claude-code:workflow-mac-portability"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "skipped"
+  },
+  "escape_hatch": null,
+  "attempts": 1,
+  "duration_s": 852.8,
+  "notes": "generated via: claude --model claude-opus-5 -p --permission-mode acceptEdits"
+}
