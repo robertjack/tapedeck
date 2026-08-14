@@ -21,3 +21,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/archive", "src/index", "src/ingest", "src/transcribe", "src/cli", "src/ask"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# the installed tool carries the manual (SPEC-cli-005); cli/teach.py looks here first
+"MANUAL.md" = "cli/MANUAL.md"
