@@ -169,3 +169,21 @@ def test_ask_end_to_end_through_the_executable(home):
     r = run_cli(["ask", "core idea", "--fast", "--video", "dQw4w9WgXcQ"], home)
     assert r.returncode == 0, r.stderr
     assert run_cli(["ask", "core idea", "--video", "nosuchvid00"], home).returncode == 2
+
+
+def test_a_partial_download_is_not_reported_as_media(home):
+    """`video.part` is a fetch in flight, not the video (SPEC-ingest-001). The
+    cli reads the entry with ingest's rule, so `show` says the video is gone —
+    which is also what tells the user `add` will fetch it again."""
+    set_pipeline(home)
+    assert run_cli(["add", "dQw4w9WgXcQ"], home).returncode == 0
+    entry = home / "library" / "dQw4w9WgXcQ"
+    (entry / "video.mp4").unlink()
+    (entry / "video.part").write_bytes(b"half a download")
+
+    shown = run_cli(["show", "dQw4w9WgXcQ", "--json"], home)
+    assert shown.returncode == 0, shown.stderr
+    assert json.loads(shown.stdout)["media"] is None
+    human = run_cli(["show", "dQw4w9WgXcQ"], home)
+    assert human.returncode == 0, human.stderr
+    assert "video.part" not in human.stdout

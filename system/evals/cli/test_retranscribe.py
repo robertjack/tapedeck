@@ -80,6 +80,65 @@ def test_dry_run_lists_but_touches_nothing(home):
     assert not (home / "whisper-log").exists()
 
 
+# --- SPEC-cli-004: the sweep only selects what it could actually re-derive ----
+#
+# A library accumulates entries the sweep can never satisfy: `rm --media-only`
+# keeps the knowledge and drops the video, so that transcript's label can never be
+# brought up to date without downloading the video again, and a user's own
+# directory under library/ is not a video at all. Selecting them means the sweep
+# fails forever — it can never reach the no-op the clause promises.
+
+NOT_A_VIDEO = "reading-notes"
+
+
+def set_unre_derivable_library(home):
+    """One video that can be redone, one whose media was reclaimed, and one
+    directory under library/ that is not a video id at all."""
+    set_upgraded_library(home)
+    stripped = home / "library" / PLAIN_META["id"]
+    doc = json.loads((stripped / "transcript.json").read_text())
+    doc["model"] = "fixture/whisper-0"          # stale label…
+    (stripped / "transcript.json").write_text(json.dumps(doc, indent=2))
+    for path in stripped.glob("video.*"):       # …and no video to redo it from
+        path.unlink()
+    (home / "library" / NOT_A_VIDEO).mkdir()
+    (home / "library" / NOT_A_VIDEO / "scratch.md").write_text("mine, not tapedeck's\n")
+
+
+def test_the_sweep_skips_what_it_could_never_re_derive(home):
+    set_unre_derivable_library(home)
+    r = run_cli(["retranscribe"], home)
+    assert r.returncode == 0, (
+        "entries the sweep cannot re-derive must not fail it: " + r.stderr
+    )
+    assert (home / "whisper-log").read_text().split() == [CHAPTERED_META["id"]]
+    assert PLAIN_META["id"] in r.stderr, "a skipped media-less entry must be reported"
+    kept = json.loads((home / "library" / PLAIN_META["id"] / "transcript.json").read_text())
+    assert kept["segments"] == PLAIN_SEGMENTS, "the kept knowledge must be untouched"
+    assert (home / "library" / NOT_A_VIDEO / "scratch.md").is_file()
+
+
+def test_the_sweep_converges_to_a_no_op(home):
+    set_unre_derivable_library(home)
+    assert run_cli(["retranscribe"], home).returncode == 0
+    again = run_cli(["retranscribe"], home)
+    assert again.returncode == 0, (
+        "a library with media-less entries must still reach a no-op: " + again.stderr
+    )
+    assert (home / "whisper-log").read_text().split() == [CHAPTERED_META["id"]]
+
+
+def test_dry_run_lists_only_what_the_sweep_would_redo(home):
+    set_unre_derivable_library(home)
+    r = run_cli(["retranscribe", "--dry-run"], home)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == [CHAPTERED_META["id"]], (
+        "--dry-run must promise exactly what the sweep would do"
+    )
+    assert PLAIN_META["id"] in r.stderr
+    assert not (home / "whisper-log").exists()
+
+
 def test_adapt_parakeet_is_on_the_installed_surface(home):
     payload = json.dumps(
         {"text": "Hi.", "sentences": [

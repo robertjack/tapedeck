@@ -18,4 +18,4 @@ command = "just eval ingest"
 
 [budget]
 context_tokens = 8000
-src_tokens = 6000
+src_tokens = 7000
