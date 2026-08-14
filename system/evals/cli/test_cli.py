@@ -33,7 +33,7 @@ JSON
 
 SUBCOMMANDS = (
     "add", "search", "ask", "list", "show", "reindex", "rm",
-    "retranscribe", "adapt-parakeet",
+    "retranscribe", "adapt-parakeet", "help",
 )
 
 
