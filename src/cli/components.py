@@ -1,21 +1,16 @@
-"""Running the components — one boundary, the same one their own evals drive.
+"""The other components, reached where their own evaluations reach them.
 
-Each component is `python -m <name>` with the library resolved from
-`$TAPEDECK_HOME`. The interpreter is this one (`sys.executable`), so tapedeck runs
-the components installed beside it rather than whatever `python` means on the
-user's PATH today. `$TAPEDECK_<NAME>_CMD` replaces one, the same escape hatch the
-durable evaluations use to drive a component that is not a Python module.
+Each one is a program — `python -m ingest add <url>`, `python -m archive render
+<id>` — and the cli composes them across process boundaries rather than importing
+their behaviour. A component can then be regenerated in another language without
+the orchestrator noticing, and a step that dies takes only its own process down.
+(Vocabulary is the exception and is imported, never re-derived: see library.py.)
 
-Three ways to run one, because a component's stdout means three different things
-to the cli:
-
-- `passthrough` — its answer is ours (`search`, `ask`, `reindex`, the parakeet
-  filter): stdin, stdout and stderr are inherited untouched, and its exit code
-  becomes ours.
-- `capture` — its answer is our input (`ingest expand`), so stdout is read.
-- `quietly` — a step in a pipeline, where the path it prints is progress and the
-  cli's own stdout carries the summary: stdout is redirected to stderr, the way
-  ingest treats a fetcher's chatter.
+stdout is a component's answer. For the links of the derivation chain it is
+captured, because `tapedeck add` reports what happened rather than four paths; for
+the verbs the cli merely routes — search, ask, reindex, adapt-parakeet — the child
+writes straight to ours, so results and stdin stream untouched. stderr is progress
+either way and is never captured.
 """
 
 from __future__ import annotations
@@ -26,54 +21,40 @@ import subprocess
 import sys
 from pathlib import Path
 
-STDERR_FD = 2
-
-
-class Usage(ValueError):
-    """The request cannot be acted on as it stands — exit 2."""
-
-
-class Failed(RuntimeError):
-    """The operation was attempted and did not complete — exit 1."""
+INGEST, TRANSCRIBE, ARCHIVE, INDEX, ASK = "ingest", "transcribe", "archive", "index", "ask"
 
 
 def command(module: str) -> list[str]:
+    """How to run one component: this interpreter — the one tapedeck was installed
+    into, whatever python happens to be on PATH — unless an environment override
+    names something else, which is the seam the eval harness drives."""
     override = os.environ.get(f"TAPEDECK_{module.upper()}_CMD")
     return shlex.split(override) if override else [sys.executable, "-m", module]
 
 
-def _env(home: Path) -> dict:
-    return {**os.environ, "TAPEDECK_HOME": str(home)}
-
-
-def passthrough(home: Path, module: str, args: list[str]) -> int:
-    """Hand the terminal over: the component's streams are the cli's."""
-    return subprocess.run([*command(module), *args], env=_env(home)).returncode
-
-
-def quietly(home: Path, module: str, args: list[str]) -> int:
-    """Run a pipeline step. Its stdout is progress and goes to stderr with it."""
+def run(module: str, args: list[str], home: Path, capture: bool = False):
+    # Our own lines are buffered when stdout is a pipe; the child's are not. Flush
+    # first or a summary printed before a forwarded verb lands after it.
+    sys.stdout.flush()
     return subprocess.run(
-        [*command(module), *args], env=_env(home), stdout=STDERR_FD
-    ).returncode
-
-
-def capture(home: Path, module: str, args: list[str]) -> tuple[int, str]:
-    """Run a component for what it prints. stderr still reaches the user."""
-    result = subprocess.run(
         [*command(module), *args],
-        env=_env(home),
-        stdout=subprocess.PIPE,
+        env={**os.environ, "TAPEDECK_HOME": str(home)},
+        stdout=subprocess.PIPE if capture else None,
         text=True,
-        errors="replace",
     )
+
+
+def step(module: str, args: list[str], home: Path) -> int:
+    """One link of the chain: its exit code kept, its stdout swallowed."""
+    return run(module, args, home, capture=True).returncode
+
+
+def output(module: str, args: list[str], home: Path) -> tuple[int, str]:
+    """A component asked a question — exit code and what it said."""
+    result = run(module, args, home, capture=True)
     return result.returncode, result.stdout or ""
 
 
-def step(home: Path, module: str, args: list[str], video_id: str) -> None:
-    """One link of the derivation chain. Anything but a clean exit stops this
-    video — deriving an archive page from a transcript that was never written
-    would only turn one failure into two."""
-    code = quietly(home, module, args)
-    if code:
-        raise Failed(f"{video_id}: {module} {args[0]} failed (exit {code})")
+def forward(module: str, args: list[str], home: Path) -> int:
+    """A verb the cli only routes: the component's stdout is the user's answer."""
+    return run(module, args, home).returncode

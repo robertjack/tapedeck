@@ -1,4 +1,4 @@
-"""`python -m cli` — the same entrypoint the installed `tapedeck` script runs."""
+"""`python -m cli` — the same entrypoint the installed `tapedeck` script calls."""
 
 import sys
 
