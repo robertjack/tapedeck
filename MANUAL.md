@@ -4,8 +4,8 @@ A local video brain. `add` a YouTube URL and the video is downloaded,
 transcribed on this machine, archived as readable markdown, and indexed —
 then `search` finds the moment and `ask` answers questions with timestamped
 deep links back into the videos. Everything lives in the library home
-(default `~/dev/storage/tapedeck`) and nothing leaves your machine except
-the download itself.
+(default `~/Tapedeck`, a plain folder you can open) and nothing leaves your
+machine except the download itself.
 
 ## How it works, in thirty seconds
 
@@ -170,10 +170,18 @@ mostly knowledge.
 
 ### 9. Advanced moves
 
-A second library — `$TAPEDECK_HOME` is resolved on every run; first use
-scaffolds a fresh home:
+Move the library — the home is `~/Tapedeck` unless `$TAPEDECK_HOME` says
+otherwise. It is resolved on every run, so pointing it at an external disk
+or a second, separate library is one variable; first use scaffolds a fresh
+home there:
 
     TAPEDECK_HOME=~/decks/cooking tapedeck add "https://youtu.be/..."
+
+Check the install — `tapedeck --version` prints the installed version and
+nothing else. It touches no library, so it is the safe first thing to run
+on a new machine:
+
+    tapedeck --version
 
 Tune the librarian — its standing instructions live in `CLAUDE.md` in the
 library home. It is your file: add house style, preferred answer length,
@@ -204,6 +212,11 @@ Verbs:
     retranscribe [--dry-run]               re-derive superseded transcripts
     adapt-parakeet                         parakeet JSON -> whisper shape
     help [<verb> | manual]                 this manual, in tiers
+
+Global options:
+
+    --version                              the installed version, then exit
+    -h, --help                             terse usage for any verb
 
 Exit codes:
 

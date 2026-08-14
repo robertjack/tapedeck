@@ -4,7 +4,9 @@
 
 [project]
 name = "tapedeck"
-version = "0.1.0"
+# the one place the version is written; `tapedeck --version` reads it back out of
+# the installed distribution's metadata (SPEC-cli-006)
+version = "0.2.0"
 description = "A local video brain: download, transcribe, archive, ask"
 requires-python = ">=3.12"
 dependencies = []
