@@ -17,5 +17,5 @@ path = "system/evals/cli/"
 command = "just eval cli"
 
 [budget]
-context_tokens = 14000
-src_tokens = 12000
+context_tokens = 18000
+src_tokens = 14000
