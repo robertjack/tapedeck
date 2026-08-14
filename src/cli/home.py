@@ -15,6 +15,12 @@ this module having to know why they are there. The parakeet alternative is
 written in beside the whisper default as a comment, exactly as
 SPEC-transcribe-002 publishes it: proof that changing transcriber is an edit to
 this file and not to tapedeck.
+
+The one table here that no other component publishes is `[setup]`: what to run to
+install a tool that is missing (SPEC-cli-008). It is a seam like the rest — keyed
+by executable name, one line per tool — and it is the cli's own because no
+component knows how its tool is installed on this machine. The defaults are
+macOS-centric because that is where the transcribers tapedeck publishes run.
 """
 
 from __future__ import annotations
@@ -38,6 +44,20 @@ BRIEF_NAME = "CLAUDE.md"
 # other components; the cli only guarantees they exist.
 LIBRARY = "library"
 ARCHIVE = "archive"
+
+# The shipped remedy table: every executable the seam defaults above name, plus
+# ffmpeg, so a fresh install can always be told what to do next. Written into the
+# first-run config.toml, where a user who installs by MacPorts, pip or tarball
+# edits the line and `setup --yes` runs theirs instead. `claude` is a pointer
+# rather than a command: the [ask] seams are optional and setup never installs
+# them, so what a user needs there is where to read, not what to run.
+DEFAULT_REMEDIES = {
+    "yt-dlp": "brew install yt-dlp",
+    "ffmpeg": "brew install ffmpeg",
+    "mlx_whisper": "uv tool install mlx-whisper",
+    "parakeet-mlx": "uv tool install parakeet-mlx",
+    "claude": "install Claude Code: https://docs.claude.com/en/docs/claude-code/setup",
+}
 
 
 def resolve() -> Path:
@@ -71,6 +91,12 @@ def _toml(value: str) -> str:
         return f"'{value}'"
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     return f'"{escaped}"'
+
+
+def _remedy_lines() -> str:
+    return "\n".join(
+        f"remedy.{tool} = {_toml(command)}" for tool, command in DEFAULT_REMEDIES.items()
+    )
 
 
 def config_text() -> str:
@@ -122,6 +148,15 @@ librarian_command = {_toml(DEFAULT_LIBRARIAN_COMMAND)}
 # The `ask --fast` answerer: numbered excerpts on stdin, prose on stdout.
 # tapedeck assembles the Sources section itself, never the answerer.
 answerer_command = {_toml(DEFAULT_ANSWERER_COMMAND)}
+
+[setup]
+# What `tapedeck setup` prints when a tool above is missing, keyed by the
+# executable's own name — and what `tapedeck setup --yes` then runs, having
+# printed it first. These are commands for this machine: brew and uv because
+# that is a Mac. Install by MacPorts, pip or tarball instead and this is the
+# line to change. A tool with no line here falls back to the shipped default,
+# and one tapedeck has never heard of is reported as missing with no remedy.
+{_remedy_lines()}
 """
 
 

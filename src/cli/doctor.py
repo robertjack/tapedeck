@@ -15,6 +15,11 @@ and doctor starts checking for somewhere else, with no change to this file.
 
 Every check is reported, passes included, because a diagnosis that prints only
 complaints cannot tell "checked and fine" from "never looked".
+
+This module is also where `setup` gets its diagnosis (SPEC-cli-008), which is why
+a row carries one thing the report never prints: `missing`, the executable that
+could not be found. The wizard needs the name to look up a remedy, and deriving
+it a second time over there is exactly the drift LESSON-0003 is about.
 """
 
 from __future__ import annotations
@@ -33,6 +38,9 @@ from pathlib import Path
 from .home import CONFIG_NAME
 
 PASS, FAIL, OPTIONAL = "pass", "fail", "optional"
+# What a check is, on the wire and in the report: everything else on a row is
+# ours (system/contracts/cli-surface.md pins `--json` to these three).
+PUBLIC = ("check", "status", "detail")
 
 # The seams, in the order the report emits them; the flag is whether `add` needs
 # it. `ask` needs the last two and `search` never does, so they are optional and
@@ -44,6 +52,7 @@ SEAMS = (
     ("ask", "librarian_command", False),
     ("ask", "answerer_command", False),
 )
+TRANSCRIBER = ("transcribe", "transcriber_command")
 COSTS = "ask needs it, search does not"
 # Transcribers that exist only for Apple Silicon. Named here because the platform
 # check is about the silicon, not about the tool: any other transcriber is
@@ -51,8 +60,13 @@ COSTS = "ask needs it, search does not"
 MLX_TOOLS = ("mlx_whisper", "parakeet-mlx")
 
 
-def row(check: str, status: str, detail: str) -> dict:
-    return {"check": check, "status": status, "detail": detail}
+def row(check: str, status: str, detail: str, missing: str | None = None) -> dict:
+    return {"check": check, "status": status, "detail": detail, "missing": missing}
+
+
+def public(rows: list[dict]) -> list[dict]:
+    """The rows as the surface promises them: check, status, detail, nothing else."""
+    return [{key: item[key] for key in PUBLIC} for item in rows]
 
 
 def config(home: Path) -> tuple[dict, str | None]:
@@ -65,6 +79,13 @@ def config(home: Path) -> tuple[dict, str | None]:
         return {}, f"no {path}"
     except (OSError, ValueError) as exc:
         return {}, f"{path} could not be read — {exc}"
+
+
+def setting(settings: dict, section: str, key: str) -> str:
+    """One seam's command template, or "" if this config does not set it."""
+    table = settings.get(section)
+    command = table.get(key) if isinstance(table, dict) else None
+    return command.strip() if isinstance(command, str) else ""
 
 
 def head(command: str) -> str:
@@ -81,28 +102,29 @@ def head(command: str) -> str:
 def seam_row(settings: dict, section: str, key: str, required: bool, unreadable) -> dict:
     check = f"{section}.{key}"
     bad = FAIL if required else OPTIONAL
-    table = settings.get(section)
-    command = table.get(key) if isinstance(table, dict) else None
-    if not isinstance(command, str) or not command.strip():
+    command = setting(settings, section, key)
+    if not command:
         why = "nothing for `add` to run" if required else COSTS
         return row(check, bad, f"{unreadable or f'not set in {CONFIG_NAME}'} — {why}")
-    name = head(command.strip())
-    found = shutil.which(name) if name else None
-    if found:
-        return row(check, PASS, f"{name} at {found}")
+    name = head(command)
+    if name and shutil.which(name):
+        # The name that resolved, not the path it resolved to: which prefix a
+        # tool happens to sit in is noise in a diagnosis, and a column of
+        # absolute paths is a column nobody skims.
+        return row(check, PASS, f"{name} on PATH")
     detail = f"{name}: not on PATH"
-    return row(check, bad, detail if required else f"{detail} — {COSTS}")
+    return row(check, bad, detail if required else f"{detail} — {COSTS}", missing=name)
 
 
 def ffmpeg_row() -> dict:
-    found = shutil.which("ffmpeg")
-    if found:
-        return row("ffmpeg", PASS, f"ffmpeg at {found}")
+    if shutil.which("ffmpeg"):
+        return row("ffmpeg", PASS, "ffmpeg on PATH")
     return row(
         "ffmpeg",
         FAIL,
         "ffmpeg: not on PATH — the downloader merges the separate video and "
         "audio streams with it",
+        missing="ffmpeg",
     )
 
 
@@ -149,13 +171,11 @@ def diagnose(home: Path) -> list[dict]:
     """Every check, always, in the order SPEC-cli-007 pins."""
     settings, unreadable = config(home)
     rows = [seam_row(settings, *seam, unreadable) for seam in SEAMS]
-    transcribe = settings.get("transcribe")
-    command = transcribe.get("transcriber_command") if isinstance(transcribe, dict) else None
     rows += [
         ffmpeg_row(),
         home_row(home),
         fts5_row(),
-        platform_row(command if isinstance(command, str) else ""),
+        platform_row(setting(settings, *TRANSCRIBER)),
     ]
     return rows
 
@@ -170,12 +190,18 @@ def report(rows: list[dict]) -> str:
     )
 
 
+def failed(rows: list[dict]) -> list[dict]:
+    """The required checks that did not pass — the only thing that decides an
+    exit code, here and in `setup`. Optional results never make it 1."""
+    return [item for item in rows if item["status"] == FAIL]
+
+
 def run(home: Path, as_json: bool) -> int:
     rows = diagnose(home)
     # No escape sequences, ever: this output is read by pipes and by `--json`
     # consumers as often as by people (SPEC-cli-005).
-    print(json.dumps(rows, ensure_ascii=False, indent=2) if as_json else report(rows))
-    failed = [item["check"] for item in rows if item["status"] == FAIL]
-    if failed:
-        print(f"{len(failed)} check(s) failed: {', '.join(failed)}", file=sys.stderr)
-    return 1 if failed else 0
+    print(json.dumps(public(rows), ensure_ascii=False, indent=2) if as_json else report(rows))
+    broken = [item["check"] for item in failed(rows)]
+    if broken:
+        print(f"{len(broken)} check(s) failed: {', '.join(broken)}", file=sys.stderr)
+    return 1 if broken else 0

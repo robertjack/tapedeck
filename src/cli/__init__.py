@@ -13,6 +13,10 @@ imported from it; the seam defaults written into config.toml are published by th
 components that run them; the model label supersession is judged on comes from
 transcribe. Where the cli asks one of those questions — in `add`, `show`, `list`,
 `rm`, `retranscribe` — it gets the owner's answer, not a second opinion.
+
+The same rule holds inside the component: `doctor` decides what is checked and
+what each result means, and `setup` reports what `doctor` reports by calling it,
+so a check added there appears in the wizard with nothing written here.
 """
 
 

@@ -46,6 +46,8 @@ EXAMPLES = {
     "  tapedeck adapt-parakeet < video.json > transcript.json\n"
     "# you will normally only meet this inside [transcribe] transcriber_command",
     "doctor": "tapedeck doctor\ntapedeck doctor --json",
+    "setup": "tapedeck setup          # what is missing, and the command that installs it\n"
+    "tapedeck setup --yes    # run exactly those commands, then check again",
     "help": "tapedeck help\ntapedeck help add\ntapedeck help manual",
 }
 
@@ -80,8 +82,9 @@ The everyday verbs:
   retranscribe  redo every transcript a better model has superseded
                   tapedeck retranscribe --dry-run
 
-Also here: reindex, rm, doctor.
+Also here: reindex, rm, doctor, setup.
 
+  tapedeck setup          on a new machine: what is missing and what installs it
   tapedeck help <verb>    that verb's usage and a worked example
   tapedeck help manual    the whole manual
   tapedeck --version      what is installed

@@ -1,6 +1,6 @@
 """The tapedeck surface: the verbs, the global options, and the exit codes.
 
-SPEC-cli-001 and system/contracts/cli-surface.md. The eleven verbs here are the
+SPEC-cli-001 and system/contracts/cli-surface.md. The twelve verbs here are the
 whole of it; adding one is a durable-layer change requiring a new clause, so the
 parser below is deliberately a flat, boring list rather than anything that could
 grow a verb by accident.
@@ -25,7 +25,7 @@ from importlib import metadata
 import ingest
 from transcribe.transcriber import ConfigError as TranscribeConfigError
 
-from . import Failure, Usage, components, doctor, home, pipeline, teach, views
+from . import Failure, Usage, components, doctor, home, pipeline, setup, teach, views
 
 DIST = "tapedeck"
 DESCRIPTION = "A local video brain: download, transcribe, archive, ask."
@@ -33,6 +33,10 @@ EPILOG = "`tapedeck help` is a tour; `tapedeck help manual` is the whole manual.
 
 USAGE_ERRORS = (Usage, ingest.BadRequest, TranscribeConfigError)
 FAILURES = (Failure, OSError)
+# The two verbs whose whole job is to report on a broken installation. A home
+# that cannot be made is one of the things they are for, so they reach their own
+# report and say so there rather than dying on the way to it.
+DIAGNOSTIC = ("doctor", "setup")
 
 
 def build_parser() -> tuple[argparse.ArgumentParser, dict]:
@@ -86,6 +90,11 @@ def build_parser() -> tuple[argparse.ArgumentParser, dict]:
     checking = verb("doctor", "check the seams, the tools and this machine; change nothing")
     checking.add_argument("--json", action="store_true", help="emit the same checks structurally")
 
+    starting = verb("setup", "first run: scaffold the home, check it, and name what would fix it")
+    starting.add_argument(
+        "--yes", action="store_true", help="run the printed commands, then check again"
+    )
+
     teaching = verb("help", "a tour, a verb's usage and example, or the full manual")
     teaching.add_argument("topic", nargs="?", metavar="<verb>|manual")
 
@@ -133,6 +142,8 @@ def dispatch(args, deck, verbs) -> int:
         return components.passthrough("transcribe", ["from-parakeet"], deck)
     if args.verb == "doctor":
         return doctor.run(deck, args.json)
+    if args.verb == "setup":
+        return setup.run(deck, args.yes)
     return teach.teach(args.topic, verbs)
 
 
@@ -150,9 +161,7 @@ def main(argv=None) -> int:
     try:
         home.scaffold(deck)
     except OSError as exc:
-        # doctor is the verb for a home that cannot be made; it should reach its
-        # own report and say so, not die on the way there.
-        if args.verb != "doctor":
+        if args.verb not in DIAGNOSTIC:
             return _report(exc, 1)
         print(f"warning: could not prepare {deck} — {exc}", file=sys.stderr)
 
