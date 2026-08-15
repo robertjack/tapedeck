@@ -47,7 +47,7 @@ missing, here is the bootstrap one-liner published at brew.sh — above the reme
 need it, and with `--yes` it runs nothing at all and exits 1, because installing Homebrew
 is the user's own deliberate step and not something a wizard does on their behalf.
 
-An `[ask]` seam that does not resolve is optional exactly as `doctor` says it is: listed
+An optional seam that does not resolve is optional exactly as `doctor` says it is: listed
 apart from the required gaps, with its remedy shown as guidance, never deciding the exit
 code, and **never executed**, not even with `--yes`.
 

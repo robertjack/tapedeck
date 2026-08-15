@@ -31,7 +31,7 @@ Two commands are enough to start:
 
 `setup` is the first command of a new machine. It creates the library home
 and tells you where it put it, then runs exactly the checks `doctor` runs
-(§9) — but where `doctor` names the gap, `setup` names the command that
+(§10) — but where `doctor` names the gap, `setup` names the command that
 closes it here:
 
     transcribe.transcriber_command  fail  mlx_whisper: not on PATH
@@ -170,6 +170,8 @@ is yours.
     [transcribe] model             the label stamped on every transcript
     [ask]     librarian_command    the default ask agent
     [ask]     answerer_command     the --fast answerer
+    [wiki]    maintainer_command   the agent that writes the wiki (§9)
+    [wiki]    auto                 file each added video (default true)
 
 Each seam runs as a shell command with its inputs in environment variables,
 documented in comments above each line.
@@ -200,12 +202,132 @@ will only meet it inside `transcriber_command`.
     tapedeck rm <id> --media-only   # keep the knowledge, reclaim the disk
 
 Plain `rm` removes the library entry, the archive page, and the index rows.
+If the wiki holds a page for the video, `rm` says so on stderr — the page
+stays, and `tapedeck wiki lint` will keep naming it until you decide.
 `--media-only` deletes just the video file(s): transcript, archive page,
 and search keep working, at the cost of ever re-transcribing that video.
 Videos are by far the biggest thing on disk, so a mature library can be
 mostly knowledge.
 
-### 9. When something is broken: doctor
+### 9. The wiki: what you made of it
+
+    tapedeck wiki file <id>
+    tapedeck wiki sync [--dry-run]
+    tapedeck wiki lint [--json]
+    tapedeck wiki rebuild [--yes]
+
+The four stages end at an index that can find anything anyone said. The
+wiki is the layer above that: what *you* know because of the videos — the
+connection between two talks, the name you gave an idea, the second
+thought a month later. It is written one video at a time by an agent
+following your brief, and it compounds. Each filing is written against a
+wiki that already holds everything filed before it, so a backlog swept in
+upload order reads the way notes kept by someone watching all along would
+read. Every other layer is disposable and re-derivable; this is the one
+layer that can only be kept, which is why it lives in a git repository of
+its own.
+
+It is `wiki/` inside the library home, and it is plain markdown with
+`[[wikilinks]]` — no database, no server, nothing only tapedeck can read.
+
+File one video:
+
+    tapedeck wiki file dQw4w9WgXcQ
+
+The maintainer reads your brief and that video's archive page, then writes
+and links whatever it decides the wiki needs. tapedeck does not review its
+prose; it reviews the result — every wikilink resolves, every deep link
+points at a real moment of a real video, the catalog names every page, the
+source page cites its own recording, the log only grew. A filing that
+fails any of those is rolled back whole and nothing half-written is left
+behind. Accepted, it lands as one commit. Filing a video that already has
+a page changes nothing and exits 0, so you never have to remember what you
+filed.
+
+File everything not yet filed:
+
+    tapedeck wiki sync --dry-run    # the ids it would file, one per line
+    tapedeck wiki sync              # file them, oldest video first
+
+`sync` is that same operation in a loop over every video with media and an
+archive page and no source page yet. Order is upload date, oldest first,
+because the wiki accumulates and the order is part of what it becomes. One
+video's failure never stops the sweep; the summary at the end counts
+filed / already filed / skipped / failed, and a library that is fully
+filed is a no-op that never wakes the agent at all.
+
+Check that it still holds together:
+
+    tapedeck wiki lint
+    tapedeck wiki lint --json
+
+`lint` is `doctor` (§10) one layer up: `doctor` asks whether this machine
+can do the work, `lint` asks whether what the work produced is still true.
+The gate judges a filing the moment it lands, but the wiki keeps living
+after that — you rename a note, delete a page, edit a source page and take
+its deep link with it, `rm` a video whose page is still standing. All of
+that is allowed, and `lint` is how you ask the gate's questions of a wiki
+nobody just wrote. It reads your working tree as it stands, hand edits
+included, changes nothing, commits nothing, and needs no agent configured.
+Every check prints, passes included:
+
+    wikilinks   pass  47 links resolve
+    citations   pass  every deep link verified
+    index       fail  notes/agents.md is linked but does not exist
+    unfiled     info  3 eligible videos have no page yet
+
+`unfiled` and `orphans` are information and never fail: a wiki younger
+than the library is not a broken wiki. Exit 0 when nothing failed, 1 when
+something did.
+
+Start the wiki over:
+
+    tapedeck wiki rebuild            # what it would remove and refile
+    tapedeck wiki rebuild --yes      # do it
+
+Rewriting the brief, or swapping the maintainer for a better one, changes
+the thing that produced every page you already have. `rebuild` is how you
+get the wiki you would have had: it clears `sources/` and `notes/` in one
+commit and then runs `sync` over the whole library again. Without `--yes`
+it executes nothing and only prints — the resolved wiki path first, so a
+surprising `$TAPEDECK_HOME` is visible before you agree to anything. This
+is the one verb that destroys prose you may have typed yourself, which is
+why it asks; and the wiki it replaces is still in the history, one
+`git show` away, for as long as you keep the repository.
+
+The brief is your steering wheel. `wiki/CLAUDE.md` is scaffolded once with
+defaults and is yours from then on: how notes are named and foldered, what
+earns a page of its own, how long a source page runs, what taxonomy you
+keep. tapedeck never rewrites it, and the maintainer is forbidden to touch
+it — a filing that edited its own instructions is rejected on that alone.
+Rewriting it wholesale is the intended end state, not a fault.
+
+Filing happens automatically. Every `tapedeck add` that finishes files
+that video, each one as it completes, so a channel sweep files as it
+sweeps. It is an epilogue, not a stage: if the filing fails, or you never
+configured a maintainer, `add` says so on stderr and is otherwise exactly
+the command it always was — same exit code, same counts, same sweep. Turn
+it off with one line in `config.toml`:
+
+    [wiki]
+    auto = false
+
+Then the wiki changes only when you ask it to.
+
+Read it in Obsidian. Point Obsidian at `wiki/` — "Open folder as vault" —
+and the wikilinks, the backlinks and the graph all work with no
+conversion, no import and no plugin. Any markdown editor does as well, and
+so does `grep`. Edit by hand whenever you like: before it operates,
+tapedeck commits whatever is pending as a `user edits` commit, so your
+typing is already in the history and a rolled-back filing can never take
+it along.
+
+The repository is yours too. `wiki/` is nested inside nothing — not this
+tool's repo, not the library's gigabytes of video — so `git log` reads as
+the history of what you learned, and `git remote add` sends it wherever
+you want without tapedeck knowing or caring.
+
+### 10. When something is broken: doctor
 
     tapedeck doctor
     tapedeck doctor --json
@@ -232,14 +354,17 @@ from "never looked":
     ingest.fetcher_command        pass      yt-dlp
     transcribe.transcriber_command fail     mlx_whisper: not on PATH
     ask.librarian_command         optional  claude: not on PATH — ask needs it, search does not
+    wiki.maintainer_command       optional  claude: not on PATH — filing needs it, lint does not
 
-The `[ask]` seams are the only optional ones: without them `ask` cannot
-run, but `add`, `search`, `list` and `show` are untouched, so they never
-fail the command. Exit 0 when nothing required failed, 1 when something
-did. `--json` gives the same checks as `{check, status, detail}` objects,
-in the same order, for scripting.
+The `[ask]` seams and the wiki maintainer are the optional ones: without
+them `ask` cannot run and nothing can be filed into the wiki — `add` skips
+its automatic filing with a note, and `wiki lint` is answerable anyway —
+but `add`, `search`, `list` and `show` do their work either way, so they
+never fail the command. Exit 0 when nothing required failed, 1 when
+something did. `--json` gives the same checks as `{check, status, detail}`
+objects, in the same order, for scripting.
 
-### 10. Advanced moves
+### 11. Advanced moves
 
 Move the library — the home is `~/Tapedeck` unless `$TAPEDECK_HOME` says
 otherwise. It is resolved on every run, so pointing it at an external disk
@@ -281,6 +406,10 @@ Verbs:
     reindex                                rebuild tapedeck.db from archive/
     rm <id> [--media-only]                 remove, or reclaim disk only
     retranscribe [--dry-run]               re-derive superseded transcripts
+    wiki file <id>                         file one video into the wiki
+    wiki sync [--dry-run]                  file every video not yet filed
+    wiki lint [--json]                     check the wiki still holds up
+    wiki rebuild [--yes]                   clear it and refile from zero
     adapt-parakeet                         parakeet JSON -> whisper shape
     doctor [--json]                        check the seams and this machine
     setup [--yes]                          first run: scaffold, check, remedy
@@ -305,6 +434,11 @@ What's where (in the library home):
     archive/<id>.md               the readable page, deep-linked headings
     tapedeck.db                   the search index — fully disposable
     config.toml, CLAUDE.md        the seams and the librarian's brief
+    wiki/                         your notes — markdown, its own git repo
+    wiki/CLAUDE.md                the maintainer's brief — yours to rewrite
+    wiki/index.md, wiki/log.md    the catalog and the chronology
+    wiki/sources/<id>.md          one page per filed video
+    wiki/notes/                   free-form pages, arranged by your brief
 
 Troubleshooting (start with `tapedeck doctor`):
 
@@ -319,6 +453,14 @@ Troubleshooting (start with `tapedeck doctor`):
     "unauthenticated requests to the HF Hub"
         Harmless parakeet noise (weights are cached); set HF_TOKEN to
         silence it.
+    a wiki verb says the maintainer command is not set
+        Filing needs an agent; `lint` does not. The default is scaffolded
+        into config.toml with the other seams (§6); doctor reports it as
+        optional, so nothing else in tapedeck is waiting on it.
+    add noted that the wiki filing failed
+        Only the filing failed, and it rolled itself back; the video is
+        added, indexed and searchable. Run `tapedeck wiki sync` later,
+        or set `[wiki] auto = false` (§9) to stop trying.
     a leftover video.part
         An interrupted download; the entry counts as having no video, and
         the next add fetches it fresh.

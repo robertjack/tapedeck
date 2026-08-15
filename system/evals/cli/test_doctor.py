@@ -31,12 +31,13 @@ CHECKS = (
     "transcribe.transcriber_command",
     "ask.librarian_command",
     "ask.answerer_command",
+    "wiki.maintainer_command",
     "ffmpeg",
     "home",
     "fts5",
     "platform",
 )
-SEAMS = CHECKS[:5]
+SEAMS = CHECKS[:6]
 STATUSES = {"pass", "fail", "optional"}
 
 APPLE_SILICON = sys.platform == "darwin" and platform.machine() == "arm64"

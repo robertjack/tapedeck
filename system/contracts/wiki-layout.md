@@ -124,8 +124,12 @@ addition is wrong.
 ## Write authority
 
 Among tapedeck's components, the wiki component is the **sole writer** of everything
-under `wiki/` (SPEC-core-001). No other component reads or writes the wiki, and wiki
-writes nothing outside it — in particular it does not write `config.toml`, which is
+under `wiki/` (SPEC-core-001). No other component writes the wiki, and the only reading
+another component does is the one this contract publishes: the existence of
+`sources/<video-id>.md`, which cli's `rm` asks about so it can say the wiki still holds
+a page for a video it just removed (SPEC-cli-009). Asking that question changes nothing
+and reads no prose; everything else in the tree is wiki's and the user's. wiki writes
+nothing outside it either — in particular it does not write `config.toml`, which is
 cli's.
 
 Unlike the rest of the library, though, the user is a co-author here by design. Hand

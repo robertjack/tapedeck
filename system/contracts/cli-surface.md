@@ -4,7 +4,7 @@ Additive changes only; removals require superseding SPEC-cli-001.
 
 | command | mutates library | purpose |
 |---|---|---|
-| `tapedeck add <url> [--force]` | yes | ingest → transcribe → archive → index for one video, or for every video of a playlist/channel URL (SPEC-cli-003; `--force` is single-video only) |
+| `tapedeck add <url> [--force]` | yes | ingest → transcribe → archive → index for one video, or for every video of a playlist/channel URL (SPEC-cli-003; `--force` is single-video only; each video that completes is then filed into the wiki when `[wiki].auto` is true, a best-effort epilogue that never changes add's exit code, counts, or sweep — SPEC-cli-009) |
 | `tapedeck search <query> [--json] [-k N]` | no | ranked timestamped excerpts with deep links |
 | `tapedeck ask <question> [-k N] [--fast] [--video <id>]` | no | librarian agent over the library (default) with post-hoc-verified citations; `--fast` = strict retrieval pipeline (SPEC-ask-001); `--video` scopes either mode to one video (SPEC-ask-003) |
 | `tapedeck list [--json]` | no | one line per video: id, date, channel, title |
@@ -12,8 +12,9 @@ Additive changes only; removals require superseding SPEC-cli-001.
 | `tapedeck reindex` | yes (db only) | rebuild tapedeck.db from archive/ alone |
 | `tapedeck rm <id> [--media-only]` | yes | remove a video everywhere (default), or delete just its media to reclaim disk while keeping the knowledge (SPEC-cli-002) |
 | `tapedeck retranscribe [--dry-run]` | yes | re-derive transcript → archive → index for every video whose transcript model label differs from the configured `[transcribe].model` (SPEC-cli-004) |
+| `tapedeck wiki file <id> \| sync [--dry-run] \| lint [--json] \| rebuild [--yes]` | yes (wiki/ only) | the prose layer: file one video into the wiki, file every unfiled video, diagnose a standing wiki, or reset and refile it. The group is handed over whole to the wiki component and the cli routes without re-deriving any of its vocabulary (SPEC-cli-009); behavior is SPEC-wiki-002 (`file`), SPEC-wiki-003 (`sync`), SPEC-wiki-004 (`lint`) and SPEC-wiki-005 (`rebuild`), over the tree pinned by `contracts/wiki-layout.md` |
 | `tapedeck adapt-parakeet` | no | stdin→stdout filter: parakeet-mlx JSON to the whisper shape the transcriber seam requires (SPEC-transcribe-002) |
-| `tapedeck doctor [--json]` | no | read-only diagnosis: each config seam's head executable on PATH, plus ffmpeg, the library home, SQLite FTS5, and the platform against the configured transcriber (SPEC-cli-007); the `[ask]` seams are optional and never fail the exit code |
+| `tapedeck doctor [--json]` | no | read-only diagnosis: each config seam's head executable on PATH, plus ffmpeg, the library home, SQLite FTS5, and the platform against the configured transcriber (SPEC-cli-007); the `[ask]` seams and `wiki.maintainer_command` are optional and never fail the exit code |
 | `tapedeck setup [--yes]` | yes (home scaffold only) | first-run wizard: scaffold the home and name it, report exactly what `doctor` reports, then print the platform remedy command for every required gap; without `--yes` it executes nothing (exit 1 if anything required is missing, 0 when `ready`), with `--yes` it runs those remedies and re-checks (SPEC-cli-008) |
 | `tapedeck help [<verb> \| manual]` | no | tiered teaching: one-screen tour, per-verb usage + example, or the full MANUAL.md paged (SPEC-cli-005); `-h/--help` stays terse |
 

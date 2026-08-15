@@ -273,7 +273,7 @@ def test_the_shipped_remedies_are_published_in_the_scaffolded_config(tmp_path):
     )
 
     heads = {"ffmpeg"}
-    for section in ("ingest", "transcribe", "ask"):
+    for section in ("ingest", "transcribe", "ask", "wiki"):
         for key, value in config.get(section, {}).items():
             if key.endswith("_command"):
                 heads.add(shlex.split(value)[0])

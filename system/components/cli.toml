@@ -10,12 +10,18 @@ data = ["config.toml"]
 
 [boundary]
 contracts = ["system/contracts/cli-surface.md"]
-consumes = ["ingest", "transcribe", "archive", "index", "ask"]
+consumes = ["ingest", "transcribe", "archive", "index", "ask", "wiki"]
 
 [evals]
 path = "system/evals/cli/"
 command = "just eval cli"
 
 [budget]
-context_tokens = 23000
-src_tokens = 17000
+# Raised 23000 -> 34000 for the wiki round: SPEC-cli-009 plus test_wiki_surface.py and
+# test_add_autofile.py put the assembly at ~27900, and the clause only makes sense read
+# against the wiki verbs it routes to.
+context_tokens = 34000
+# Raised 17000 -> 22000: the module gains the pass-through router for the `wiki` group,
+# the per-video filing epilogue inside add, the [wiki] scaffold block and one more
+# doctor check, on top of a src that already measured ~14000.
+src_tokens = 22000
