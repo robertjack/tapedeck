@@ -46,7 +46,14 @@ def from_parakeet(payload, home):
         capture_output=True,
         text=True,
         timeout=TIMEOUT,
-        env={**os.environ, "TAPEDECK_HOME": str(home)},
+        env={
+            **os.environ,
+            "TAPEDECK_HOME": str(home),
+            # installation-independent: components run from src/ with no packaging
+            "PYTHONPATH": os.pathsep.join(
+                [str(REPO / "src"), os.environ.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep),
+        },
     )
 
 

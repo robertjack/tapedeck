@@ -5,8 +5,8 @@ default:
 
 # Run durable evals for one component (boundary only — SPEC-core-002)
 eval component:
-    uv run --with pytest pytest system/evals/{{component}} -q
+    uv run --no-project --with pytest pytest system/evals/{{component}} -q
 
 # Run all durable evals
 eval-all:
-    uv run --with pytest pytest system/evals -q
+    uv run --no-project --with pytest pytest system/evals -q

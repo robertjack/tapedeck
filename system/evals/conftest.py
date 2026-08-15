@@ -28,7 +28,14 @@ def run_component(module, args, home):
         capture_output=True,
         text=True,
         timeout=TIMEOUT,
-        env={**os.environ, "TAPEDECK_HOME": str(home)},
+        env={
+            **os.environ,
+            "TAPEDECK_HOME": str(home),
+            # installation-independent: components run from src/ with no packaging
+            "PYTHONPATH": os.pathsep.join(
+                [str(REPO / "src"), os.environ.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep),
+        },
     )
 
 
@@ -176,14 +183,27 @@ def set_maintainer(home, script_body):
 
 def run_cli(args, home):
     """Drive the user-facing `tapedeck` executable (override via $TAPEDECK_BIN)."""
-    cmd = os.environ.get("TAPEDECK_BIN", "tapedeck")
+    # Default is the repo's own cli, never `tapedeck` on PATH: a PATH binary is
+    # the deployed snapshot, and an eval that drives it attests a program this
+    # repo did not produce (LESSON-0005 — the deletion-test rebuild measured its
+    # cli suite scoring 69/73 against the production install while src/cli did
+    # not exist). Deployed-binary smoke stays available explicitly:
+    #   TAPEDECK_BIN=tapedeck just eval cli
+    cmd = os.environ.get("TAPEDECK_BIN", f"{sys.executable} -m cli")
     return subprocess.run(
         [*shlex.split(cmd), *args],
         cwd=REPO,
         capture_output=True,
         text=True,
         timeout=TIMEOUT,
-        env={**os.environ, "TAPEDECK_HOME": str(home)},
+        env={
+            **os.environ,
+            "TAPEDECK_HOME": str(home),
+            # installation-independent: components run from src/ with no packaging
+            "PYTHONPATH": os.pathsep.join(
+                [str(REPO / "src"), os.environ.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep),
+        },
     )
 
 

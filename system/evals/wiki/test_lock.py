@@ -51,7 +51,14 @@ def _held_open(home):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env={**os.environ, "TAPEDECK_HOME": str(home)},
+        env={
+            **os.environ,
+            "TAPEDECK_HOME": str(home),
+            # installation-independent: components run from src/ with no packaging
+            "PYTHONPATH": os.pathsep.join(
+                [str(REPO / "src"), os.environ.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep),
+        },
     )
     deadline = time.monotonic() + TIMEOUT
     while not (home / "first-running").exists():

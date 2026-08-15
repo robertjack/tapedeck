@@ -99,3 +99,63 @@ def test_update_replaces_stale_rows(home):
     assert idx(home, "update", "dQw4w9WgXcQ").returncode == 0
     assert search_json(home, "fixture") == []
     assert search_json(home, "opening") != []
+
+
+# SPEC-index-004 — schema versioning lives HERE, in the index's own suite. The
+# deletion-test rebuild (2026-08-15) proved the guard existed only in the original
+# implementation plus a precondition in ask's suite: a regenerated index omitted it
+# and every consumer stalled. sqlite3 imported locally: the eval inspects the file
+# the boundary produced; it still drives behavior only through the subprocess.
+
+
+def test_reindex_stamps_a_nonzero_schema_version(home):
+    two_video_home(home)
+    import sqlite3
+
+    con = sqlite3.connect(home / "tapedeck.db")
+    version = con.execute("PRAGMA user_version").fetchone()[0]
+    con.close()
+    assert version != 0, "reindex left user_version at 0 — no schema version stamped"
+
+
+def test_search_refuses_a_database_from_another_schema_version(home):
+    two_video_home(home)
+    import sqlite3
+
+    con = sqlite3.connect(home / "tapedeck.db")
+    with con:
+        con.execute("PRAGMA user_version = 1")
+    con.close()
+
+    r = idx(home, "search", "core idea")
+    assert r.returncode != 0, "search read a database from another schema version"
+    assert "reindex" in r.stderr.lower(), r.stderr
+
+
+def test_update_refuses_a_database_from_another_schema_version(home):
+    two_video_home(home)
+    import sqlite3
+
+    con = sqlite3.connect(home / "tapedeck.db")
+    with con:
+        con.execute("PRAGMA user_version = 1")
+    con.close()
+
+    r = idx(home, "update", CHAPTERED_META["id"])
+    assert r.returncode != 0, "update wrote into a database from another schema version"
+    assert "reindex" in r.stderr.lower(), r.stderr
+
+
+def test_reindex_is_the_migration_for_a_foreign_schema_version(home):
+    two_video_home(home)
+    import sqlite3
+
+    con = sqlite3.connect(home / "tapedeck.db")
+    with con:
+        con.execute("PRAGMA user_version = 1")
+    con.close()
+
+    r = idx(home, "reindex")
+    assert r.returncode == 0, r.stderr
+    rows = search_json(home, "core idea")
+    assert rows, "reindex did not rebuild a searchable database"
