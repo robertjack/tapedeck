@@ -55,6 +55,7 @@ BREAD_SECTIONS = [
 # scaffold derives it from would agree with any drift.
 DEFAULT_MAINTAINER_COMMAND = (
     'claude -p --permission-mode acceptEdits --allowedTools "Read,Grep,Glob,Write,Edit"'
+    " --output-format stream-json --verbose"
 )
 
 # SPEC-cli-007's fixed order, with the wiki seam in the position this round pins:
