@@ -1,4 +1,4 @@
-"""Fixtures shared by the wiki suites (SPEC-wiki-001, SPEC-wiki-002).
+"""Fixtures shared by the wiki suites (SPEC-wiki-001 through SPEC-wiki-005).
 
 Deliberately not a `conftest.py`: `conftest` is the name every suite imports the
 shared harness by, and a second module of that name on the path would shadow it.
@@ -188,6 +188,14 @@ def wiki_file(home, video_id):
     return run_component("wiki", ["file", video_id], home)
 
 
+def wiki_sync(home, *flags):
+    return run_component("wiki", ["sync", *flags], home)
+
+
+def wiki_rebuild(home, *flags):
+    return run_component("wiki", ["rebuild", *flags], home)
+
+
 def stocked(home, pages=(FILED, NEXT)):
     """The library `wiki file` reads: two videos, and by default the archive page
     for each. `pages` narrows that — a video ingest holds but archive never
@@ -254,3 +262,109 @@ def rejected(home, monkeypatch, maintainer, ask=ASK_VERIFIES):
     assert snapshot(wiki) == before, "a rejected operation leaves nothing behind"
     assert subjects(wiki) == history, "a rejected operation records no commit"
     return r
+
+
+# --- sweeping a whole library (SPEC-wiki-003, SPEC-wiki-005) ------------------
+#
+# Both sweeps file every eligible video in one pass, in one pinned order, so the
+# fixture library has to make that order observable and falsifiable: four videos
+# whose chronology disagrees with their alphabet, two of them uploaded on the same
+# day so the tiebreak is exercised, and none of them created on disk in the order
+# the sweep must produce.
+
+SWEEP = (
+    # id, upload_date, title
+    ("oldest00001", "2019-03-04", "The First Broadcast"),
+    ("middle00002", "2021-07-09", "The Middle Years"),
+    ("tie-alpha-1", "2023-05-05", "Same Day, First By Id"),
+    ("tie-zebra-2", "2023-05-05", "Same Day, Second By Id"),
+)
+
+# upload_date ascending, ties broken by id — the order the wiki must accumulate in.
+SWEEP_ORDER = [vid for vid, _, _ in SWEEP]
+
+# neither that order nor its reverse: a sweep that files in creation or readdir
+# order fails on this library rather than passing by luck.
+CREATION_ORDER = ["tie-zebra-2", "middle00002", "tie-alpha-1", "oldest00001"]
+
+SWEEP_METAS = {
+    vid: {
+        "id": vid,
+        "title": title,
+        "channel": "Sweep Channel",
+        "upload_date": upload_date,
+        "duration_s": 600,
+        "url": f"https://www.youtube.com/watch?v={vid}",
+    }
+    for vid, upload_date, title in SWEEP
+}
+
+
+def unfiled_library(home, pages=None):
+    """The library a sweep walks: four eligible videos, none of them filed.
+    `pages` narrows which of them archive has rendered — a video with no page is
+    a job that cannot be done yet, and the sweep's business is to notice rather
+    than to fail."""
+    if pages is None:
+        pages = SWEEP_ORDER
+    for vid in CREATION_ORDER:
+        meta = SWEEP_METAS[vid]
+        add_video(home, meta, [{"start": 0.0, "end": 4.0, "text": f"Fixture {vid}."}])
+        if vid in pages:
+            write_archive_page(home, meta, CH_SECTIONS)
+
+
+# The honest maintainer, recording which video it was handed each time it ran.
+# The record is the sweep's order, its skips and its stopping point all at once:
+# a video the sweep passed over never appears in it.
+RECORDS_EACH_ID = (
+    SH
+    + """
+echo "$TAPEDECK_VIDEO_ID" >> "$TAPEDECK_HOME/maintainer-ids"
+"""
+    + FILES_THE_VIDEO
+    + LOGS_IT
+)
+
+
+def maintainer_ids(home):
+    """Every video the maintainer was invoked for, in the order it was invoked."""
+    record = home / "maintainer-ids"
+    return record.read_text().split() if record.is_file() else []
+
+
+def links_to_nothing_for(video_id):
+    """A maintainer that works honestly on every video except one, whose page it
+    leaves pointing at a page that does not exist. The gate rejects that one
+    filing; whether the rest of the sweep survives it is the question."""
+    return RECORDS_EACH_ID + f"""
+if [ "$TAPEDECK_VIDEO_ID" = "{video_id}" ]; then
+  echo "Compare with [[nonexistent-page]]." >> "sources/$TAPEDECK_VIDEO_ID.md"
+fi
+"""
+
+
+ENTRY_PARTS = re.compile(r"^## \[\d{4}-\d{2}-\d{2}\] (\S+) \| (.+)$", re.MULTILINE)
+
+
+def log_entries(wiki):
+    """The chronology as `(op, subject)` pairs, oldest first — what the wiki
+    itself says happened, and in which order."""
+    return ENTRY_PARTS.findall((wiki / "log.md").read_text())
+
+
+def summary_line(r):
+    """The sweep's closing one-liner. Which stream it lands on is the
+    implementation's business; that one line accounts for every outcome at once
+    is not — a sweep over a hundred videos whose result has to be reconstructed
+    by reading a hundred lines has not reported anything."""
+    lines = [
+        line
+        for line in (r.stdout + "\n" + r.stderr).splitlines()
+        if all(word in line.lower() for word in ("filed", "skip", "fail"))
+    ]
+    assert len(lines) == 1, (
+        f"expected exactly one line summarizing filed / already filed / skipped / "
+        f"failed:\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    )
+    return lines[0]
