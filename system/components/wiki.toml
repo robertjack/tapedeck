@@ -1,0 +1,26 @@
+[component]
+name = "wiki"
+purpose = "Maintain wiki/ as an AI-authored, git-versioned companion library at $TAPEDECK_HOME/wiki/: `file <id>` scaffolds it on first use, runs the configured maintainer against the archive page, then admits its changes only if the whole wiki still satisfies the acceptance gate (brief untouched, filed-state marker present, wikilinks resolve, deep links verify against the library, catalog and log current) — free-form inside, deterministic at the edges (SPEC-wiki-001)."
+pace = "fast"
+language = "python"
+
+[owns]
+paths = ["src/wiki/"]
+data = ["wiki/**"]
+
+[boundary]
+contracts = ["system/contracts/wiki-layout.md", "system/contracts/library-layout.md", "system/contracts/ask-citations.md"]
+consumes = ["ingest", "ask"]
+
+[evals]
+path = "system/evals/wiki/"
+command = "just eval wiki"
+
+[budget]
+# 16000: the first assembly measured ~13863 — a 14000 cap left no room for the
+# regen preamble or any spec growth, and overflow fails only after green evals.
+context_tokens = 16000
+# Above the usual 8000/6000 default: the component carries its own git lifecycle
+# (scaffold, per-run commit, hard reset/clean on gate failure) plus a six-check
+# whole-wiki acceptance gate, on top of driving the maintainer subprocess itself.
+src_tokens = 10000

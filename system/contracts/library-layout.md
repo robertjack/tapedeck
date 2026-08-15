@@ -18,6 +18,7 @@ $TAPEDECK_HOME/
     transcript.json            # validates system/contracts/transcript.schema.json
   archive/<video-id>.md        # human-readable render; regenerable from meta+transcript
   tapedeck.db                  # SQLite FTS index; regenerable from archive/ alone
+  wiki/                        # markdown knowledge base, its own git repo — wiki-layout.md
 ```
 
 ## Write authority (exclusive, per SPEC-core-001)
@@ -29,6 +30,7 @@ $TAPEDECK_HOME/
 | `archive/*.md` | archive |
 | `tapedeck.db` | index |
 | `config.toml` | cli (created with defaults on first run; then user-owned) |
+| `wiki/**` | wiki (sole tapedeck-side writer; the user co-authors by hand — `wiki-layout.md`) |
 
 ## Derivation chain (SPEC-core-002)
 

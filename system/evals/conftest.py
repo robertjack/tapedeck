@@ -161,6 +161,19 @@ def set_librarian(home, script_body):
     )
 
 
+def set_maintainer(home, script_body):
+    """Configure the wiki maintainer seam (SPEC-wiki-002) with a fake:
+    [wiki].maintainer_command runs as a shell command with cwd = the wiki
+    directory and the task instructions on stdin; the environment carries
+    TAPEDECK_HOME, TAPEDECK_WIKI (the wiki directory), TAPEDECK_VIDEO_ID and
+    TAPEDECK_ARCHIVE_PAGE (absolute path of archive/<id>.md). It edits the wiki in
+    place and prints nothing anyone reads — what it wrote is judged afterwards by
+    the acceptance gate, never taken on trust."""
+    script = home / "maintainer.sh"
+    script.write_text(script_body)
+    (home / "config.toml").write_text(f'[wiki]\nmaintainer_command = "sh {script}"\n')
+
+
 def run_cli(args, home):
     """Drive the user-facing `tapedeck` executable (override via $TAPEDECK_BIN)."""
     cmd = os.environ.get("TAPEDECK_BIN", "tapedeck")
