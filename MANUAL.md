@@ -215,6 +215,7 @@ mostly knowledge.
     tapedeck wiki sync [--dry-run]
     tapedeck wiki lint [--json]
     tapedeck wiki rebuild [--yes]
+    tapedeck wiki tend [--yes]
 
 The four stages end at an index that can find anything anyone said. The
 wiki is the layer above that: what *you* know because of the videos — the
@@ -294,6 +295,55 @@ surprising `$TAPEDECK_HOME` is visible before you agree to anything. This
 is the one verb that destroys prose you may have typed yourself, which is
 why it asks; and the wiki it replaces is still in the history, one
 `git show` away, for as long as you keep the repository.
+
+Let it read the whole wiki back to you:
+
+    tapedeck wiki tend                 # read it, report only
+    tapedeck wiki tend --yes           # let it act, under the same gate
+
+`lint` catches what a rule can catch — a broken link, a page with no
+citation. Some things about a wiki only a reader notices: two notes that
+quietly disagree, a claim a later video already overtook, an idea that
+keeps coming up in your filings and has never earned a page of its own.
+`tend` is that reading, done by the same maintainer that writes the wiki,
+over the whole of it — tapedeck stays the deterministic edge, and
+everything between the edges is the agent's judgment, exactly as filing
+already is.
+
+Without `--yes` it only reports, in prose, to stdout:
+
+    The zero-shot and few-shot notes both call themselves the "default"
+    prompting approach — worth reconciling.
+    "context window" is mentioned in three source pages and has no note
+    of its own.
+    sources/dQw4w9WgXcQ.md predates notes/rag.md, which looks like it
+    supersedes the claim there about chunk size.
+
+Whatever the agent wrote while forming that report is gone the moment it
+exits: tapedeck resets the working tree unconditionally, so a report run
+cannot change the wiki even if the agent tries to. Anything you had typed
+and not committed is committed as `user edits` before that, so the reset
+cannot take your writing with it. No commit of the tend itself, no log
+entry — just the reading, on your screen.
+
+`--yes` lets it act on what it finds — merge two notes, rewrite one, add
+the page that was missing, retire one that's gone stale — then the whole
+gate every filing passes judges the result: every wikilink resolves,
+`CLAUDE.md` untouched, every deep link still pointing at a real moment of
+a real video, the catalog and the log both still true. One rule belongs
+to `tend` alone: nothing under `sources/` may be deleted or renamed,
+because that page's existence is the wiki's only record that the video
+was ever filed, and losing one would leave the next `sync` to refile it
+as if it never happened. Notes are fair game for anything the maintainer
+decides:
+
+    tapedeck wiki tend --yes
+    merged notes/zero-shot.md and notes/few-shot.md into notes/prompting.md
+    added notes/context-window.md, linked from three source pages
+    wiki tend committed
+
+Run it after a batch of `add`s has settled, or whenever the wiki starts
+reading like a pile of pages rather than the one thing you know.
 
 The brief is your steering wheel. `wiki/CLAUDE.md` is scaffolded once with
 defaults and is yours from then on: how notes are named and foldered, what
@@ -410,6 +460,7 @@ Verbs:
     wiki sync [--dry-run]                  file every video not yet filed
     wiki lint [--json]                     check the wiki still holds up
     wiki rebuild [--yes]                   clear it and refile from zero
+    wiki tend [--yes]                      read the whole wiki, then act
     adapt-parakeet                         parakeet JSON -> whisper shape
     doctor [--json]                        check the seams and this machine
     setup [--yes]                          first run: scaffold, check, remedy

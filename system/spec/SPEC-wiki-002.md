@@ -47,6 +47,20 @@ pages a maintainer created are untracked, so a reset alone leaves exactly the ha
 work the rollback exists to remove — and it means the pre-run commit rather than the one
 before it, so the user's hand-edits are on the far side of every undo.
 
+One operation holds the wiki at a time (LESSON-0004). Before anything above — before even
+the `user edits` commit — the operation takes an exclusive advisory lock on a file inside
+the wiki's own git directory, where no reset or clean ever reaches and where the operating
+system releases it with the process that held it, so a crashed operation cannot leave a
+lock behind to clean up. A second mutating operation that finds the lock held does not
+wait and does not interleave: it exits 1 at once, saying another wiki operation is
+running, because the alternative is not hypothetical — two concurrent filings on a live
+library left one committing the other's half-written pages as `user edits`. The refusal
+costs nothing a sweep cannot recover: filing is idempotent and the next `sync` converges.
+Read-only diagnosis takes no lock and never waits — `lint` and a dry-run `sync` may run
+mid-operation and merely describe a moment in flight. Every operation that writes the
+wiki — a filing, a sweep's filings, a rebuild, a tend in either mode — holds the lock for
+exactly the span from before its pre-run commit to its commit or its rollback.
+
 The gate verifies the **whole wiki**, not the diff. A maintainer edits wherever the brief
 sends it, and a filing that fixes its own page while breaking a link three notes away is
 the failure this catches. Each check is independent and every failure is reported, so one
