@@ -1,0 +1,44 @@
+{
+  "id": "gen-20260815T021240Z-archive-f8f0",
+  "component": "archive",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "wiki round 1: set_maintainer in shared eval conftest + wiki/ entry in library-layout.md"
+    ]
+  },
+  "root_hash": "sha256:f8f02a0b7ba2a9fd701b53480e9bb665b6775a7eba10227a52b90c5b444f332a",
+  "inputs": {
+    "manifest": "sha256:d70d9bcc19ea93df11bfb12e280158cde0ef9aad67fc723e58aa9a1994be1072",
+    "clauses": {
+      "SPEC-archive-001": "sha256:e135208f05bc12c92de2e156c3b9ee688eb438f60221cd4c2030c67ca66fd3ed",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:6198c9e7f18dfc7122ecb9294beb756e694845fae408bbdcadd21db0c5ed93e8",
+      "system/contracts/meta.schema.json": "sha256:98c560566ec2aea13d57aec61ed91cf6cb94a3aff698c909b640131e77f64bbd",
+      "system/contracts/transcript.schema.json": "sha256:5badcff15976c09aca2cd6ed396f815e4a7b27832fce287101d01d7b12358b5e"
+    },
+    "eval_sources": {
+      "system/evals/archive/test_render.py": "sha256:6b47627ee8ce18524ef09d97592b14226400d53e6a3eaeace1a8e17a94782dbf"
+    },
+    "lessons": {},
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:23df483fc2edef2a46e09d93b4f6cff5254061becfb9d9df0e25e2c5ab4ade57"
+    }
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-fable-5",
+    "session_ref": "claude-code:3770d721-1d89-434f-950c-f3c569485187"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation: the wiki round added the set_maintainer helper to the shared eval conftest and the wiki/ row to library-layout.md; no owned source changed, full suite green (170 passed)."
+}

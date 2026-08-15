@@ -1,0 +1,45 @@
+{
+  "id": "gen-20260815T021240Z-index-0658",
+  "component": "index",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "wiki round 1: set_maintainer in shared eval conftest + wiki/ entry in library-layout.md"
+    ]
+  },
+  "root_hash": "sha256:0658da93ddb534c9fa79d4654f453b1c4033e5de064ec8ee70521fba0ffad3ba",
+  "inputs": {
+    "manifest": "sha256:88fed72a5ef558ac0997068161511c7210ed3b3b8d93d6f3ca55c91553e5b0cf",
+    "clauses": {
+      "SPEC-index-001": "sha256:ba9cd0867089026affd3b9910209295b2bac746f64546ed2f75652d1e5ead9a0",
+      "SPEC-index-002": "sha256:ca4fa9c42533adb2791666496291fed0b1d4a681515f36818fa653ea28a44692",
+      "SPEC-index-003": "sha256:14eea381850f042a7e89b4ce40b0f67bff83735ff5f8f2ff8ef2be5dfb4f501d",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:6198c9e7f18dfc7122ecb9294beb756e694845fae408bbdcadd21db0c5ed93e8"
+    },
+    "eval_sources": {
+      "system/evals/index/test_index.py": "sha256:e40139f2dbed68a399fe2a30cac4a21bed080d3d917f0c5384cef99bcce6a339",
+      "system/evals/index/test_stemming.py": "sha256:8f638da5bceb1478efdd094dc3297cf3b94e7eec4c9c921570730a46ff4bd982"
+    },
+    "lessons": {},
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:23df483fc2edef2a46e09d93b4f6cff5254061becfb9d9df0e25e2c5ab4ade57"
+    }
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-fable-5",
+    "session_ref": "claude-code:3770d721-1d89-434f-950c-f3c569485187"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation: the wiki round added the set_maintainer helper to the shared eval conftest and the wiki/ row to library-layout.md; no owned source changed, full suite green (170 passed)."
+}

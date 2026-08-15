@@ -1,0 +1,47 @@
+{
+  "id": "gen-20260815T021240Z-transcribe-31c8",
+  "component": "transcribe",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "wiki round 1: set_maintainer in shared eval conftest + wiki/ entry in library-layout.md"
+    ]
+  },
+  "root_hash": "sha256:31c8312f3ceb926290279b3ed0dea37ce8eb09cc8cdf5958e7ff0ce9910e9809",
+  "inputs": {
+    "manifest": "sha256:7efcb7db3b518116a2f1b5c5d60563230cceefaf913d4cdabe6f90b913833ee1",
+    "clauses": {
+      "SPEC-transcribe-001": "sha256:ead8fdabe4074adae1bc975801abc40c2821424b8e68a9b0d5a2ef9e9b9e8e12",
+      "SPEC-transcribe-002": "sha256:9ba4155521dd0a793a0c70d699655ccf59adf25425c63cbc21bfe3aeab38c6ab",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:6198c9e7f18dfc7122ecb9294beb756e694845fae408bbdcadd21db0c5ed93e8",
+      "system/contracts/transcript.schema.json": "sha256:5badcff15976c09aca2cd6ed396f815e4a7b27832fce287101d01d7b12358b5e"
+    },
+    "eval_sources": {
+      "system/evals/transcribe/test_parakeet.py": "sha256:d1818329a67b39937873fe8c24ad6243e6b893678470115b769e7ab137bfd6d9",
+      "system/evals/transcribe/test_transcribe.py": "sha256:a177da52b1a8c7329e70cdce663dd58562e54fe645d34aaf6439b7c8857440c8"
+    },
+    "lessons": {
+      "LESSON-0002": "sha256:4253011e9974914f60098f5f36137081a2221671750bb2854b9f50eb26ad0db8"
+    },
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:23df483fc2edef2a46e09d93b4f6cff5254061becfb9d9df0e25e2c5ab4ade57"
+    }
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-fable-5",
+    "session_ref": "claude-code:3770d721-1d89-434f-950c-f3c569485187"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation: the wiki round added the set_maintainer helper to the shared eval conftest and the wiki/ row to library-layout.md; no owned source changed, full suite green (170 passed)."
+}

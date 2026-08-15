@@ -1,0 +1,49 @@
+{
+  "id": "gen-20260815T021240Z-ingest-5c7c",
+  "component": "ingest",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "wiki round 1: set_maintainer in shared eval conftest + wiki/ entry in library-layout.md"
+    ]
+  },
+  "root_hash": "sha256:5c7c6b40d2c120acdbf1f0ade91a2dc6f99918787c842a41563c46e9d52df8e5",
+  "inputs": {
+    "manifest": "sha256:c2fc30d0283519ea69af415a02acef74d7b4d1231ce8d0e7d260017e54aef6eb",
+    "clauses": {
+      "SPEC-ingest-001": "sha256:7c688bce3fda6659cf2786dbf45b814a18b2695e03dd466536d87543141463d4",
+      "SPEC-ingest-002": "sha256:64094b3d5750368c19508c173b7e178bbc3a30b89b5454aa650a9216a8d26b31",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:6198c9e7f18dfc7122ecb9294beb756e694845fae408bbdcadd21db0c5ed93e8",
+      "system/contracts/meta.schema.json": "sha256:98c560566ec2aea13d57aec61ed91cf6cb94a3aff698c909b640131e77f64bbd"
+    },
+    "eval_sources": {
+      "system/evals/ingest/test_expand.py": "sha256:7f07c44fe6bda81d618360696ea3301a7ace8b129180d76b852c6a58b2bbe31c",
+      "system/evals/ingest/test_force_refetch.py": "sha256:487fbc957a78df77f5fdad617d85c572c45e7cefdc41db58afbeb7aac2d5e028",
+      "system/evals/ingest/test_ingest.py": "sha256:562fe8c2ca48de5bc24acc1f9b3cc160da53c3a5ab4673bb156dafb480d92b53"
+    },
+    "lessons": {
+      "LESSON-0001": "sha256:1d7e1ab78c7d75d659542db7b661d5c8a57f339bc75b48575b36908f975e52bb",
+      "LESSON-0003": "sha256:c8f5d869f21ef882ccf20dbe57346069f2788b654691d86dba3bdfbe07268030"
+    },
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:23df483fc2edef2a46e09d93b4f6cff5254061becfb9d9df0e25e2c5ab4ade57"
+    }
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-fable-5",
+    "session_ref": "claude-code:3770d721-1d89-434f-950c-f3c569485187"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation: the wiki round added the set_maintainer helper to the shared eval conftest and the wiki/ row to library-layout.md; no owned source changed, full suite green (170 passed)."
+}
