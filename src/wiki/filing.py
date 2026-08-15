@@ -17,7 +17,10 @@ fact.
 
 One operation holds the wiki at a time (LESSON-0004). The lock is taken once, by
 the verb, and held across every filing it performs, so a sweep's commits can never
-be interleaved with a neighbour's half-written pages.
+be interleaved with a neighbour's half-written pages. Every maintainer run inside
+it announces itself and streams its progress on stderr before it lands or rolls
+back (SPEC-wiki-007) — the outcome semantics here are unchanged by that; only the
+silence while it runs is gone.
 """
 
 from __future__ import annotations
@@ -139,6 +142,7 @@ def perform(
     command: str,
     task: str,
     subject: str,
+    label: str,
     video_id: str | None = None,
     archive_page: Path | None = None,
     keep_sources: bool = False,
@@ -147,7 +151,7 @@ def perform(
     or the rollback. The caller holds the lock for exactly this span."""
     pre_run = repo.commit_pending(wiki)
     before = gate.snapshot(wiki)
-    code, _ = seams.run_maintainer(command, home, wiki, task, video_id, archive_page)
+    code, _ = seams.run_maintainer(command, home, wiki, task, label, video_id, archive_page)
     if code != 0:
         repo.restore(wiki, pre_run)
         raise Failure(
@@ -173,6 +177,7 @@ def file_one(home: Path, wiki: Path, command: str, video_id: str) -> None:
         command,
         file_task(wiki, video_id, page),
         f"wiki {FILE_OP} {video_id}",
+        f"filing {video_id}",
         video_id=video_id,
         archive_page=page,
     )
@@ -373,6 +378,7 @@ def tend(home: Path, yes: bool) -> int:
                 command,
                 TEND_APPLY_TASK.format(wiki=wiki, rules=_rules(TEND_OP)),
                 TEND_SUBJECT,
+                "tending (apply)",
                 keep_sources=True,
             )
             return 0
@@ -390,7 +396,9 @@ def read_only(home: Path, wiki: Path, command: str) -> int:
     history, however much the user learned from it.
     """
     pre_run = repo.commit_pending(wiki)
-    code, said = seams.run_maintainer(command, home, wiki, TEND_REPORT_TASK.format(wiki=wiki))
+    code, said = seams.run_maintainer(
+        command, home, wiki, TEND_REPORT_TASK.format(wiki=wiki), "tending (report)"
+    )
     repo.restore(wiki, pre_run)
     if said.strip():
         print(said if said.endswith("\n") else said + "\n", end="")

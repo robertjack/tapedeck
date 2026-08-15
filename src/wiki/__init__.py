@@ -9,7 +9,9 @@ The design is the same in every verb that writes — **probabilistic inside,
 deterministic at the edges**. A configured agent reads the brief and edits the
 wiki as it sees fit; tapedeck reviews none of its prose and all of its result,
 mechanically, over the whole wiki, and either commits it or resets the tree back
-to where the run began.
+to where the run began. A maintainer run is watched rather than awaited
+(SPEC-wiki-007): it announces itself before it starts and its stream events
+become progress on stderr as they arrive.
 
 Two vocabularies are consumed rather than re-derived (LESSON-0003): ingest's id
 grammar and rule for what counts as a downloaded video, and ask's published
