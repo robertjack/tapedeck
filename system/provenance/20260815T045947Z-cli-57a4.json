@@ -1,0 +1,58 @@
+{
+  "id": "gen-20260815T045947Z-cli-57a4",
+  "component": "cli",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": []
+  },
+  "root_hash": "sha256:57a4f307831070e7e91b535dc8559223dc805d6c848652119294cf0fbbfdec7d",
+  "inputs": {
+    "manifest": "sha256:fd188862f1865e02cfbbff7b6f5e948e338a56390dcd10692fb80508e9b5aa55",
+    "clauses": {
+      "SPEC-cli-001": "sha256:63d955a7a7651e48f1c5fac7aa591463eb4e22304430b5649093ed968a4b3425",
+      "SPEC-cli-002": "sha256:d93260f40d918251e700ce4185b44249bfa984eeab383f1011cbc7ff307828ad",
+      "SPEC-cli-003": "sha256:5fd4ef02cda9afdf75d1963a3ef769d4c36fef4973c6673f607dddf167e5f6cb",
+      "SPEC-cli-004": "sha256:1a2e5a8db8af8e2a3182b06eae8eca1b5e5ac0081509a3716045839ada36961e",
+      "SPEC-cli-005": "sha256:e244ac3111380ec3bc0a030a000659274774e945430a5ad8c4abebbfa9ea40d9",
+      "SPEC-cli-006": "sha256:15418ed31b76937913a91277ce0a6ae8746c13893f1308103579e20fef757cda",
+      "SPEC-cli-007": "sha256:320ce72e7a1564b6a8a6a26818284c5bdb276057a3b3180c954089dd8e3b3913",
+      "SPEC-cli-008": "sha256:15451335ef159e368bd9c857c5414cfb74e8cd42fe4252cef5f9d161416f2a70",
+      "SPEC-cli-009": "sha256:abb5eb9779f934364dbac44a0ad0f5693b28472a2e676bc0f011c4364b017cca",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/cli-surface.md": "sha256:64487628cc553c416d0abe8cdf3e4083feb8385002bfd57dca6a4ba6167af08c"
+    },
+    "eval_sources": {
+      "system/evals/cli/test_add_autofile.py": "sha256:ad87f53bde9cac6fe0fa2a0c4daa05a48a48ddbfaa4dfae6640d568db43feb43",
+      "system/evals/cli/test_add_collection.py": "sha256:24e54181ad822acbcd0d3a527654680225a085130a12386f38cff7f2c91ff506",
+      "system/evals/cli/test_cli.py": "sha256:7cd34c061ca8b49961d01af7325d25d5d17869c08a17c88b02c0b9d000462d6e",
+      "system/evals/cli/test_doctor.py": "sha256:0588d67e906362ef2cf33fbf5ac6c2e4f571577d1c9260195e975dd00cd85781",
+      "system/evals/cli/test_help.py": "sha256:bccc4522447f7f56fc48d56619303ce06bf9effff2cbed9955851ac34f3499fe",
+      "system/evals/cli/test_portability.py": "sha256:35909122ce6649f2e3f27cb73f856cc305822d17600ab9a479c1a171390e1563",
+      "system/evals/cli/test_retranscribe.py": "sha256:52a8d9fc7a32ba51d819b5d33738f8ee415ff429321ef1f1857bd129c3d88d83",
+      "system/evals/cli/test_rm.py": "sha256:666a41c2155ce70b91f98e4d6772979d3571f6694c309df10bbf3e666d53aa1e",
+      "system/evals/cli/test_setup.py": "sha256:2338ee424bfa980332f079bccb51fefbc6f1e9becb6266587c826868fa40b3d3",
+      "system/evals/cli/test_wiki_surface.py": "sha256:3676d9625cd718685aa97f7125e82ce8b5052d4d1d15ec551e2913b7a70c846e"
+    },
+    "lessons": [
+      "LESSON-0003"
+    ]
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-opus-5",
+    "session_ref": "claude-code:3770d721-1d89-434f-950c-f3c569485187"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "skipped"
+  },
+  "escape_hatch": null,
+  "attempts": 1,
+  "duration_s": 935.1,
+  "notes": "generated via: claude --model claude-opus-5 --permission-mode acceptEdits -p \"$(printf \"Execute this regeneration ticket now. There is no user to ask questions of - write the implementation into the owned paths.\\n\\n\"; cat \"$PHX_CONTEXT_FILE\")\""
+}

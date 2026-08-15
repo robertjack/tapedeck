@@ -8,6 +8,10 @@ worked example, because usage alone has never taught anybody a command line; and
 which the installed wheel carries so the tool teaches the same thing wherever it
 was installed.
 
+`help wiki` is that same mechanism and nothing new (SPEC-cli-009): the group's
+usage, then an example. The tour's everyday verbs are unchanged — the wiki is a
+layer a user grows into, not one of the six a stranger needs on the first screen.
+
 The TTY discipline is the whole of the output contract here: piped, the manual is
 byte-identical to the file and no pager is ever invoked, so `tapedeck help manual
 | grep` works and so does redirecting it to disk. At a terminal it is paged.
@@ -42,6 +46,13 @@ EXAMPLES = {
     "rm": "tapedeck rm dQw4w9WgXcQ\ntapedeck rm dQw4w9WgXcQ --media-only    # keep the knowledge",
     "retranscribe": "tapedeck retranscribe --dry-run    # what a new model would redo\n"
     "tapedeck retranscribe",
+    "wiki": "tapedeck wiki sync --dry-run       # the ids it would file, one per line\n"
+    "tapedeck wiki sync                # file every video the wiki does not know\n"
+    "tapedeck wiki file dQw4w9WgXcQ    # or just this one\n"
+    "tapedeck wiki lint --json         # diagnose the wiki you have\n"
+    "tapedeck wiki rebuild --yes       # clear it and file the library again\n"
+    "# the verbs and flags are the wiki's own: `tapedeck wiki --help` is its usage,\n"
+    "# and wiki/CLAUDE.md is the brief that decides what a page says",
     "adapt-parakeet": "parakeet-mlx --output-format json video.mp4 && \\\n"
     "  tapedeck adapt-parakeet < video.json > transcript.json\n"
     "# you will normally only meet this inside [transcribe] transcriber_command",
@@ -82,7 +93,7 @@ The everyday verbs:
   retranscribe  redo every transcript a better model has superseded
                   tapedeck retranscribe --dry-run
 
-Also here: reindex, rm, doctor, setup.
+Also here: reindex, rm, wiki, doctor, setup.
 
   tapedeck setup          on a new machine: what is missing and what installs it
   tapedeck help <verb>    that verb's usage and a worked example

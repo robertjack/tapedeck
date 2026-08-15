@@ -10,19 +10,27 @@ of it: whether a name is a video id, and whether the media is really there.
 `show` reporting `video.part` as the video would tell a user their download is
 fine when what they have is half of one — the same wrong answer that would make
 `add` skip re-fetching it (LESSON-0003).
+
+`rm` asks the wiki one question and never a second: does `wiki/sources/<id>.md`
+exist. contracts/wiki-layout.md publishes that existence check as *the* answer to
+"is this video filed", which is the point of storing the state as a filename, and
+a note is all `rm` owes it — the wiki is accumulated, user-owned, versioned state
+whose sole tapedeck-side writer is the wiki component. A page whose video is gone
+is a decision for the person who wrote it (SPEC-cli-009).
 """
 
 from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import ingest
 from archive import hms
 
 from . import Failure, Usage, components
-from .home import LIBRARY
+from .home import LIBRARY, WIKI, WIKI_SOURCES
 from .pipeline import META_NAME, TRANSCRIPT_NAME, entry_of, label, page_of
 
 UNKNOWN = "{0!r} is not a video in the library — `tapedeck list` shows what is"
@@ -113,13 +121,20 @@ def show(home: Path, video_id: str, as_json: bool) -> int:
     return 0
 
 
+def filed_page(home: Path, video_id: str) -> Path:
+    """Where the wiki keeps this video's page, if it has one."""
+    return home / WIKI / WIKI_SOURCES / f"{video_id}.md"
+
+
 def remove(home: Path, video_id: str, media_only: bool) -> int:
     """Forget a video, or reclaim just its disk (SPEC-cli-002)."""
     entry = known(home, video_id)
     if media_only:
         # The knowledge stays: metadata, transcript, archive page and index rows
         # all keep working. The cost is that this video can never be
-        # re-transcribed without downloading it again.
+        # re-transcribed without downloading it again. Nothing is said about the
+        # wiki here on purpose — keeping the knowledge is the point of the flag,
+        # and the page still stands on the entry it describes.
         for path in ingest.videos(entry):
             path.unlink()
         print(f"{video_id}: media deleted; transcript, archive page and index kept")
@@ -127,14 +142,25 @@ def remove(home: Path, video_id: str, media_only: bool) -> int:
     shutil.rmtree(entry)
     page_of(home, video_id).unlink(missing_ok=True)
     # The page is gone, so index update is what drops the rows — the index owns
-    # its own database, and it derives from archive pages alone.
-    code = components.stage("index", ["update", video_id], home)
+    # its own database, and it derives from archive pages alone. Quietly: a verb
+    # that removes reports what it removed, and the database path the index
+    # echoes back is not that. What `rm` says about this video afterwards is the
+    # two lines below and nothing else.
+    code = components.stage("index", ["update", video_id], home, quiet=True)
     if code:
         raise Failure(
             f"{video_id}: removed from the library, but the index still lists it "
             f"(index exited {code}) — `tapedeck reindex` settles it"
         )
     print(f"{video_id}: removed from the library, the archive and the index")
+    filed = filed_page(home, video_id)
+    if filed.is_file():
+        print(
+            f"note: the wiki still holds a page for {video_id} ({filed}) — nothing "
+            "under wiki/ was touched, and `tapedeck wiki lint` will keep naming it "
+            "until you re-add the video or delete the page yourself",
+            file=sys.stderr,
+        )
     return 0
 
 

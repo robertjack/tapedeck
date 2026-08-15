@@ -10,9 +10,9 @@ line under each required failure, verbatim runnable.
 One hard rule: it installs nothing the user did not consent to. Without `--yes`
 this prints and stops, and there is no path through it that runs anything at all.
 With `--yes` the user has said yes to the commands just printed and to those
-only — not to the optional `[ask]` tools, which are never installed however many
-times you type it, and not to Homebrew, whose own installation is a deliberate
-step a wizard has no business taking on someone's behalf.
+only — not to the optional seams, which are never installed however many times
+you type it, and not to Homebrew, whose own installation is a deliberate step a
+wizard has no business taking on someone's behalf.
 
 The remedies are a seam like every other (SPEC-core-004): `[setup]` in
 config.toml, keyed by executable name. Swapping brew for MacPorts is a line in a
@@ -43,7 +43,8 @@ MODEL_SIZES = {"parakeet-mlx": "~2.4GB"}
 NO_REMEDY = "tapedeck has no remedy for it — install it however you install things here"
 NOT_AN_INSTALL = "no install fixes this one — the reason above is what to act on"
 OPTIONAL_HEADING = (
-    "Optional — `ask` needs these and `search` never does; setup never installs them:"
+    "Optional — the four-stage chain runs without these and setup never installs "
+    "them; each line above says what its absence costs:"
 )
 
 
@@ -109,8 +110,8 @@ def fix(item: dict, table: dict) -> str:
 
 
 def optional(rows: list[dict], table: dict) -> None:
-    """The `ask` seams that do not resolve, apart from the required gaps: shown
-    as guidance, never executed, never part of the exit code."""
+    """The optional seams that do not resolve, apart from the required gaps:
+    shown as guidance, never executed, never part of the exit code."""
     seen = {}
     for item in rows:
         tool = item["missing"]

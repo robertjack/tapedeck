@@ -13,6 +13,12 @@ takes each command template in config.toml, takes its head executable — the fi
 shell word — and looks for that name. Point `transcriber_command` somewhere else
 and doctor starts checking for somewhere else, with no change to this file.
 
+Required means `add` cannot run without it. The `[ask]` seams and the `[wiki]`
+maintainer are optional on the same footing, and each says which half of the tool
+its absence costs: `ask` needs the librarian and `search` never does; the wiki's
+writing verbs and `add`'s filing epilogue need the maintainer and the four-stage
+chain never does. Neither ever decides the exit code.
+
 Every check is reported, passes included, because a diagnosis that prints only
 complaints cannot tell "checked and fine" from "never looked".
 
@@ -42,18 +48,25 @@ PASS, FAIL, OPTIONAL = "pass", "fail", "optional"
 # ours (system/contracts/cli-surface.md pins `--json` to these three).
 PUBLIC = ("check", "status", "detail")
 
-# The seams, in the order the report emits them; the flag is whether `add` needs
-# it. `ask` needs the last two and `search` never does, so they are optional and
-# never decide the exit code.
+# What an optional seam's absence costs. Required seams carry no such line
+# because there is nothing to weigh: without them `add` has nothing to run.
+REQUIRED = None
+ASK_COSTS = "ask needs it, search does not"
+WIKI_COSTS = (
+    "the wiki verbs that write need it, and so does the filing `add` does after "
+    "each video; the four-stage chain never does"
+)
+
+# The seams, in the order the report emits them.
 SEAMS = (
-    ("ingest", "fetcher_command", True),
-    ("ingest", "lister_command", True),
-    ("transcribe", "transcriber_command", True),
-    ("ask", "librarian_command", False),
-    ("ask", "answerer_command", False),
+    ("ingest", "fetcher_command", REQUIRED),
+    ("ingest", "lister_command", REQUIRED),
+    ("transcribe", "transcriber_command", REQUIRED),
+    ("ask", "librarian_command", ASK_COSTS),
+    ("ask", "answerer_command", ASK_COSTS),
+    ("wiki", "maintainer_command", WIKI_COSTS),
 )
 TRANSCRIBER = ("transcribe", "transcriber_command")
-COSTS = "ask needs it, search does not"
 # Transcribers that exist only for Apple Silicon. Named here because the platform
 # check is about the silicon, not about the tool: any other transcriber is
 # portable and this check has nothing to say about it.
@@ -99,12 +112,13 @@ def head(command: str) -> str:
     return words[0] if words else ""
 
 
-def seam_row(settings: dict, section: str, key: str, required: bool, unreadable) -> dict:
+def seam_row(settings: dict, section: str, key: str, costs: str | None, unreadable) -> dict:
     check = f"{section}.{key}"
+    required = costs is REQUIRED
     bad = FAIL if required else OPTIONAL
     command = setting(settings, section, key)
     if not command:
-        why = "nothing for `add` to run" if required else COSTS
+        why = "nothing for `add` to run" if required else costs
         return row(check, bad, f"{unreadable or f'not set in {CONFIG_NAME}'} — {why}")
     name = head(command)
     if name and shutil.which(name):
@@ -113,7 +127,7 @@ def seam_row(settings: dict, section: str, key: str, required: bool, unreadable)
         # absolute paths is a column nobody skims.
         return row(check, PASS, f"{name} on PATH")
     detail = f"{name}: not on PATH"
-    return row(check, bad, detail if required else f"{detail} — {COSTS}", missing=name)
+    return row(check, bad, detail if required else f"{detail} — {costs}", missing=name)
 
 
 def ffmpeg_row() -> dict:

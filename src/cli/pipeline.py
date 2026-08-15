@@ -16,6 +16,18 @@ habit and being an hour. `retranscribe` selects only what it could actually
 re-derive, so a library holding entries whose media was reclaimed still converges
 on a no-op instead of failing forever.
 
+After each video's chain succeeds, and before the sweep moves on, that id is
+filed into the wiki (SPEC-cli-009) — as each video completes rather than in one
+pass at the end, so an interrupted channel leaves a wiki that matches the part of
+the library it managed to build. The filing is `wiki file <id>` itself, at the
+component's boundary like every stage above it, and it is best-effort by
+specification: a rejected gate, a crashed maintainer or a seam nobody configured
+costs one note on stderr and nothing else. Not the exit code, not the summary's
+counts, not the sweep, and nothing on stdout at all. The video is downloaded,
+transcribed, rendered and indexed — which is what `add` was asked for and what
+cost the bandwidth — and a page that did not get written is a `tapedeck wiki
+sync` away at any later moment.
+
 Every question about an entry is asked of the component that owns the answer
 (LESSON-0003): whether a name is a video id and whether the media is really there
 are ingest's, and the model label supersession is judged on is transcribe's.
@@ -24,14 +36,15 @@ are ingest's, and the model label supersession is judged on is transcribe's.
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
 import ingest
 from transcribe.transcriber import seam
 
-from . import Failure, Usage, components
-from .home import ARCHIVE, LIBRARY
+from . import Failure, Usage, components, doctor
+from .home import ARCHIVE, AUTO_FILE_DEFAULT, LIBRARY, WIKI
 
 # Names pinned by system/contracts/library-layout.md, which the cli reads as
 # directly as any other component does.
@@ -39,6 +52,9 @@ META_NAME = "meta.json"
 TRANSCRIPT_NAME = "transcript.json"
 
 CHAIN = (("transcribe", ["run"]), ("archive", ["render"]), ("index", ["update"]))
+
+AUTO_KEY = "auto"
+MAINTAINER_KEY = "maintainer_command"
 
 
 def entry_of(home: Path, video_id: str) -> Path:
@@ -79,6 +95,57 @@ def complete(home: Path, video_id: str) -> bool:
     )
 
 
+def auto_filing(home: Path) -> bool:
+    """`[wiki] auto`, where an absent key reads exactly what the first-run
+    scaffold writes down (SPEC-cli-009). One default, in one place: a config
+    written before the key existed must not mean the opposite of the shipped
+    file. Anything that is not a boolean is not an answer to this question, so
+    it reads as the default too."""
+    settings, _ = doctor.config(home)
+    section = settings.get(WIKI)
+    value = section.get(AUTO_KEY) if isinstance(section, dict) else None
+    return value if isinstance(value, bool) else AUTO_FILE_DEFAULT
+
+
+def seam_note(home: Path) -> str:
+    """Where the failure was the seam, say the seam — a note that only says
+    something went wrong sends the user searching a library that is complete."""
+    settings, _ = doctor.config(home)
+    command = doctor.setting(settings, WIKI, MAINTAINER_KEY)
+    if not command:
+        return f"[{WIKI}].{MAINTAINER_KEY} is not set in config.toml"
+    tool = doctor.head(command)
+    if tool and not shutil.which(tool):
+        return f"[{WIKI}].{MAINTAINER_KEY} names {tool}, which is not on PATH"
+    return ""
+
+
+def file_into_wiki(home: Path, video_id: str) -> None:
+    """The epilogue. With `auto = false` it does not happen at all — no
+    maintainer, no note, no mention of a wiki — because silence is the whole
+    content of that request.
+
+    Nothing below can raise into `add`. Best-effort is the specification, and a
+    filing that could not even be attempted is the same kind of nothing as one
+    the gate refused: a note, and the sweep goes on."""
+    if not auto_filing(home):
+        return
+    try:
+        code = components.stage(WIKI, ["file", video_id], home)
+        reason = f"wiki exited {code}" if code else ""
+    except OSError as exc:
+        reason = f"the wiki component could not be run — {exc}"
+    if not reason:
+        return
+    seam = seam_note(home)
+    print(
+        f"note: the wiki filing for {video_id} failed ({reason}"
+        f"{f'; {seam}' if seam else ''}) — the video itself is added, transcribed, "
+        f"archived and indexed; `tapedeck wiki sync` files it whenever you like",
+        file=sys.stderr,
+    )
+
+
 def expand(home: Path, url: str) -> list[str]:
     """The video ids a collection URL names, in the collection's own order."""
     code, listing = components.capture("ingest", ["expand", url], home)
@@ -114,6 +181,8 @@ def sweep(home: Path, ids, *, skip_complete: bool, force: bool = False) -> int:
         except Failure as exc:
             failed += 1
             print(f"error: {exc}", file=sys.stderr)
+            continue
+        file_into_wiki(home, video_id)
     print(f"{added} added, {skipped} already present, {failed} failed")
     return 1 if failed else 0
 

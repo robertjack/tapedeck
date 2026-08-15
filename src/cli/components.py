@@ -1,10 +1,10 @@
 """How the cli talks to the components that own the library's paths.
 
 Each component is a module CLI — `python -m ingest add`, `python -m transcribe
-run`, `python -m archive render`, `python -m index update`, `python -m ask run` —
-and the cli drives exactly that boundary, the same one each component's own
-durable evaluations use. Nothing here reaches past it into an internal the
-component never promised to keep.
+run`, `python -m archive render`, `python -m index update`, `python -m ask run`,
+`python -m wiki file` — and the cli drives exactly that boundary, the same one
+each component's own durable evaluations use. Nothing here reaches past it into
+an internal the component never promised to keep.
 
 The resolved home travels in the environment because the cli is the sole
 authority on where the library is (SPEC-cli-001); a child left to work out its
@@ -13,10 +13,10 @@ own default could find a different one.
 Three ways to run a child, and the difference is whose answer stdout carries.
 A `stage` is one link of the derivation chain: its stdout is the path it just
 wrote — progress, not the answer — so it is folded into our stderr, leaving
-`add`'s stdout for the summary alone. `passthrough` is for the read-only verbs
-the cli delegates whole; there the component's stdout *is* the answer and its
-exit code is ours. `capture` is for the one case where the cli reads a
-component's output itself: the ids in a collection.
+`add`'s stdout for the summary alone. `passthrough` is for the verbs the cli
+delegates whole; there the component's stdout *is* the answer and its exit code
+is ours. `capture` is for the one case where the cli reads a component's output
+itself: the ids in a collection.
 """
 
 from __future__ import annotations
@@ -38,10 +38,15 @@ def _env(home: Path) -> dict:
     return {**os.environ, "TAPEDECK_HOME": str(home)}
 
 
-def stage(module: str, args, home: Path) -> int:
-    """One link of the chain. Its stdout joins our diagnostics on stderr."""
+def stage(module: str, args, home: Path, quiet: bool = False) -> int:
+    """One link of the chain. Its stdout joins our diagnostics on stderr — it is
+    the path the component just wrote, which is progress worth watching during a
+    long `add`. `quiet` drops it instead, for the calls where the cli has already
+    said what happened and the child's echo would only be a second, stranger
+    account of it."""
     sys.stderr.flush()
-    return subprocess.run(_argv(module, args), env=_env(home), stdout=STDERR_FD).returncode
+    where = subprocess.DEVNULL if quiet else STDERR_FD
+    return subprocess.run(_argv(module, args), env=_env(home), stdout=where).returncode
 
 
 def passthrough(module: str, args, home: Path) -> int:

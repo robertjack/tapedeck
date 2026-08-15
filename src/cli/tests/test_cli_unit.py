@@ -1,287 +1,254 @@
-"""Ephemeral unit tests for the cli's pure parts.
-
-The durable evaluations under system/evals/cli drive the executable; these poke
-at the pieces that are awkward to reach from there — the TOML the scaffold
-writes, the head-executable rule, the report's column, the wizard's remedy
-lookup, the tour's length.
+"""Ephemeral unit tests for the cli component — disposable, and deliberately at
+the seams the durable evals reach only through a subprocess: the scaffolded
+config as data, the `[wiki] auto` default, the routing decision `main` makes
+before argparse ever sees the argv, and doctor's row-building.
 """
 
-import platform
 import shlex
-import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 
-from cli import Usage, doctor, home, setup, teach, views
-from cli.main import build_parser
+from cli import doctor, home, main, pipeline, teach, views
+from wiki.seams import DEFAULT_MAINTAINER_COMMAND
 
-MISSING = "no-such-tool-in-this-test"
-
-
-# --- home: the file the cli owns ---------------------------------------------
+MISSING = "cli-unit-no-such-tool-91f2"
 
 
-def test_config_text_is_valid_toml_with_every_seam():
-    config = tomllib.loads(home.config_text())
-    assert config["ingest"]["fetcher_command"].startswith("yt-dlp")
-    assert config["ingest"]["lister_command"].startswith("yt-dlp")
-    assert config["transcribe"]["transcriber_command"].startswith("mlx_whisper")
-    assert config["transcribe"]["model"] == "mlx-whisper/large-v3-turbo"
-    assert config["ask"]["librarian_command"].startswith("claude")
-    assert config["ask"]["answerer_command"].startswith("claude")
+# --- the first-run config ------------------------------------------------------
 
 
-def test_config_text_documents_the_parakeet_alternative_as_a_comment():
-    config = tomllib.loads(home.config_text())
-    assert "parakeet" not in config["transcribe"]["transcriber_command"]
-    assert "adapt-parakeet" in home.config_text(), "the alternative must be visible"
+@pytest.fixture
+def config():
+    return tomllib.loads(home.config_text())
 
 
-def test_the_shipped_remedy_table_reaches_every_tool_the_seams_name():
-    config = tomllib.loads(home.config_text())
-    table = config["setup"]["remedy"]
+def test_the_scaffold_is_valid_toml_with_every_section(config):
+    assert set(config) >= {"ingest", "transcribe", "ask", "wiki", "setup"}
+
+
+def test_every_seam_doctor_checks_is_written_into_the_scaffold(config):
+    for section, key, _ in doctor.SEAMS:
+        assert isinstance(config[section][key], str) and config[section][key].strip(), (
+            f"{section}.{key} is checked but never scaffolded"
+        )
+
+
+def test_the_wiki_seam_is_the_components_published_default(config):
+    assert config["wiki"]["maintainer_command"] == DEFAULT_MAINTAINER_COMMAND
+
+
+def test_auto_filing_ships_on_and_the_code_agrees_with_the_file(config):
+    assert config["wiki"]["auto"] is home.AUTO_FILE_DEFAULT is True
+
+
+def test_every_shipped_seam_head_has_a_remedy(config):
     heads = {"ffmpeg"}
-    for section in ("ingest", "transcribe", "ask"):
-        heads |= {
-            shlex.split(value)[0]
-            for key, value in config[section].items()
-            if key.endswith("_command")
-        }
-    assert not heads - set(table), "a fresh install must always be told what to do next"
-    assert table["parakeet-mlx"].startswith("uv tool install")
+    for section in ("ingest", "transcribe", "ask", "wiki"):
+        for key, value in config[section].items():
+            if key.endswith("_command"):
+                heads.add(shlex.split(value)[0])
+    assert not heads - set(config["setup"]["remedy"])
 
 
-def test_toml_literal_keeps_double_quotes_untouched():
-    value = 'yt-dlp -f "bv*[vcodec^=avc1]" -o "$DEST/video.%(ext)s"'
-    assert tomllib.loads(f"x = {home._toml(value)}")["x"] == value
+def test_the_scaffold_never_rewrites_what_is_already_there(tmp_path):
+    deck = home.scaffold(tmp_path / "deck")
+    (deck / home.CONFIG_NAME).write_text("# mine now\n")
+    home.scaffold(deck)
+    assert (deck / home.CONFIG_NAME).read_text() == "# mine now\n"
 
 
-def test_toml_falls_back_to_a_basic_string_when_a_quote_is_in_the_way():
-    value = "sh -c 'echo hi'"
-    assert tomllib.loads(f"x = {home._toml(value)}")["x"] == value
+# --- `[wiki] auto`: an absent key reads what the scaffold writes ----------------
 
 
-def test_default_home_is_visible_and_belongs_to_the_user(monkeypatch):
-    monkeypatch.delenv("TAPEDECK_HOME", raising=False)
-    monkeypatch.setenv("HOME", "/tmp/someone")
-    assert str(home.resolve()) == "/tmp/someone/Tapedeck"
+def write_config(home_dir: Path, text: str) -> Path:
+    home_dir.mkdir(parents=True, exist_ok=True)
+    (home_dir / home.CONFIG_NAME).write_text(text)
+    return home_dir
 
 
-def test_tapedeck_home_overrides_verbatim(monkeypatch, tmp_path):
-    monkeypatch.setenv("TAPEDECK_HOME", str(tmp_path / "elsewhere"))
-    assert home.resolve() == tmp_path / "elsewhere"
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("", True),
+        ("[wiki]\n", True),
+        ("[wiki]\nauto = true\n", True),
+        ("[wiki]\nauto = false\n", False),
+        ('[wiki]\nauto = "sometimes"\n', True),  # not a boolean, not an answer
+        ("[ingest]\nfetcher_command = 'yt-dlp'\n", True),
+        ("this is not toml at all [[[", True),
+    ],
+)
+def test_auto_filing_reads_the_switch(tmp_path, text, expected):
+    assert pipeline.auto_filing(write_config(tmp_path / "deck", text)) is expected
 
 
-def test_scaffold_never_rewrites_what_is_already_there(tmp_path):
-    home.scaffold(tmp_path)
-    (tmp_path / home.CONFIG_NAME).write_text("mine\n")
-    home.scaffold(tmp_path)
-    assert (tmp_path / home.CONFIG_NAME).read_text() == "mine\n"
-    assert (tmp_path / "library").is_dir() and (tmp_path / "archive").is_dir()
+def test_the_scaffolded_config_files_by_default(tmp_path):
+    assert pipeline.auto_filing(home.scaffold(tmp_path / "deck")) is True
 
 
-def test_the_brief_carries_the_grounding_rules():
-    assert "not in the library" in home.BRIEF
-    assert "cite" in home.BRIEF.lower()
+# --- the note a failed filing owes the user ------------------------------------
 
 
-# --- doctor -------------------------------------------------------------------
+def test_the_note_names_the_seam_when_there_is_none(tmp_path):
+    note = pipeline.seam_note(write_config(tmp_path / "deck", "[wiki]\n"))
+    assert "maintainer_command" in note and "not set" in note
 
 
-def test_head_is_the_first_shell_word():
-    assert doctor.head('yt-dlp -f "bv*[height<=1080]"') == "yt-dlp"
-    assert doctor.head("sh -c 'echo mine'") == "sh"
-    assert doctor.head("parakeet-mlx x && tapedeck adapt-parakeet") == "parakeet-mlx"
-    assert doctor.head("") == ""
+def test_the_note_names_an_unresolvable_maintainer(tmp_path):
+    deck = write_config(tmp_path / "deck", f"[wiki]\nmaintainer_command = '{MISSING} -p'\n")
+    assert MISSING in pipeline.seam_note(deck)
 
 
-def test_head_survives_a_template_the_shell_could_not_parse():
-    assert doctor.head("yt-dlp -o 'unbalanced") == "yt-dlp"
+def test_a_resolvable_maintainer_leaves_the_note_to_the_component(tmp_path):
+    deck = write_config(tmp_path / "deck", "[wiki]\nmaintainer_command = 'sh -c :'\n")
+    assert pipeline.seam_note(deck) == ""
 
 
-def test_a_seam_that_resolves_passes_without_naming_a_path():
-    row = doctor.seam_row({"ingest": {"fetcher_command": "sh -c :"}}, "ingest", "f", True, None)
-    assert row["status"] == doctor.PASS
-    assert row["missing"] is None
-    assert "/" not in row["detail"], "the pass reason is the name, not where it lives"
+def test_auto_false_never_reaches_the_component(tmp_path, monkeypatch):
+    ran = []
+    monkeypatch.setattr(pipeline.components, "stage", lambda *a, **k: ran.append(a) or 0)
+    pipeline.file_into_wiki(write_config(tmp_path / "deck", "[wiki]\nauto = false\n"), "abc")
+    assert ran == []
 
 
-def test_a_seam_that_cannot_resolve_carries_the_name_the_wizard_needs():
-    settings = {"transcribe": {"transcriber_command": f"{MISSING} --model large"}}
-    row = doctor.seam_row(settings, "transcribe", "transcriber_command", True, None)
-    assert row["status"] == doctor.FAIL
-    assert row["missing"] == MISSING and MISSING in row["detail"]
+def test_auto_true_files_at_the_components_boundary(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    def stage(module, args, where):
+        calls.append((module, args))
+        return 0
+
+    monkeypatch.setattr(pipeline.components, "stage", stage)
+    pipeline.file_into_wiki(write_config(tmp_path / "deck", ""), "dQw4w9WgXcQ")
+    assert calls == [("wiki", ["file", "dQw4w9WgXcQ"])]
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "", "a filing that worked says nothing"
 
 
-def test_an_optional_seam_never_reads_as_a_failure():
-    row = doctor.seam_row({"ask": {"librarian_command": MISSING}}, "ask", "l", False, None)
-    assert row["status"] == doctor.OPTIONAL
-    assert doctor.failed([row]) == []
-    assert "ask" in row["detail"] and "search" in row["detail"]
+def test_a_failed_filing_is_one_note_on_stderr_and_nothing_on_stdout(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(pipeline.components, "stage", lambda *a, **k: 1)
+    pipeline.file_into_wiki(write_config(tmp_path / "deck", "[wiki]\n"), "dQw4w9WgXcQ")
+    captured = capsys.readouterr()
+    assert captured.out == "", "nothing about the epilogue reaches add's stdout"
+    assert "wiki" in captured.err.lower() and "dQw4w9WgXcQ" in captured.err
+    assert "maintainer_command" in captured.err
+    assert len([ln for ln in captured.err.splitlines() if ln.strip()]) == 1
 
 
-def test_public_rows_are_exactly_what_the_surface_promises():
-    rows = doctor.public([doctor.row("x", doctor.PASS, "fine", missing="hidden")])
-    assert rows == [{"check": "x", "status": doctor.PASS, "detail": "fine"}]
+# --- doctor: the seams decide the checks ---------------------------------------
 
 
-def test_the_report_puts_every_status_in_one_column():
-    rows = [doctor.row("a.long.check", doctor.FAIL, "why"), doctor.row("b", doctor.PASS, "fine")]
-    columns = {line.index(item["status"]) for item, line in zip(rows, doctor.report(rows).splitlines())}
-    assert len(columns) == 1
-
-
-def test_the_platform_check_only_objects_to_mlx_on_the_wrong_silicon():
-    assert doctor.platform_row("whisper-cpp --model x")["status"] == doctor.PASS
-    here = sys.platform == "darwin" and platform.machine() == "arm64"
-    row = doctor.platform_row("mlx_whisper --model turbo")
-    assert row["status"] == (doctor.PASS if here else doctor.FAIL)
-
-
-# --- setup: the wizard --------------------------------------------------------
-
-
-def write_config(tmp_path, body):
-    (tmp_path / home.CONFIG_NAME).write_text(body)
-    return tmp_path
-
-
-def test_a_config_remedy_overrides_the_shipped_one_and_the_rest_survive(tmp_path):
-    write_config(tmp_path, "[setup]\nremedy.ffmpeg = 'port install ffmpeg'\n")
-    table = setup.remedies(tmp_path)
-    assert table["ffmpeg"] == "port install ffmpeg", "the user's line wins"
-    assert table["yt-dlp"] == home.DEFAULT_REMEDIES["yt-dlp"], "the rest are still known"
-
-
-def test_a_home_with_no_setup_table_still_knows_the_shipped_remedies(tmp_path):
-    assert setup.remedies(tmp_path) == home.DEFAULT_REMEDIES
-
-
-def test_the_consented_commands_are_the_required_ones_in_report_order(tmp_path):
-    rows = [
-        doctor.row("ingest.fetcher_command", doctor.FAIL, "...", missing="yt-dlp"),
-        doctor.row("ingest.lister_command", doctor.FAIL, "...", missing="yt-dlp"),
-        doctor.row("ask.librarian_command", doctor.OPTIONAL, "...", missing="claude"),
-        doctor.row("ffmpeg", doctor.FAIL, "...", missing="ffmpeg"),
-        doctor.row("home", doctor.FAIL, "not writable"),
+def test_the_checks_are_emitted_in_the_pinned_order(tmp_path):
+    rows = doctor.diagnose(home.scaffold(tmp_path / "deck"))
+    assert [row["check"] for row in rows] == [
+        "ingest.fetcher_command",
+        "ingest.lister_command",
+        "transcribe.transcriber_command",
+        "ask.librarian_command",
+        "ask.answerer_command",
+        "wiki.maintainer_command",
+        "ffmpeg",
+        "home",
+        "fts5",
+        "platform",
     ]
-    assert setup.commands(rows, home.DEFAULT_REMEDIES) == [
-        "brew install yt-dlp",
-        "brew install ffmpeg",
-    ], "one entry per remedy, in the printed order, and never an optional one"
 
 
-def test_a_required_gap_with_nothing_to_install_says_so():
-    row = doctor.row("home", doctor.FAIL, "not writable")
-    assert setup.fix(row, home.DEFAULT_REMEDIES) == setup.NOT_AN_INSTALL
-
-
-def test_a_missing_tool_the_table_never_heard_of_is_named_honestly():
-    row = doctor.row("ingest.fetcher_command", doctor.FAIL, "...", missing=MISSING)
-    fix = setup.fix(row, home.DEFAULT_REMEDIES)
-    assert MISSING in fix and "no remedy" in fix
-
-
-def test_homebrew_is_only_mentioned_when_a_brew_remedy_needs_it(monkeypatch, capsys):
-    monkeypatch.setattr(setup.shutil, "which", lambda name: None)
-    assert setup.homebrew_gate(["brew install yt-dlp"]) is True
-    out = capsys.readouterr().out
-    assert "Homebrew" in out and "brew.sh" in out
-
-    monkeypatch.setattr(setup.shutil, "which", lambda name: "/somewhere/" + name)
-    assert setup.homebrew_gate(["brew install yt-dlp"]) is False
-    assert setup.homebrew_gate(["uv tool install mlx-whisper"]) is False
-    assert capsys.readouterr().out == "", "brew is here; saying so is noise"
-
-
-def test_the_optional_block_lists_each_tool_once_and_never_as_a_gap(capsys):
-    rows = [
-        doctor.row("ask.librarian_command", doctor.OPTIONAL, "...", missing="claude"),
-        doctor.row("ask.answerer_command", doctor.OPTIONAL, "...", missing="claude"),
-    ]
-    setup.optional(rows, home.DEFAULT_REMEDIES)
-    out = capsys.readouterr().out
-    assert out.count("claude ") + out.count("claude\n") >= 1
-    assert out.count(home.DEFAULT_REMEDIES["claude"]) == 1
-    assert "never installs them" in out
-
-
-def test_the_model_note_names_a_size_only_where_tapedeck_knows_one(tmp_path, capsys):
-    rows = [doctor.row("transcribe.transcriber_command", doctor.PASS, "parakeet-mlx on PATH")]
-    write_config(tmp_path, "[transcribe]\ntranscriber_command = 'parakeet-mlx --json'\n")
-    setup.model_note(rows, tmp_path)
-    assert "~2.4GB" in capsys.readouterr().out
-
-    write_config(tmp_path, "[transcribe]\ntranscriber_command = 'whisper-cpp'\n")
-    setup.model_note(rows, tmp_path)
-    note = capsys.readouterr().out
-    assert "first transcription" in note and "~" not in note
-
-
-def test_no_note_at_all_when_the_transcriber_is_not_installed(tmp_path, capsys):
-    rows = [doctor.row("transcribe.transcriber_command", doctor.FAIL, "gone", missing="x")]
-    setup.model_note(rows, tmp_path)
-    assert capsys.readouterr().out == ""
-
-
-def test_the_verdict_agrees_with_the_report(capsys):
-    assert setup.verdict([doctor.row("home", doctor.PASS, "fine")], advise=True) == 0
-    assert "ready" in capsys.readouterr().out.lower()
-    broken = [doctor.row("ffmpeg", doctor.FAIL, "gone", missing="ffmpeg")]
-    assert setup.verdict(broken, advise=True) == 1
-    assert "--yes" in capsys.readouterr().out
-    assert setup.verdict(broken, advise=False) == 1
-    assert "--yes" not in capsys.readouterr().out, "past the offer once it has been taken"
-
-
-def test_setup_without_yes_runs_nothing_and_exits_on_the_gaps(tmp_path, monkeypatch, capsys):
-    def refuse(*args, **kwargs):  # nothing may reach a shell without --yes
-        raise AssertionError("setup executed a command without consent")
-
-    monkeypatch.setattr(setup.subprocess, "run", refuse)
-    write_config(
-        tmp_path,
-        "[ingest]\n"
-        f"fetcher_command = '{MISSING}'\n"
-        "lister_command = 'sh -c :'\n"
-        "[transcribe]\ntranscriber_command = 'sh -c :'\n"
-        f"[setup]\nremedy.{MISSING} = 'install-it-somehow'\n",
+def test_an_optional_seam_never_reaches_the_failed_list(tmp_path):
+    deck = write_config(
+        tmp_path / "deck",
+        f"[ask]\nlibrarian_command = '{MISSING}'\n\n[wiki]\nmaintainer_command = '{MISSING}'\n",
     )
-    assert setup.run(tmp_path, yes=False) == 1
+    diagnosis = doctor.diagnose(deck)
+    rows = {row["check"]: row for row in diagnosis}
+    for check in ("ask.librarian_command", "wiki.maintainer_command"):
+        assert rows[check]["status"] == doctor.OPTIONAL
+        assert rows[check]["missing"] == MISSING
+    broken = [row["check"] for row in doctor.failed(diagnosis)]
+    assert "ask.librarian_command" not in broken and "wiki.maintainer_command" not in broken
+
+
+def test_the_wiki_reason_says_what_its_absence_costs(tmp_path):
+    rows = {row["check"]: row for row in doctor.diagnose(write_config(tmp_path / "deck", ""))}
+    detail = rows["wiki.maintainer_command"]["detail"].lower()
+    assert "wiki" in detail and "add" in detail
+
+
+def test_the_public_rows_carry_only_the_promised_keys(tmp_path):
+    for row in doctor.public(doctor.diagnose(home.scaffold(tmp_path / "deck"))):
+        assert set(row) == {"check", "status", "detail"}
+
+
+# --- routing: everything after `wiki` is the component's -----------------------
+
+
+def test_the_group_is_handed_over_whole(tmp_path, monkeypatch):
+    handed = {}
+
+    def passthrough(module, args, where):
+        handed.update(module=module, args=args)
+        return 7
+
+    monkeypatch.setenv("TAPEDECK_HOME", str(tmp_path / "deck"))
+    monkeypatch.setattr(main.components, "passthrough", passthrough)
+    code = main.main(["wiki", "lint", "--json", "--anything-it-grows-tomorrow"])
+    assert code == 7, "the child's exit code is tapedeck's"
+    assert handed == {
+        "module": "wiki",
+        "args": ["lint", "--json", "--anything-it-grows-tomorrow"],
+    }
+
+
+def test_even_help_belongs_to_the_component(tmp_path, monkeypatch):
+    handed = {}
+    monkeypatch.setenv("TAPEDECK_HOME", str(tmp_path / "deck"))
+    monkeypatch.setattr(
+        main.components,
+        "passthrough",
+        lambda module, args, where: handed.setdefault("args", args) and 0,
+    )
+    main.main(["wiki", "--help"])
+    assert handed["args"] == ["--help"]
+
+
+def test_routing_does_not_hijack_the_word_elsewhere(tmp_path, monkeypatch):
+    monkeypatch.setenv("TAPEDECK_HOME", str(tmp_path / "deck"))
+    monkeypatch.setattr(
+        main.components, "passthrough", lambda *a, **k: pytest.fail("routed a non-wiki verb")
+    )
+    assert main.main(["show", "wiki"]) == 2  # not a video id: a usage error
+
+
+def test_the_surface_is_exactly_the_contracts(tmp_path):
+    _, verbs = main.build_parser()
+    assert set(verbs) == {
+        "add", "search", "ask", "list", "show", "reindex", "rm", "retranscribe",
+        "wiki", "adapt-parakeet", "doctor", "setup", "help",
+    }
+
+
+def test_every_verb_has_a_worked_example():
+    _, verbs = main.build_parser()
+    assert set(verbs) <= set(teach.EXAMPLES)
+
+
+def test_help_wiki_names_the_group_and_its_subverbs(capsys):
+    _, verbs = main.build_parser()
+    teach.teach("wiki", verbs)
     out = capsys.readouterr().out
-    assert str(tmp_path) in out, "the resolved home is visible before anything else"
-    assert "install-it-somehow" in out
+    assert "usage:" in out and "tapedeck wiki" in out
+    for sub in ("file", "sync", "lint", "rebuild"):
+        assert sub in out
 
 
-# --- the surface --------------------------------------------------------------
+# --- rm's one question of the wiki ---------------------------------------------
 
 
-def test_every_verb_on_the_surface_has_a_worked_example():
-    _, verbs = build_parser()
-    assert set(verbs) - set(teach.EXAMPLES) == set()
-
-
-def test_setup_takes_yes_and_nothing_else():
-    parser, _ = build_parser()
-    assert parser.parse_args(["setup"]).yes is False
-    assert parser.parse_args(["setup", "--yes"]).yes is True
-
-
-def test_the_tour_is_one_screen_and_names_the_new_machine_verb():
-    text = teach.tour()
-    assert len(text.splitlines()) <= 45
-    assert "tapedeck setup" in text
-    assert "dev/storage/tapedeck" not in text
-
-
-def test_an_unknown_help_topic_names_what_is_known():
-    _, verbs = build_parser()
-    with pytest.raises(Usage) as caught:
-        teach.teach("bogus", verbs)
-    assert "manual" in str(caught.value) and "setup" in str(caught.value)
-
-
-def test_an_id_that_is_not_in_the_library_is_a_usage_error(tmp_path):
-    with pytest.raises(Usage):
-        views.known(tmp_path, "nosuchvid00")
+def test_the_filed_marker_is_the_path_the_contract_publishes(tmp_path):
+    assert views.filed_page(tmp_path, "dQw4w9WgXcQ") == (
+        tmp_path / "wiki" / "sources" / "dQw4w9WgXcQ.md"
+    )

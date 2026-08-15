@@ -1,6 +1,6 @@
 """The tapedeck surface: the verbs, the global options, and the exit codes.
 
-SPEC-cli-001 and system/contracts/cli-surface.md. The twelve verbs here are the
+SPEC-cli-001 and system/contracts/cli-surface.md. The thirteen verbs here are the
 whole of it; adding one is a durable-layer change requiring a new clause, so the
 parser below is deliberately a flat, boring list rather than anything that could
 grow a verb by accident.
@@ -11,6 +11,13 @@ from the installed distribution's own metadata, before any library work at all
 must not depend on this machine's layout or on any external tool. Then
 `$TAPEDECK_HOME` is resolved and scaffolded, because every remaining verb needs a
 home and a first run should not be a chore.
+
+`wiki` is the one verb this parser does not parse. It is a group, and SPEC-cli-009
+hands it over whole: everything after the word goes to `python -m wiki` untouched,
+including `--help`, so the wiki's own surface has exactly one copy of itself and
+a flag it grows tomorrow reaches the installed tapedeck with no code here. The
+subparser registered for it exists so `tapedeck --help` lists the verb and
+`tapedeck help wiki` has a usage to quote — never to inspect what the user typed.
 
 Exit codes are the contract's: 0 success, 1 the operation failed, 2 the asking
 was wrong. Human output goes to stdout, diagnostics and progress to stderr.
@@ -30,6 +37,7 @@ from . import Failure, Usage, components, doctor, home, pipeline, setup, teach, 
 DIST = "tapedeck"
 DESCRIPTION = "A local video brain: download, transcribe, archive, ask."
 EPILOG = "`tapedeck help` is a tour; `tapedeck help manual` is the whole manual."
+WIKI = "wiki"
 
 USAGE_ERRORS = (Usage, ingest.BadRequest, TranscribeConfigError)
 FAILURES = (Failure, OSError)
@@ -85,6 +93,14 @@ def build_parser() -> tuple[argparse.ArgumentParser, dict]:
     redoing = verb("retranscribe", "re-derive every transcript a newer model has superseded")
     redoing.add_argument("--dry-run", action="store_true", help="list what would be redone")
 
+    routing = verb(WIKI, "the prose layer: file, sync, lint or rebuild the wiki")
+    routing.add_argument(
+        "args",
+        nargs=argparse.REMAINDER,
+        metavar="...",
+        help="handed to the wiki component untouched — `tapedeck wiki --help` is its own usage",
+    )
+
     verb("adapt-parakeet", "stdin to stdout: parakeet JSON into the whisper shape")
 
     checking = verb("doctor", "check the seams, the tools and this machine; change nothing")
@@ -135,6 +151,8 @@ def dispatch(args, deck, verbs) -> int:
         return views.remove(deck, args.video_id, args.media_only)
     if args.verb == "retranscribe":
         return pipeline.retranscribe(deck, args.dry_run)
+    if args.verb == WIKI:  # only reachable if the routing above ever stops firing
+        return components.passthrough(WIKI, args.args, deck)
     if args.verb == "adapt-parakeet":
         # transcribe owns the filter; the cli only puts it on the installed
         # surface, so the published parakeet seam works wherever tapedeck does
@@ -148,7 +166,18 @@ def dispatch(args, deck, verbs) -> int:
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser, verbs = build_parser()
+
+    if argv[:1] == [WIKI]:
+        # Routed before parsing, so nothing here reads, validates, reorders or
+        # rewords a single word of the wiki's surface (SPEC-cli-009).
+        try:
+            deck = prepared(WIKI)
+        except OSError as exc:
+            return _report(exc, 1)
+        return components.passthrough(WIKI, argv[1:], deck)
+
     args = parser.parse_args(argv)
     if args.version:
         return report_version()
@@ -157,20 +186,25 @@ def main(argv=None) -> int:
         print("error: a verb is required — `tapedeck help` for a tour", file=sys.stderr)
         return 2
 
-    deck = home.resolve()
     try:
-        home.scaffold(deck)
-    except OSError as exc:
-        if args.verb not in DIAGNOSTIC:
-            return _report(exc, 1)
-        print(f"warning: could not prepare {deck} — {exc}", file=sys.stderr)
-
-    try:
-        return dispatch(args, deck, verbs)
+        return dispatch(args, prepared(args.verb), verbs)
     except USAGE_ERRORS as exc:
         return _report(exc, 2)
     except FAILURES as exc:
         return _report(exc, 1)
+
+
+def prepared(verb: str):
+    """The resolved home, scaffolded — the first-run courtesy every verb performs
+    and none of them repeats."""
+    deck = home.resolve()
+    try:
+        home.scaffold(deck)
+    except OSError as exc:
+        if verb not in DIAGNOSTIC:
+            raise
+        print(f"warning: could not prepare {deck} — {exc}", file=sys.stderr)
+    return deck
 
 
 def _report(exc, code: int) -> int:

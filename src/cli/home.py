@@ -16,6 +16,14 @@ written in beside the whisper default as a comment, exactly as
 SPEC-transcribe-002 publishes it: proof that changing transcriber is an edit to
 this file and not to tapedeck.
 
+`[wiki] auto` is the one switch here that no component publishes, and the
+scaffold writes it down rather than leaving it to be inferred (SPEC-cli-009).
+There is one default for it, `AUTO_FILE_DEFAULT`, and both readers use it: the
+line this file writes and the code in `pipeline` that reads a config which does
+not carry the key. Two defaults for one question would mean a user getting
+different behaviour from the same tool depending on the age of a file they never
+edited.
+
 The one table here that no other component publishes is `[setup]`: what to run to
 install a tool that is missing (SPEC-cli-008). It is a seam like the rest — keyed
 by executable name, one line per tool — and it is the cli's own because no
@@ -36,6 +44,7 @@ from transcribe import (
     PARAKEET_MODEL,
     PARAKEET_TRANSCRIBER_COMMAND,
 )
+from wiki.seams import DEFAULT_MAINTAINER_COMMAND
 
 DEFAULT_HOME = "~/Tapedeck"
 CONFIG_NAME = "config.toml"
@@ -44,12 +53,22 @@ BRIEF_NAME = "CLAUDE.md"
 # other components; the cli only guarantees they exist.
 LIBRARY = "library"
 ARCHIVE = "archive"
+# The wiki is wiki's to write and the user's to keep — the cli neither scaffolds
+# it nor edits it. These two names are here for the single question
+# contracts/wiki-layout.md publishes to the rest of tapedeck: does
+# `wiki/sources/<id>.md` exist, which is the filed-state marker `rm` asks about.
+WIKI = "wiki"
+WIKI_SOURCES = "sources"
+
+# Auto-filing ships on (SPEC-cli-009). The scaffold below writes this value out,
+# and pipeline reads it when a config.toml has no `[wiki] auto` line at all.
+AUTO_FILE_DEFAULT = True
 
 # The shipped remedy table: every executable the seam defaults above name, plus
 # ffmpeg, so a fresh install can always be told what to do next. Written into the
 # first-run config.toml, where a user who installs by MacPorts, pip or tarball
 # edits the line and `setup --yes` runs theirs instead. `claude` is a pointer
-# rather than a command: the [ask] seams are optional and setup never installs
+# rather than a command: the seams it fills are optional and setup never installs
 # them, so what a user needs there is where to read, not what to run.
 DEFAULT_REMEDIES = {
     "yt-dlp": "brew install yt-dlp",
@@ -148,6 +167,21 @@ librarian_command = {_toml(DEFAULT_LIBRARIAN_COMMAND)}
 # The `ask --fast` answerer: numbered excerpts on stdin, prose on stdout.
 # tapedeck assembles the Sources section itself, never the answerer.
 answerer_command = {_toml(DEFAULT_ANSWERER_COMMAND)}
+
+[wiki]
+# The agent that writes the prose layer at wiki/. It runs with the wiki as its
+# working directory, the filing task on stdin, and $TAPEDECK_VIDEO_ID plus
+# $TAPEDECK_ARCHIVE_PAGE in its environment. Nothing it writes is taken on
+# trust: the whole wiki is checked afterwards and the filing is committed or
+# rolled back entire. What a page should say is wiki/CLAUDE.md's business — the
+# brief is scaffolded once and is then yours.
+maintainer_command = {_toml(DEFAULT_MAINTAINER_COMMAND)}
+
+# File each video into the wiki as `tapedeck add` finishes it. The filing is an
+# epilogue and never a stage: if it fails, `add` says so on stderr and is
+# otherwise the command it always was — same exit code, same counts, same sweep.
+# Set this to false and `add` never touches the wiki at all.
+auto = {'true' if AUTO_FILE_DEFAULT else 'false'}
 
 [setup]
 # What `tapedeck setup` prints when a tool above is missing, keyed by the
