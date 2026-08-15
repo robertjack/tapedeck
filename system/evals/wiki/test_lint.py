@@ -69,12 +69,18 @@ def test_a_clean_wiki_passes_every_failable_check_in_order_and_stays_read_only(
     wiki = filed(home, monkeypatch)  # FILED is filed; NEXT sits eligible, unfiled
     set_maintainer(home, MUST_NOT_RUN)
     before_subjects, before_snapshot = subjects(wiki), snapshot(wiki)
-    # lint reads the library to judge the wiki; it writes nowhere in the home
-    outside = {
-        str(p.relative_to(home)): p.read_bytes()
-        for p in sorted(home.rglob("*"))
-        if p.is_file() and wiki not in p.parents
-    }
+    # lint reads the library to judge the wiki; it never writes the library's own
+    # surfaces. (Only those four — the home also holds fixture bookkeeping like the
+    # fake ask's call log, which a correct citations check legitimately grows.)
+    def outside_wiki():
+        return {
+            str(p.relative_to(home)): p.read_bytes()
+            for surface in ("library", "archive", "tapedeck.db", "config.toml")
+            for p in sorted(home.joinpath(surface).rglob("*")) or [home / surface]
+            if p.is_file()
+        }
+
+    outside = outside_wiki()
 
     r, rows = lint(home)
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
@@ -93,11 +99,7 @@ def test_a_clean_wiki_passes_every_failable_check_in_order_and_stays_read_only(
     )
     assert subjects(wiki) == before_subjects, "a read-only pass committed something"
     assert snapshot(wiki) == before_snapshot, "a read-only pass wrote to the wiki"
-    assert {
-        str(p.relative_to(home)): p.read_bytes()
-        for p in sorted(home.rglob("*"))
-        if p.is_file() and wiki not in p.parents
-    } == outside, "a read-only pass wrote outside the wiki"
+    assert outside_wiki() == outside, "a read-only pass wrote the library's own surfaces"
 
 
 def test_unfiled_and_orphans_report_info_without_failing_the_run(home, monkeypatch):
