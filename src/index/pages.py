@@ -1,12 +1,13 @@
-"""The one input this component has: archive/<id>.md.
+"""The index's only input: the bytes of one archive page.
 
-The index is derived from archive pages alone (SPEC-index-001), so this module is
-the whole surface between the archive's render and our chunks — it turns a page's
-bytes into (video metadata, sections) and touches neither the library nor the
-database. Nothing here reads the clock, the environment, or the filesystem.
+`tapedeck.db` is derived from `archive/*.md` alone (SPEC-index-001), so this
+module is the whole seam between the archive's render and our rows — page text in,
+`Page` with its `Section`s out. Nothing here reads the filesystem, the clock or the
+environment, which is what makes a chunk a pure function of the page it came from
+and an incremental update indistinguishable from a full rebuild.
 
-The page shape is pinned by SPEC-archive-001: YAML frontmatter, then one
-`## [h:mm:ss](deep-link) Title` heading per section.
+The page shape is the one SPEC-archive-001 pins: YAML frontmatter, then one
+`## [h:mm:ss](deep-link) Title` heading per section, the title optional.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ HEADING = re.compile(r"^##[ \t]+\[(?P<stamp>[^\]]*)\]\((?P<link>[^)]*)\)[ \t]*(?
 LINK_SECONDS = re.compile(r"[?&]t=(\d+)s?(?:&|$)")
 STAMP = re.compile(r"(?:(\d+):)?(\d{1,2}):(\d{2})$")
 
-FRONTMATTER_FENCE = "---"
-# Escapes the renderer emits inside a double-quoted frontmatter scalar.
+FENCE = "---"
+# The escapes the renderer emits inside a double-quoted frontmatter scalar.
 UNESCAPE = {"\\": "\\", '"': '"', "n": "\n", "r": "\r", "t": "\t"}
 
 
@@ -50,6 +51,8 @@ class Section:
 
 @dataclass(frozen=True)
 class Page:
+    """One archive page: the video it describes, and its sections in order."""
+
     video_id: str
     title: str
     channel: str
@@ -60,28 +63,28 @@ class Page:
 
 
 def scalar(raw: str) -> str:
-    """Read back a frontmatter value the way the renderer wrote it."""
+    """Read a frontmatter value back the way the renderer wrote it."""
     text = raw.strip()
-    if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
-        out, body, i = [], text[1:-1], 0
-        while i < len(body):
-            if body[i] == "\\" and i + 1 < len(body):
-                out.append(UNESCAPE.get(body[i + 1], body[i + 1]))
-                i += 2
-            else:
-                out.append(body[i])
-                i += 1
-        return "".join(out)
-    return text
+    if len(text) < 2 or not (text.startswith('"') and text.endswith('"')):
+        return text
+    out, body, i = [], text[1:-1], 0
+    while i < len(body):
+        if body[i] == "\\" and i + 1 < len(body):
+            out.append(UNESCAPE.get(body[i + 1], body[i + 1]))
+            i += 2
+        else:
+            out.append(body[i])
+            i += 1
+    return "".join(out)
 
 
 def _frontmatter(lines: list[str]) -> tuple[dict, int]:
-    """Parse the leading `---` block; return its values and the body's first line."""
-    if not lines or lines[0].strip() != FRONTMATTER_FENCE:
+    """The leading `---` block's values, plus the line the body starts on."""
+    if not lines or lines[0].strip() != FENCE:
         return {}, 0
     meta = {}
     for i, line in enumerate(lines[1:], start=1):
-        if line.strip() == FRONTMATTER_FENCE:
+        if line.strip() == FENCE:
             return meta, i + 1
         key, sep, raw = line.partition(":")
         if sep and key.strip():
@@ -90,15 +93,15 @@ def _frontmatter(lines: list[str]) -> tuple[dict, int]:
 
 
 def _seconds(heading: re.Match) -> int | None:
-    """Section start: the deep link is authoritative, the stamp is the fallback."""
+    """Where a section starts: the deep link decides, the stamp is the fallback."""
     link = LINK_SECONDS.search(heading["link"])
     if link:
         return int(link[1])
     stamp = STAMP.match(heading["stamp"].strip())
-    if stamp:
-        hours, minutes, secs = stamp.groups()
-        return int(hours or 0) * 3600 + int(minutes) * 60 + int(secs)
-    return None
+    if not stamp:
+        return None
+    hours, minutes, secs = stamp.groups()
+    return int(hours or 0) * 3600 + int(minutes) * 60 + int(secs)
 
 
 def _prose(lines: list[str]) -> str:
@@ -123,31 +126,33 @@ def _duration(raw) -> int | None:
 def parse(text: str, stem: str | None = None) -> Page:
     """Parse one archive page. `stem` is the filename's id, when there is a file."""
     lines = text.splitlines()
-    meta, start = _frontmatter(lines)
+    meta, body = _frontmatter(lines)
 
     video_id = meta.get("id") or stem or ""
     if not VIDEO_ID.fullmatch(video_id):
         raise PageError(f"no usable video id (frontmatter id: {meta.get('id')!r})")
     if stem and video_id != stem:
-        # The page's own links are built from its frontmatter id, so a mismatch
+        # Every link on the page is built from the frontmatter id, so a mismatch
         # would index one video under another's name. Refuse rather than guess.
         raise PageError(f"frontmatter id {video_id!r} does not match the filename")
 
     sections: list[Section] = []
-    current: tuple[int, str] | None = None
+    open_section: tuple[int, str] | None = None
     buf: list[str] = []
-    for line in lines[start:]:
+    for line in lines[body:]:
         heading = HEADING.match(line)
         if heading is None:
             buf.append(line)
             continue
-        if current is not None:
-            sections.append(Section(current[0], current[1], _prose(buf)))
-        seconds = _seconds(heading)
+        if open_section is not None:
+            sections.append(Section(*open_section, _prose(buf)))
+        # Prose before the first heading is the page's byline, not a chunk; a
+        # heading whose start second is unreadable takes its text down with it.
+        start_s = _seconds(heading)
         buf = []
-        current = None if seconds is None else (seconds, heading["title"].strip())
-    if current is not None:
-        sections.append(Section(current[0], current[1], _prose(buf)))
+        open_section = None if start_s is None else (start_s, heading["title"].strip())
+    if open_section is not None:
+        sections.append(Section(*open_section, _prose(buf)))
 
     return Page(
         video_id=video_id,

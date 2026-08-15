@@ -20,7 +20,7 @@ from .pages import VIDEO_ID, Page, PageError, parse
 
 DEFAULT_HOME = "~/dev/storage/tapedeck"
 DEFAULT_K = 8
-REINDEX_HINT = "run `tapedeck reindex`"
+REINDEX_HINT = "run `tapedeck reindex` to rebuild it from archive/"
 
 
 class Failure(Exception):
@@ -44,7 +44,11 @@ def read_page(path: Path) -> Page:
 
 
 def reindex(home: Path) -> int:
-    """Rebuild tapedeck.db from archive/*.md alone — the whole database, always."""
+    """Rebuild tapedeck.db from archive/*.md alone — the whole database, always.
+
+    This is also the migration (SPEC-index-004): whatever is on disk, readable to
+    this build or not, is replaced by a database written and stamped by it.
+    """
     archive = home / "archive"
     pages, failed = [], 0
     if not archive.is_dir():
@@ -80,36 +84,18 @@ def update(home: Path, video_id: str) -> int:
         print(f"{video_id}: no archive page — dropping its rows", file=sys.stderr)
     try:
         target = store.replace_video(home, video_id, page)
-    except (store.Unusable, sqlite3.Error, OSError) as exc:
-        raise Failure(f"{video_id}: could not update the index — {exc}") from exc
-    if target is None:
-        # Nothing this build can use on disk yet — no database, or one stemmed by
-        # an older tokenizer. A full build covers this video too, and migrates.
-        return reindex(home)
-    print(target)
-    return 0
-
-
-def search(home: Path, query: str, limit: int, as_json: bool) -> int:
-    if limit < 1:
-        raise Failure(f"-k must be at least 1 (got {limit})", code=2)
-    try:
-        results = store.search(home, query, limit)
     except store.Unusable as exc:
-        raise Failure(f"{exc} — {REINDEX_HINT}") from exc
-    except sqlite3.OperationalError as exc:
-        # The query is sanitised before it reaches fts5, so this is a long shot —
-        # but a query fts5 refuses is the caller's problem, not the index's.
-        if "fts5" in str(exc):
-            raise Failure(f"{query!r} is not a query fts5 can run — {exc}", code=2) from exc
-        raise Failure(f"the index could not be read — {exc}; {REINDEX_HINT}") from exc
-    except sqlite3.Error as exc:
-        raise Failure(f"the index could not be read — {exc}; {REINDEX_HINT}") from exc
-    if as_json:
-        print(json.dumps(results, ensure_ascii=False, indent=2))
-        return 0
-    if results:
-        print("\n\n".join(_block(result) for result in results))
+        if exc.missing:
+            # There is no index yet, so there is nothing to update and nothing to
+            # be wrong about: a full build covers this video along with the rest.
+            return reindex(home)
+        # A database laid out by another schema is one this build would be
+        # guessing at, and writing into a guess is worse than reading one
+        # (SPEC-index-004). Rebuilding is the caller's move, not ours to take.
+        raise Failure(f"{video_id}: {exc} — {REINDEX_HINT}") from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise Failure(f"{video_id}: could not update the index — {exc}") from exc
+    print(target)
     return 0
 
 
@@ -123,6 +109,29 @@ def _block(result: dict) -> str:
         lines.append(f"    {result['excerpt']}")
     lines.append(f"    {result['url']}")
     return "\n".join(lines)
+
+
+def search(home: Path, query: str, limit: int, as_json: bool) -> int:
+    """Ranked matches, or silence — no results is an answer (SPEC-index-002)."""
+    if limit < 1:
+        raise Failure(f"-k must be at least 1 (got {limit})", code=2)
+    try:
+        results = store.search(home, query, limit)
+    except store.Unusable as exc:
+        raise Failure(f"{exc} — {REINDEX_HINT}") from exc
+    except sqlite3.OperationalError as exc:
+        # The query is made safe before it reaches fts5, so this is a long shot —
+        # but a query fts5 refuses is the caller's problem, not the index's.
+        if "fts5" in str(exc):
+            raise Failure(f"{query!r} is not a query fts5 can run — {exc}", code=2) from exc
+        raise Failure(f"the index could not be read — {exc}; {REINDEX_HINT}") from exc
+    except sqlite3.Error as exc:
+        raise Failure(f"the index could not be read — {exc}; {REINDEX_HINT}") from exc
+    if as_json:
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+    elif results:
+        print("\n\n".join(_block(result) for result in results))
+    return 0
 
 
 def main(argv=None) -> int:

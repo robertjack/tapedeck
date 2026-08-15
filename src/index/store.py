@@ -1,19 +1,19 @@
-"""tapedeck.db: the SQLite FTS5 index over archive-page sections.
+"""tapedeck.db: the database this component is the sole writer of.
 
-Sole writer of `$TAPEDECK_HOME/tapedeck.db` (library-layout write authority). The
-file is disposable by design — `build` writes a fresh database beside the old one
-and swaps it in, so an interrupted reindex leaves the previous index intact
-(SPEC-core-003) and never a half-built one.
+Two properties do the work here.
 
-The chunk index stems English through fts5's porter tokenizer over unicode61
-(SPEC-index-003), so "video" finds "videos" and "transcribe" finds "transcribing".
-Stemming happens at write time, so a database built under a different tokenizer
-answers different queries: `_open` refuses one, which turns every path that can
-rebuild into the migration — `reindex` outright, `update` by falling back to it.
+*Disposable.* `build` writes a fresh database beside the old one and swaps it in,
+so an interrupted rebuild leaves the previous index standing rather than a half
+one (SPEC-core-003), and the file is never the only copy of anything: every row
+comes from `archive/*.md` (SPEC-index-001).
 
-Ranking is bm25, ordered with explicit tie-breaks so that an incrementally
-updated database answers exactly like a fully rebuilt one (SPEC-index-001):
-insertion order — the one thing the two builds do not share — never leaks out.
+*Self-describing.* The database says which schema laid it out (`PRAGMA
+user_version`) and which tokenizer stemmed it (its own DDL), and `open_current`
+refuses anything else — a foreign database is not read wrongly, it is not read at
+all (SPEC-index-004). Only `build` is exempt, because rebuilding is the migration.
+
+Ranking is bm25 with explicit tie-breaks, so insertion order — the one thing a
+full rebuild and an incremental update do not share — never reaches the results.
 """
 
 from __future__ import annotations
@@ -28,6 +28,9 @@ from .pages import Page, deep_link, hms
 
 DB_NAME = "tapedeck.db"
 SCHEMA_VERSION = 2
+# Porter over unicode61, so morphological variants match (SPEC-index-003).
+# Stemming happens at write time: a database built under another tokenizer answers
+# different queries, which is why the DDL is checked alongside the version.
 TOKENIZE = "porter unicode61 remove_diacritics 2"
 
 SCHEMA = f"""
@@ -40,8 +43,9 @@ CREATE TABLE videos (
     duration_s  INTEGER
 );
 
--- One row per archive-page section (SPEC-index-001). The searchable text is the
--- section title and its prose; id and start seconds ride along to address it.
+-- One row per archive-page section (SPEC-index-001). The section title and its
+-- prose are what searching matches; the id and start second ride along unindexed
+-- so a hit can be addressed as a moment in a video.
 CREATE VIRTUAL TABLE chunks USING fts5(
     video_id UNINDEXED,
     start_s UNINDEXED,
@@ -71,7 +75,15 @@ WORDISH = re.compile(r"\w", re.UNICODE)
 
 
 class Unusable(RuntimeError):
-    """The database on disk cannot answer queries as it stands."""
+    """The database on disk is not one this build may read or write.
+
+    `missing` separates the two cases a caller answers differently: nothing there
+    yet (build it) from something there this build does not understand (refuse it).
+    """
+
+    def __init__(self, message, missing=False):
+        super().__init__(message)
+        self.missing = missing
 
 
 def db_path(home: Path) -> Path:
@@ -79,12 +91,13 @@ def db_path(home: Path) -> Path:
 
 
 def fts_query(text: str) -> str:
-    """Turn user words into a MATCH expression that cannot be a syntax error.
+    """User words as a MATCH expression that cannot be a syntax error.
 
     Every word becomes a phrase of its own, so punctuation a viewer would type
-    ("C++", "don't", "--force") can never be read as query syntax; double-quoted
-    groups stay phrases, and a trailing `*` still asks for a prefix match. The
-    tokenizer stems phrases on the way in, so quoting costs no morphology.
+    ("C++", "don't", "--force") is never read as query syntax; a double-quoted
+    group stays one phrase, and a trailing `*` still asks for a prefix match. The
+    words are ANDed: a searcher who typed three of them meant all three. Phrases
+    are stemmed on the way in, so quoting costs no morphology.
     """
     terms = []
     for raw in TERM.findall(text):
@@ -103,6 +116,8 @@ def _create(path: Path) -> sqlite3.Connection:
     db = sqlite3.connect(path)
     try:
         db.executescript(SCHEMA)
+        # Stamped in the same breath as the schema it describes, so no database
+        # this component writes is ever unlabelled (SPEC-index-004).
         db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     except sqlite3.OperationalError as exc:
         db.close()
@@ -112,34 +127,41 @@ def _create(path: Path) -> sqlite3.Connection:
     return db
 
 
-def _current(db: sqlite3.Connection) -> bool:
-    """Is this a database the running build both understands and searches like?"""
-    if db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
-        return False
-    ddl = db.execute("SELECT sql FROM sqlite_master WHERE name = 'chunks'").fetchone()
-    # Rows stemmed by another tokenizer are not rows this build can match against
-    # (SPEC-index-003) — read the tokenizer off the database rather than trust a
-    # version number to have been bumped.
-    return bool(ddl) and TOKENIZE in (ddl[0] or "")
+def open_current(path: Path) -> sqlite3.Connection:
+    """A handle on a database of exactly the shape this build writes, or nothing.
 
-
-def _open(path: Path) -> sqlite3.Connection | None:
-    """Open an existing database this build understands, else None (rebuild it)."""
+    The version alone would not be enough even if it were always bumped: rows
+    stemmed by another tokenizer answer different queries under the same number,
+    so the tokenizer is read off the database rather than assumed (SPEC-index-003).
+    """
     if not path.is_file():
-        return None
+        raise Unusable(f"no index at {path}", missing=True)
     db = None
     try:
         db = sqlite3.connect(path)
         db.row_factory = sqlite3.Row
-        if not _current(db):
-            raise sqlite3.DatabaseError("built by another schema or tokenizer")
-        db.execute("SELECT video_id FROM chunks LIMIT 1").fetchone()
-        db.execute("SELECT video_id FROM videos LIMIT 1").fetchone()
-    except sqlite3.Error:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        if version != SCHEMA_VERSION:
+            raise Unusable(
+                f"{path} was written by schema version {version}, and this build "
+                f"reads version {SCHEMA_VERSION}"
+            )
+        ddl = db.execute("SELECT sql FROM sqlite_master WHERE name = 'chunks'").fetchone()
+        if not ddl or TOKENIZE not in (ddl[0] or ""):
+            raise Unusable(f"{path} was stemmed by another tokenizer, not {TOKENIZE!r}")
+    except sqlite3.Error as exc:
         if db is not None:
             db.close()
-        return None
+        raise Unusable(f"{path} cannot be read as an index — {exc}") from exc
+    except Unusable:
+        db.close()
+        raise
     return db
+
+
+def _drop_video(db: sqlite3.Connection, video_id: str) -> None:
+    db.execute("DELETE FROM chunks WHERE video_id = ?", (video_id,))
+    db.execute("DELETE FROM videos WHERE video_id = ?", (video_id,))
 
 
 def _write_page(db: sqlite3.Connection, page: Page) -> None:
@@ -155,17 +177,12 @@ def _write_page(db: sqlite3.Connection, page: Page) -> None:
     )
 
 
-def _drop_video(db: sqlite3.Connection, video_id: str) -> None:
-    db.execute("DELETE FROM chunks WHERE video_id = ?", (video_id,))
-    db.execute("DELETE FROM videos WHERE video_id = ?", (video_id,))
-
-
 def build(home: Path, pages) -> Path:
-    """Rebuild the whole index from `pages`, replacing any database in place."""
+    """Rebuild the whole index from `pages`, replacing whatever is there."""
     home.mkdir(parents=True, exist_ok=True)
     target = db_path(home)
-    # Dotted temp name: a crashed build stays invisible and is never mistaken
-    # for the index itself.
+    # Dotted temp name: a crashed build stays invisible and is never mistaken for
+    # the index itself.
     tmp = home / f".{DB_NAME}.{os.getpid()}.tmp"
     tmp.unlink(missing_ok=True)
     try:
@@ -179,13 +196,14 @@ def build(home: Path, pages) -> Path:
     return target
 
 
-def replace_video(home: Path, video_id: str, page: Page | None) -> Path | None:
-    """Refresh one video's rows in place; None when there is no index to update."""
+def replace_video(home: Path, video_id: str, page: Page | None) -> Path:
+    """Bring one video's rows in line with its page — or drop them (page None).
+
+    The rows written are the rows `build` would have written for that page, which
+    is what makes an updated database answer like a rebuilt one (SPEC-index-001).
+    """
     target = db_path(home)
-    db = _open(target)
-    if db is None:
-        return None
-    with closing(db), db:
+    with closing(open_current(target)) as db, db:
         if page is None:
             _drop_video(db, video_id)
         else:
@@ -207,12 +225,13 @@ def _result(row: sqlite3.Row) -> dict:
 
 
 def search(home: Path, query: str, limit: int) -> list[dict]:
-    match = fts_query(query)
-    if not match:
-        return []
-    db = _open(db_path(home))
-    if db is None:
-        raise Unusable(f"no usable index at {db_path(home)}")
-    with closing(db):
+    """The `limit` best-matching chunks, best first. Empty is an answer."""
+    # The database's shape is settled before the query is: a query with no words
+    # left is nothing to run, but it is no reason to keep quiet about a database
+    # this build cannot read (SPEC-index-004).
+    with closing(open_current(db_path(home))) as db:
+        match = fts_query(query)
+        if not match:
+            return []
         rows = db.execute(SEARCH_SQL, (match, limit)).fetchall()
     return [_result(row) for row in rows]
