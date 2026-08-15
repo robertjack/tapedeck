@@ -1,178 +1,210 @@
-"""The acceptance gate: what a maintainer wrote, judged as a whole wiki.
+"""The acceptance gate, and the checks `lint` re-asks of a standing wiki.
 
-Probabilistic inside, deterministic at the edges (SPEC-wiki-002). The agent may write
-anything; this decides what lands, and it decides it about the entire wiki rather than
-about the diff — a filing that fixes its own page while breaking a link three notes
-away is the failure this catches.
+The maintainer may write anything; this decides what lands (SPEC-wiki-002). Two
+properties matter more than any individual check. It judges the **whole wiki**
+rather than the diff, because a filing that fixes its own page while breaking a
+link three notes away is exactly the failure worth catching. And every check is
+independent and every failure is reported, because the maintainer gets one run
+per operation and the user pays for each — a gate that reports one fault at a
+time turns one rejection into several.
 
-Each check is independent and every failure is reported. The maintainer gets one run
-per operation and the user pays for each, so a gate that stops at the first fault turns
-one rejection into several; and every violation names the thing that broke it — the
-file that changed, the target that dead-ends, the page the catalog forgot — because a
-rejection nobody can act on costs a run and buys nothing.
+Each violation names the thing that broke it: the file that changed, the target
+that dead-ends, the page the catalog forgot. A rejection nobody can act on costs
+a maintainer run and buys nothing.
 
-Two of the checks rest on vocabulary this component does not own. Whether a deep link
-is *true* is ask's, asked through its published verb one page at a time. Whether a
-page cites its own video is read with ask's own reading of a citation, imported rather
-than rewritten: a second YouTube regex living here would be the defect whether or not
-it currently agreed (LESSON-0003).
+The individual checks are exported because `lint` asks the same questions of a
+wiki nobody just wrote (SPEC-wiki-004). The gate is a moment and the wiki is a
+life: what it accepts is sound the second it is committed, and nothing gates the
+rename, the deletion or the reclaimed video that comes after.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
-from ask.citations import deep_links
-
 from . import seams
-from .scaffold import BRIEF, INDEX, LOG, PINNED, SOURCES
-
-PAGE_SUFFIX = ".md"
-GIT_DIR = ".git"
-
-WIKILINK = re.compile(r"\[\[([^\[\]\n]+)\]\]")
-MD_TARGET = re.compile(r"\]\(([^)\s]+)\)")
-# The pinned chronology entry of contracts/wiki-layout.md.
-ENTRY = re.compile(r"^## \[\d{4}-\d{2}-\d{2}\] \S+ \| .+$", re.MULTILINE)
-
-
-def pages(wiki: Path) -> list[Path]:
-    """Every markdown page in the wiki, git's own directory excepted. Anything that
-    is not markdown is not a page: attachments are the user's business, and the
-    catalog is not owed a line about them."""
-    return sorted(
-        path
-        for path in wiki.rglob(f"*{PAGE_SUFFIX}")
-        if path.is_file() and GIT_DIR not in path.relative_to(wiki).parts
-    )
+from .layout import (
+    BRIEF,
+    ENTRY,
+    INDEX,
+    LOG,
+    OPENS_LIKE_ENTRY,
+    PAGE,
+    PINNED,
+    SOURCES,
+    catalogued,
+    cites,
+    pages,
+    rel,
+    source_page,
+    source_pages,
+    targets,
+    text_of,
+)
 
 
-def snapshot(wiki: Path) -> dict[str, bytes | None]:
-    """The two files judged against their pre-run selves. Taken once the user's edits
-    are committed and before the maintainer runs, when the working tree and the
-    pre-run commit are the same thing."""
-    return {name: _bytes(wiki / name) for name in (BRIEF, LOG)}
-
-
-def review(wiki: Path, home: Path, video_id: str, before: dict[str, bytes | None]) -> list[str]:
-    """Everything wrong with this wiki, in the order a reader would want it."""
-    found = pages(wiki)
-    text: dict[Path, str] = {}
-    problems: list[str] = []
-    for page in found:
-        try:
-            text[page] = page.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            problems.append(f"{_rel(wiki, page)} cannot be read — {exc}")
-    return (
-        problems
-        + _brief_untouched(wiki, before)
-        + _filed(wiki, video_id, text)
-        + _wikilinks(wiki, found, text)
-        + _catalog(wiki, found, text)
-        + _chronology(wiki, before)
-        + _cited_truthfully(home, wiki, text)
-    )
-
-
-def _brief_untouched(wiki: Path, before: dict[str, bytes | None]) -> list[str]:
-    """The brief is the user's instructions to the maintainer, and an agent that may
-    rewrite its own instructions has none — any change at all, including one it
-    believes is an improvement, fails the whole operation."""
-    now = _bytes(wiki / BRIEF)
-    if now == before[BRIEF]:
-        return []
-    verb = "deleted" if now is None else "restored" if before[BRIEF] is None else "edited"
+def violations(
+    home: Path, wiki: Path, video_id: str, brief_before: bytes | None, log_before: bytes
+) -> list[str]:
+    """Everything wrong with the wiki as the maintainer left it, all of it."""
     return [
-        f"{BRIEF} was {verb} by the maintainer — the brief is the user's instructions, "
-        f"and nothing in a filing may change a byte of it"
+        *_brief_kept(wiki, brief_before),
+        *_filed(wiki, video_id),
+        *(
+            f"{page}: the wiki link to {target!r} resolves to no page in the wiki"
+            for page, target in unresolved(wiki)
+        ),
+        *(f"{page}: {said}" for page, said in unverifiable(home, wiki)),
+        *(
+            f"{INDEX} does not link {page} — a page the catalog omits is a page "
+            f"nobody opening this directory will find"
+            for page in uncatalogued(wiki)
+        ),
+        *_chronology(wiki, log_before),
     ]
 
 
-def _filed(wiki: Path, video_id: str, text: dict[Path, str]) -> list[str]:
-    """The filed-state marker, and its anchor in the recording it describes."""
-    page = wiki / SOURCES / f"{video_id}{PAGE_SUFFIX}"
-    rel = f"{SOURCES}/{video_id}{PAGE_SUFFIX}"
-    if page not in text:
+# --- the two checks that are about this operation ---
+
+
+def _brief_kept(wiki: Path, before: bytes | None) -> list[str]:
+    path = wiki / BRIEF
+    if (path.read_bytes() if path.is_file() else None) == before:
+        return []
+    return [
+        f"{BRIEF} was changed — the brief is the user's instructions to the "
+        f"maintainer, and a maintainer that may rewrite its own instructions has "
+        f"none, so any change at all fails the whole operation"
+    ]
+
+
+def _filed(wiki: Path, video_id: str) -> list[str]:
+    path = source_page(wiki, video_id)
+    name = f"{SOURCES}/{video_id}{PAGE}"
+    if not path.is_file():
         return [
-            f"{rel} was not written — the sources page is the whole of what says "
+            f"{name} does not exist — that page is the whole record that "
             f"{video_id} has been filed"
         ]
-    if any(link.video_id == video_id for link in deep_links(text[page])):
-        return []
-    return [
-        f"{rel} carries no deep link to {video_id} itself — a source page with no "
-        f"moment in its own recording is a summary of a memory, not a reading"
-    ]
-
-
-def _wikilinks(wiki: Path, found: list[Path], text: dict[Path, str]) -> list[str]:
-    """Resolution is the whole rule of the layout contract: the text before the first
-    `|`, matched case-sensitively against a page basename anywhere under the wiki."""
-    known = {path.name[: -len(PAGE_SUFFIX)] for path in found}
-    problems = []
-    for page in found:
-        for raw in WIKILINK.findall(text.get(page, "")):
-            target = raw.split("|", 1)[0].strip()
-            if target not in known:
-                problems.append(
-                    f"{_rel(wiki, page)} links to [[{target}]], which resolves to no "
-                    f"page in the wiki"
-                )
-    return problems
-
-
-def _catalog(wiki: Path, found: list[Path], text: dict[Path, str]) -> list[str]:
-    """A page the catalog does not mention is a page nobody will find."""
-    listed = {
-        target.split("#", 1)[0].removeprefix("./")
-        for target in MD_TARGET.findall(text.get(wiki / INDEX, ""))
-    }
-    return [
-        f"{rel} is a stray page — nothing in {INDEX} links to it"
-        for rel in (_rel(wiki, page) for page in found)
-        if rel not in PINNED and rel not in listed
-    ]
-
-
-def _chronology(wiki: Path, before: dict[str, bytes | None]) -> list[str]:
-    """Append-only as a byte-prefix, which is the only reading of it an agent cannot
-    argue with, plus the entry this operation owes the record."""
-    was = before[LOG] or b""
-    now = _bytes(wiki / LOG) or b""
-    if not now.startswith(was):
+    if not cites(text_of(path), video_id):
         return [
-            f"{LOG} was rewritten — the chronology is append-only, and what it said "
-            f"before an operation must still be how it begins, byte for byte"
+            f"{name} carries no deep link into {video_id} — a source page with no "
+            f"anchor in its own recording is a summary of a memory rather than a "
+            f"reading of it"
         ]
-    whole = now.decode("utf-8", "replace")
-    boundary = len(was.decode("utf-8", "replace"))
-    if any(match.start() >= boundary for match in ENTRY.finditer(whole)):
-        return []
+    return []
+
+
+def _chronology(wiki: Path, before: bytes) -> list[str]:
+    """Append-only as a byte-prefix, which is the only reading of it an agent
+    cannot argue with, and then one new entry of the pinned shape."""
+    path = wiki / LOG
+    if not path.is_file():
+        return [f"{LOG} is missing — the chronology is the wiki's record of itself"]
+    now = path.read_bytes()
+    if not now.startswith(before):
+        return [
+            f"{LOG} no longer begins with what it said before this run — the "
+            f"chronology is append-only, and an entry that can be revised later is "
+            f"not a record of what happened"
+        ]
+    if not ENTRY.search(now[len(before) :].decode("utf-8", "replace")):
+        return [
+            f"{LOG} gained no entry of the pinned shape "
+            f"'## [YYYY-MM-DD] <op> | <subject>' — an accepted operation owes the "
+            f"chronology a line, or the history has silent gaps"
+        ]
+    return []
+
+
+# --- the checks that are about the wiki, whoever wrote it ---
+
+
+def unresolved(wiki: Path) -> list[tuple[str, str]]:
+    """Every wiki link that points at no page, as (page, target).
+
+    The layout contract's rule and no other: the target is the text before the
+    first `|`, matched case-sensitively against page basenames with `.md`
+    stripped, satisfied by a page anywhere under `wiki/`. A dangling link is a
+    page the writer believed existed, and it is the one defect nothing reading
+    the wiki afterwards can route around.
+    """
+    known = {page.stem for page in pages(wiki)}
     return [
-        f"{LOG} gained no entry of the pinned shape — an accepted operation owes the "
-        f"chronology a line beginning '## [YYYY-MM-DD] <op> | <subject>'"
+        (rel(wiki, page), target)
+        for page in pages(wiki)
+        for target in targets(text_of(page))
+        if target not in known
     ]
 
 
-def _cited_truthfully(home: Path, wiki: Path, text: dict[Path, str]) -> list[str]:
-    """Ask ask. Its verdict is the gate's verdict and its words are the ones reported;
-    a message of our own here would be a second opinion on the same link."""
-    problems = []
-    for page, body in text.items():
-        said = seams.ask_verify(home, body)
-        if said:
-            problems.append(f"{_rel(wiki, page)}: {said}")
-    return problems
+def unverifiable(home: Path, wiki: Path) -> list[tuple[str, str]]:
+    """Every page whose deep links ask cannot vouch for, as (page, what ask said).
+
+    One page's text per invocation, so a verdict is always attributable to a
+    page, and through ask's published verb so that the gate and the linter can
+    never disagree about a link (LESSON-0003).
+    """
+    found = []
+    for page in pages(wiki):
+        said = seams.verify(home, text_of(page))
+        if said is not None:
+            found.append((rel(wiki, page), said))
+    return found
 
 
-def _rel(wiki: Path, page: Path) -> str:
-    return page.relative_to(wiki).as_posix()
+def uncatalogued(wiki: Path) -> list[str]:
+    """Pages the catalog does not mention. The three pinned files are not in it
+    by rule; everything else must be, since `index.md` is how a reader learns
+    what is in here."""
+    index = wiki / INDEX
+    listed = set(catalogued(text_of(index))) if index.is_file() else set()
+    return [
+        rel(wiki, page)
+        for page in pages(wiki)
+        if rel(wiki, page) not in PINNED and rel(wiki, page) not in listed
+    ]
 
 
-def _bytes(path: Path) -> bytes | None:
-    try:
-        return path.read_bytes()
-    except OSError:
-        return None
+def dangling(wiki: Path) -> list[str]:
+    """Catalog lines with nothing behind them — the failure a person produces by
+    deleting or renaming a page and leaving the line describing it. The gate has
+    no reason to check this and `lint` has every reason to."""
+    index = wiki / INDEX
+    if not index.is_file():
+        return []
+    return [
+        target for target in catalogued(text_of(index)) if not (wiki / target).exists()
+    ]
+
+
+def unsourced(wiki: Path) -> list[str]:
+    """Source pages that no longer cite their own video — prose survives edits
+    that its citations do not."""
+    return [page.stem for page in source_pages(wiki) if not cites(text_of(page), page.stem)]
+
+
+def malformed(wiki: Path) -> list[str]:
+    """Headings in the chronology that open like an entry and are not one. The
+    shape is what keeps the log greppable without tooling."""
+    log = wiki / LOG
+    if not log.is_file():
+        return []
+    return [
+        line for line in OPENS_LIKE_ENTRY.findall(text_of(log)) if not ENTRY.fullmatch(line)
+    ]
+
+
+def orphans(wiki: Path) -> list[str]:
+    """Pages no other page links to. The catalog does not count as an incoming
+    link: it links every page by rule, so counting it would mean no page is ever
+    an orphan and the finding would never say anything."""
+    linked: set[str] = set()
+    for page in pages(wiki):
+        if rel(wiki, page) != INDEX:
+            linked.update(targets(text_of(page)))
+    return [
+        rel(wiki, page)
+        for page in pages(wiki)
+        if rel(wiki, page) not in PINNED and page.stem not in linked
+    ]
