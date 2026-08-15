@@ -4,12 +4,12 @@ language_default = "python"
 
 [generator]
 tool = "claude-code"
-model = "claude-opus-5"
+model = "claude-sonnet-5"
 # context arrives as the -p argument, read from $PHX_CONTEXT_FILE (phx SPEC-regen-006;
 # stdin stays piped as belt-and-braces). Bare stdin delivery was ignored or treated as
 # background in 5 measured attempts across phx rounds; the imperative preamble is
 # load-bearing — without it the model has asked "what would you like me to do".
-command = 'claude --model claude-opus-5 --permission-mode acceptEdits -p "$(printf "Execute this regeneration ticket now. There is no user to ask questions of - write the implementation into the owned paths.\n\n"; cat "$PHX_CONTEXT_FILE")"'
+command = 'claude --model claude-sonnet-5 --permission-mode acceptEdits -p "$(printf "Execute this regeneration ticket now. There is no user to ask questions of - write the implementation into the owned paths.\n\n"; cat "$PHX_CONTEXT_FILE")"'
 
 [budgets]
 default_context_tokens = 8000
