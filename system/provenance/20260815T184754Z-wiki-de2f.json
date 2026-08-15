@@ -1,0 +1,59 @@
+{
+  "id": "gen-20260815T184754Z-wiki-de2f",
+  "component": "wiki",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "deletion-test port: shared eval conftest (run_cli repo default, PYTHONPATH seam) + per-file helper overlays moved every root hash; implementations unaffected"
+    ]
+  },
+  "root_hash": "sha256:de2f8fa8ab08cf848a29328e0ed0ec3373d3da3bdaf5730e1a8d8a29d3e83942",
+  "inputs": {
+    "manifest": "sha256:487e4755152b02dca11faf85f1e4f4551367c384e1367a09ee124a9bf5029add",
+    "clauses": {
+      "SPEC-wiki-001": "sha256:2ef51c9c144f82881ee1947d646ef5693c4e1f366e887e8b7e184c0c48c76e99",
+      "SPEC-wiki-002": "sha256:19ecf5360e62d63a1888b45c97c51b2c64967c61b6955f89e16d55ac2c441b47",
+      "SPEC-wiki-003": "sha256:d6384168ad718fdc841718a730606f6c2f97b4376bf04a09633f84d8be5683bb",
+      "SPEC-wiki-004": "sha256:12fae09f4b90e530ce82a1b67e370102675b965e3ecccddff2d799bffa144d26",
+      "SPEC-wiki-005": "sha256:b486d705a1ff3a8c371a303ee025a9ba5a0dd8e2da0701b1cdda946c3be58e9d",
+      "SPEC-wiki-006": "sha256:1cb02e2184162b8b18c2e69ff63d77fd19f583921611ee856c9eb997c68a5971",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/wiki-layout.md": "sha256:86476a0f6c0e5602a3708328839efc4c880616ca3bd4c862acca36b90014a506",
+      "system/contracts/library-layout.md": "sha256:6198c9e7f18dfc7122ecb9294beb756e694845fae408bbdcadd21db0c5ed93e8",
+      "system/contracts/ask-citations.md": "sha256:c39d794a33fe974b202551d46f51e4126e431290268152aed458a6f10f747c03"
+    },
+    "eval_sources": {
+      "system/evals/wiki/test_file.py": "sha256:7f4ad59ac73f4c73ac7040570c536a660635a997f42a16be9dc12c2e63bb31b1",
+      "system/evals/wiki/test_gate.py": "sha256:c306e9480e5f2d4e005e395d1dfc64ce17a69c449b6b9b85ceba86fbf29974f2",
+      "system/evals/wiki/test_lint.py": "sha256:b461df678f5acb96fc1b77887e4340520acff31c78887cee2affd6de42b21c3e",
+      "system/evals/wiki/test_lock.py": "sha256:290e2575dfdf3acc0b1fa365859fce2b5782081b68c2bc0a42427236116fa32e",
+      "system/evals/wiki/test_rebuild.py": "sha256:92c9707a4d05cf21a4f72389364555d9aeae8d1e397fa486731d0658afc8c5a1",
+      "system/evals/wiki/test_scaffold.py": "sha256:ca052559dc5a539c0ec8d58e43d0a45218807a787fa1b543f81bcd6f4865702a",
+      "system/evals/wiki/test_sync.py": "sha256:9362f4ece11e1b00efcb0ac448cfe958c5234086482715016cfb9e752a1a0146",
+      "system/evals/wiki/test_tend.py": "sha256:05ec14f510ec2c59acac6cfb45686005ad47d187161f461e542baa0c8e108826",
+      "system/evals/wiki/wikilib.py": "sha256:3bdfaf81ce0d5b46132635480f2074d725acb08a4f47969a3a31e4b38144ac2a"
+    },
+    "lessons": {
+      "LESSON-0004": "sha256:89caedc12190a044808e57f27def8321365b1796564777aeb3c5d12aafb1d33b"
+    },
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:bb9bc0258920ba6692de9ad974abb490acf79331d6f1061b8b04bd05aab1c8ff"
+    }
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "none (re-attestation, no generation)",
+    "session_ref": "claude-code:6750280d-ce5f-465a-9a37-ef083cdc4930"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation only: 233/233 green after the LESSON-0005 eval-integrity port; index alone was regenerated (gen-20260815T183613Z-index-c82d)."
+}

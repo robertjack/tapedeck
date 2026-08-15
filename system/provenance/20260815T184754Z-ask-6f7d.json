@@ -1,0 +1,50 @@
+{
+  "id": "gen-20260815T184754Z-ask-6f7d",
+  "component": "ask",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "deletion-test port: shared eval conftest (run_cli repo default, PYTHONPATH seam) + per-file helper overlays moved every root hash; implementations unaffected"
+    ]
+  },
+  "root_hash": "sha256:6f7d7ba45d9e43da0325140310563a00bdf37f8ba85a5e9608301d24030c9333",
+  "inputs": {
+    "manifest": "sha256:1dd74c077db9f3d925bc7e3670e6813e253d0cab4ee353e8f4e63157010783c3",
+    "clauses": {
+      "SPEC-ask-001": "sha256:ef917516f5805cec47bd6530f06e88c8b1917c86ff5059f5a0b10dadaccc5004",
+      "SPEC-ask-002": "sha256:94fa94405a67c6b45ee6e87fe017b2933852f7f448664db04e23065b93431271",
+      "SPEC-ask-003": "sha256:2c5fdc3fc7dc6426c6f9dd35b2278de2ea1707961ed476cedcc58a898aff3223",
+      "SPEC-ask-004": "sha256:bfa9a9444985e4e878f940fdec5c51cd012bfeb2792470685a9f21934540f205",
+      "SPEC-ask-005": "sha256:9fa5eed2e35bf1edef7a131bfc0c24c535294098d30fd1c7933eccd0a05024e3",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/ask-citations.md": "sha256:c39d794a33fe974b202551d46f51e4126e431290268152aed458a6f10f747c03"
+    },
+    "eval_sources": {
+      "system/evals/ask/test_ask.py": "sha256:79814c06106b4807a73eb551ee05dbc6adf8e3ea4358ec455d383defdc723f21",
+      "system/evals/ask/test_index_shape.py": "sha256:d7969260d3809d6894bb06ca71dc57160cf5a5c30fde84014fc8e3f47a894ec2",
+      "system/evals/ask/test_scoped.py": "sha256:b86b637eea0bb5d67ff3b3f3a92569bc057149755102c499b64f7aa5f2c3d111",
+      "system/evals/ask/test_verification.py": "sha256:dd6edd1efa589eff9f6091b86e56937f003e9482ede82e3e849de1d8f283bc77",
+      "system/evals/ask/test_verify.py": "sha256:1e35f2f7e97c5c2e916b9ad7aabdeebb7bc797931e3589b98b836b6b30d61e96"
+    },
+    "lessons": {},
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:bb9bc0258920ba6692de9ad974abb490acf79331d6f1061b8b04bd05aab1c8ff"
+    }
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "none (re-attestation, no generation)",
+    "session_ref": "claude-code:6750280d-ce5f-465a-9a37-ef083cdc4930"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation only: 233/233 green after the LESSON-0005 eval-integrity port; index alone was regenerated (gen-20260815T183613Z-index-c82d)."
+}
