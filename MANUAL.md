@@ -245,6 +245,14 @@ behind. Accepted, it lands as one commit. Filing a video that already has
 a page changes nothing and exits 0, so you never have to remember what you
 filed.
 
+You can watch it work. Every run announces itself on stderr, and with the
+default maintainer (a streaming `claude -p`) each thing the agent does —
+the file it reads, the note it edits — prints as it happens, during
+`tapedeck add`'s filings too. There is no percentage, because nothing
+knows how long a filing is until it is done; what you get is the live feed
+instead of a silent minute. A maintainer of your own that prints plain
+text instead of a stream still works exactly as before.
+
 File everything not yet filed:
 
     tapedeck wiki sync --dry-run    # the ids it would file, one per line
