@@ -1,15 +1,22 @@
-"""Component boundary: `python -m ask run <question> [-k N] [--fast] [--video <id>]`.
+"""Component boundary: `python -m ask run <question> [-k N] [--fast] [--video <id>]`
+and `python -m ask verify [--video <id>] [--require-citation]`.
 
 Reads config.toml, the library's metadata and the index's database, and writes
 nothing — ask owns no path in system/contracts/library-layout.md. Exit codes follow
 system/contracts/cli-surface.md: 0 success, 1 operation failure, 2 usage or config
 error; the answer goes to stdout, everything else to stderr.
 
-Both modes are the same shape, and the order below is the whole design: settle
-everything deterministic first, then think, then check what came back. Nothing
+Both answering modes are the same shape, and the order below is the whole design:
+settle everything deterministic first, then think, then check what came back. Nothing
 probabilistic runs until the library is known to have something to say — and, in
 fast mode, until the index it would say it from is one this build can read — and no
 answer reaches stdout before its citations have been checked against the library.
+
+`verify` is the last of those steps standing on its own (SPEC-ask-005): the same
+`citations.audit` librarian mode is judged by, applied to text a caller hands in on
+stdin, with no seam run and nothing written. Callers outside ask — wiki deciding
+whether to keep a page — get ask's verdict by asking ask, which is the only way the
+two can be relied on to agree (LESSON-0003).
 """
 
 from __future__ import annotations
@@ -44,7 +51,7 @@ def home_dir() -> Path:
 
 def scope_for(library: Library, video_id: str | None) -> str | None:
     """Settle `--video` first: a scope that names nothing here is a mistake in the
-    asking, and no model should be spent on it (SPEC-ask-003)."""
+    asking, and neither a model nor a page should be spent on it (SPEC-ask-003)."""
     if video_id is None or library.holds(video_id):
         return video_id
     raise Failure(f"no video {video_id!r} in the library — try `tapedeck list`", code=2)
@@ -58,15 +65,11 @@ def librarian(home: Path, library: Library, question: str, scope: str | None) ->
         raise Failure(f"{NO_SOURCES} — `tapedeck add <url>` starts one")
 
     answer = seams.run(command, home, citations.ask_for(question, scope), "librarian", cwd=home)
-    links = citations.deep_links(answer)
-    if not links:
-        raise Failure(
-            "the librarian answered without a citation — an answer tapedeck cannot "
-            "trace to a moment in the library is not one it prints"
-        )
-    problems = citations.unverified(links, library, scope)
+    # An answer tapedeck cannot trace to a moment in the library is not one it prints,
+    # so here — unlike in `verify` — a citation is always required.
+    problems = citations.audit(answer, library, scope, require_citation=True)
     if problems:
-        raise Failure("refusing a fabricated citation:\n  " + "\n  ".join(problems))
+        raise Failure("refusing this answer's citations:\n  " + "\n  ".join(problems))
     print(answer)
     return 0
 
@@ -91,7 +94,25 @@ def fast(home: Path, question: str, k: int, scope: str | None) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def verify(library: Library, scope: str | None, require_citation: bool) -> int:
+    """Text on stdin, verdict in the exit code, every violation named on stderr.
+
+    Reads the library and reports: no seam runs and nothing is written, so a caller
+    can run this inside its own accept-or-roll-back decision, on whatever text it
+    holds, as often as it likes, without the run being a step to undo (SPEC-ask-005).
+    """
+    try:
+        text = sys.stdin.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise Failure(f"could not read the text to verify — {exc}") from exc
+    problems = citations.audit(text, library, scope, require_citation=require_citation)
+    if problems:
+        # All of them, not the first: a caller fixing a page wants the whole list.
+        raise Failure("these citations do not hold:\n  " + "\n  ".join(problems))
+    return 0
+
+
+def parse(argv) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="ask", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="verb", required=True)
     # One verb, two names: `run` is the boundary the evals drive, `answer` the name
@@ -101,13 +122,27 @@ def main(argv=None) -> int:
     question.add_argument("-k", type=int, help=f"sources to retrieve (default {DEFAULT_K})")
     question.add_argument("--fast", action="store_true", help="retrieve, then answer")
     question.add_argument("--video", help="answer from this library video alone")
-    args = parser.parse_args(argv)
 
+    checker = sub.add_parser("verify", help="check text's citations against the library")
+    checker.add_argument("--video", help="every citation must be to this video")
+    checker.add_argument(
+        "--require-citation", action="store_true", help="uncited text fails"
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse(argv)
     try:
+        home = home_dir()
+        library = Library(home)
+        if args.verb == "verify":
+            # The scope is settled before a byte of stdin is read: an id that names
+            # nothing is answered by one path lookup, not by reading the text.
+            return verify(library, scope_for(library, args.video), args.require_citation)
         if args.k is not None and args.k < 1:
             raise Failure(f"-k must be at least 1 (got {args.k})", code=2)
-        home, asked = home_dir(), " ".join(args.question)
-        library = Library(home)
+        asked = " ".join(args.question)
         scope = scope_for(library, args.video)
         if args.fast:
             return fast(home, asked, DEFAULT_K if args.k is None else args.k, scope)

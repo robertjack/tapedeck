@@ -12,6 +12,12 @@ real moment in a real video, and under `--video` `ask_for` states the scope goin
 while `unverified` holds the answer to it coming back (SPEC-ask-003). Either way the
 model picks its citations and never decides whether they stand.
 
+`audit` is that check entire, and it is the only one there is: librarian mode runs it
+on an answer and `python -m ask verify` runs it on whatever text a caller holds
+(SPEC-ask-005). The verb publishes this function, it does not paraphrase it — two
+readings of a citation would be two verdicts on the same link, each defensible in its
+own evals, and the drift between them invisible until it matters (LESSON-0003).
+
 A verifier is only as good as its reading, and a citation lives in a sentence: the
 full stop that ends the sentence is prose, not URL and not part of the `t=` the URL
 carries. Both halves of that matter and they pull in opposite directions — swallow
@@ -35,6 +41,11 @@ LINK = re.compile(r"""https?://(?:[\w-]+\.)*(?:youtube\.com|youtu\.be)/[^\s()\[\
 PROSE = ".,;:!?\"'…»"
 # `t=` as YouTube writes it: bare seconds, `95s`, or `1h2m3s`.
 OFFSET = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?", re.IGNORECASE)
+
+UNCITED = (
+    "no deep link anywhere in the text — nothing here can be traced to a moment "
+    "in the library"
+)
 
 INSTRUCTIONS = """\
 Answer the question below using only the numbered sources that follow it. They are
@@ -113,7 +124,7 @@ def document(answer: str, sources) -> str:
     return f"{answer.strip()}\n\n{sources_block(sources)}"
 
 
-# --- librarian mode ---
+# --- librarian mode, and the `verify` verb that publishes its check ---
 
 
 def ask_for(question: str, scope: str | None) -> str:
@@ -190,3 +201,21 @@ def unverified(links, library, scope: str | None = None) -> list[str]:
                 f"{cite.video_id} ({hms(length)})"
             )
     return problems
+
+
+def audit(text: str, library, scope: str | None = None, require_citation: bool = False):
+    """Every way `text`'s citations fail the library, one printable line each.
+
+    The whole of SPEC-ask-001's mechanical check in one call, so that the two callers
+    that need it — librarian mode, and the `verify` verb it is published as — cannot
+    reach different verdicts about the same link (SPEC-ask-005).
+
+    `require_citation` is the one thing that honestly differs between them: an answer
+    with no deep link has dodged the question, so librarian mode always demands one,
+    while a page with none has simply made no claim to check and passes unless a
+    caller asks otherwise.
+    """
+    links = deep_links(text)
+    if not links:
+        return [UNCITED] if require_citation else []
+    return unverified(links, library, scope)

@@ -1,11 +1,15 @@
 """The `[ask]` seams (SPEC-core-004): the probabilistic steps, held at arm's length.
 
-Both modes end at a shell command read from `$TAPEDECK_HOME/config.toml` — never a
-hardcoded `claude -p`. Each takes its text on stdin and gives back prose on stdout.
-Nothing about answers is decided here: this module resolves a command and runs it,
-and everything the result is judged against was fixed before it ran and checked after
-(SPEC-ask-002). The librarian runs with cwd set to the library home, where its files
-and its `CLAUDE.md` are; the answerer gets no cwd.
+Both answering modes end at a shell command read from `$TAPEDECK_HOME/config.toml` —
+never a hardcoded `claude -p`. Each takes its text on stdin and gives back prose on
+stdout. Nothing about answers is decided here: this module resolves a command and
+runs it, and everything the result is judged against was fixed before it ran and
+checked after (SPEC-ask-002). The librarian runs with cwd set to the library home,
+where its files and its `CLAUDE.md` are; the answerer gets no cwd.
+
+Nothing in this module is reachable from `verify`: that verb runs no command at all
+(SPEC-ask-005), which is what lets a caller run it inside its own accept-or-roll-back
+decision as often as it likes.
 """
 
 from __future__ import annotations
