@@ -1,24 +1,23 @@
-"""The `[wiki]` maintainer seam, and the one question wiki puts to ask.
+"""The two commands wiki runs, and neither of them is hardcoded.
 
-The maintainer is a seam like every other (SPEC-core-004): a shell command read
-from `$TAPEDECK_HOME/config.toml`, never a hardcoded agent, run with cwd set to
-the wiki so its own paths are the wiki's paths, the task on stdin and the video
-in its environment. Nothing about the wiki it produces is decided here — this
-module resolves a command and runs it, and everything the result is judged
-against is checked afterwards by the gate.
+`[wiki].maintainer_command` (SPEC-core-004) is the agent that writes this wiki —
+and, unchanged, the agent that tends it. A second seam would be a second voice:
+a tender configured apart from the maintainer would read the brief the maintainer
+follows and answer to a different one, and the wiki would accumulate in two
+registers. What distinguishes the runs is the task on stdin, which names the mode;
+everything else about the invocation is the same interface. `config.toml` is cli's
+file and wiki only reads a key out of it — a wiki that cannot find its seam says
+which key is missing rather than inventing a default and spending a run on it.
 
-`DEFAULT_MAINTAINER_COMMAND` is published for cli to scaffold into a fresh
-config.toml with the rest of the commented defaults. The shape of a seam belongs
-to the component that runs it; writing config.toml belongs to cli, and wiki never
-touches that file.
-
-The other direction is the citation check. Whether a deep link is real — where
-the URL ends when sentence punctuation follows it, what an unknown duration
-waives — is settled in contracts/ask-citations.md and published as `ask verify`
-(SPEC-ask-005) precisely so this component can ask instead of re-deriving. A
-second regex for YouTube links living here would be the defect whether or not it
-currently agreed (LESSON-0003), and it is the reason a change to the citation
-rules changes this gate with no clause and no code in this component.
+`ask verify` is the other command, and it is here for the opposite reason. Reading
+a citation — where a URL ends when a sentence's punctuation follows it, what an
+unknown duration waives — is settled in contracts/ask-citations.md and published
+as a verb precisely so this component can ask instead of re-deriving (LESSON-0003).
+A second YouTube-link regex living here would be the defect whether or not it
+currently agreed. It is invoked as `$TAPEDECK_ASK_CMD` when that variable is set
+and as `<current python> -m ask` otherwise, which is the seam a fake ask is
+injected through and the reason a change to the citation rules changes this gate
+with no code here at all.
 """
 
 from __future__ import annotations
@@ -32,135 +31,108 @@ from pathlib import Path
 
 from . import Failure, Usage
 
+CONFIG = "config.toml"
 SECTION = "wiki"
 MAINTAINER_KEY = "maintainer_command"
-CONFIG_NAME = "config.toml"
-# How ask is reached, and the override the evals inject a fake ask through.
-ASK_ENV = "TAPEDECK_ASK_CMD"
+ASK_CMD = "TAPEDECK_ASK_CMD"
+ASK_MODULE = "ask"
 VERIFY = "verify"
 
-# An agent that can read the library and write the wiki, and nothing else.
+# What cli scaffolds into a fresh config.toml with the rest of the commented
+# defaults: an agent that can read the library and write the wiki, and nothing
+# else. A user who prefers another agent, or a script, edits the line.
 DEFAULT_MAINTAINER_COMMAND = (
     'claude -p --permission-mode acceptEdits --allowedTools "Read,Grep,Glob,Write,Edit"'
 )
 
-TASK = """\
-File the library video {video_id} into this wiki.
-
-Read its archive page first — {page} — which is the video rendered as prose, with
-a deep link into every section. Then write the wiki up to whatever CLAUDE.md in
-this directory asks of a filing: that file is the brief, it is the user's, and it
-is the only instruction that matters about what a page should say.
-
-Two things are true of every filing whatever the brief says. There must be a
-`sources/{video_id}.md` when you finish, carrying at least one deep link into
-{video_id} itself — copy links out of the archive page rather than composing
-them. And `log.md` must gain an entry, appended at the end and never anywhere
-else, opening exactly:
-
-## [{today}] file | {video_id}
-
-Everything you write is checked over the whole wiki and then committed as one
-commit, or rejected entire: wiki links must resolve, deep links must be real
-moments in real library videos, `index.md` must link every page but the three at
-the top level, and CLAUDE.md must come out byte-for-byte as you found it.
-"""
-
-
-class ConfigError(Usage):
-    """A seam that is not configured — the request cannot be attempted as it is."""
-
-
-class MaintainerError(Failure):
-    """The maintainer ran and did not come back with a wiki to judge."""
-
-
-class AskUnreachable(Failure):
-    """ask could not be reached, so no citation in the wiki can be checked."""
-
 
 def maintainer_command(home: Path) -> str:
-    """The configured maintainer, resolved before anything is scaffolded, run or
-    destroyed — a misconfigured tapedeck should fail on the config."""
-    path = home / CONFIG_NAME
+    """The configured maintainer, resolved before any work is done — a run that
+    cannot reach an agent should fail on the config, not after the scaffold."""
+    path = home / CONFIG
     try:
         config = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    except (OSError, ValueError) as exc:  # unreadable, undecodable, or not TOML
-        raise ConfigError(f"{path} is unreadable — {exc}") from exc
+    except (OSError, ValueError) as exc:
+        raise Usage(f"{path} is unreadable — {exc}") from exc
     section = config.get(SECTION)
     value = section.get(MAINTAINER_KEY) if isinstance(section, dict) else None
     if not isinstance(value, str) or not value.strip():
-        raise ConfigError(
+        raise Usage(
             f"no wiki maintainer configured — set [{SECTION}] {MAINTAINER_KEY} in "
-            f"{path} to a shell command that edits the wiki, for example: "
-            f"{DEFAULT_MAINTAINER_COMMAND}"
+            f"{path} to the shell command that runs your agent, e.g. "
+            f'{MAINTAINER_KEY} = "{DEFAULT_MAINTAINER_COMMAND}"'
         )
     return value.strip()
 
 
-def task(video_id: str, page: Path, today: str) -> str:
-    return TASK.format(video_id=video_id, page=page, today=today)
-
-
 def run_maintainer(
-    command: str, home: Path, wiki: Path, video_id: str, page: Path, today: str
-) -> None:
-    """Turn the agent loose in the wiki. A nonzero exit is a failed operation:
-    whatever a crashed agent left half-written is not the wiki's problem."""
-    env = {
-        **os.environ,
-        "TAPEDECK_HOME": str(home),
-        "TAPEDECK_WIKI": str(wiki),
-        "TAPEDECK_VIDEO_ID": video_id,
-        "TAPEDECK_ARCHIVE_PAGE": str(page),
-        # A shell reads its own location from $PWD; ours would misplace the agent.
-        "PWD": str(wiki),
-    }
+    command: str,
+    home: Path,
+    wiki: Path,
+    task: str,
+    video_id: str | None = None,
+    archive_page: Path | None = None,
+) -> tuple[int, str]:
+    """Run the agent from inside the wiki with the task on stdin.
+
+    Four variables for a filing, two for a tend: there is no `TAPEDECK_VIDEO_ID`
+    on a run that is about no video, because a variable naming one would be a lie
+    about the scope of the run. Returns its exit code and its stdout; what it did
+    to the wiki is judged afterwards and never taken on trust.
+    """
+    env = {**os.environ, "TAPEDECK_HOME": str(home), "TAPEDECK_WIKI": str(wiki)}
+    # A shell reads its own location from $PWD; ours would misplace the agent.
+    env["PWD"] = str(wiki)
+    for key, value in (
+        ("TAPEDECK_VIDEO_ID", video_id),
+        ("TAPEDECK_ARCHIVE_PAGE", None if archive_page is None else str(archive_page)),
+    ):
+        env.pop(key, None)
+        if value is not None:
+            env[key] = value
     try:
         result = subprocess.run(
             command,
             shell=True,
             cwd=wiki,
             env=env,
-            input=task(video_id, page, today),
+            input=task,
             text=True,
-            # The agent's own chatter is not the product and does not belong on
-            # this component's stdout; what it wrote is read off the disk.
             stdout=subprocess.PIPE,
         )
     except OSError as exc:
-        raise MaintainerError(f"could not run the maintainer — {exc}") from exc
-    if result.returncode != 0:
-        raise MaintainerError(f"the maintainer exited {result.returncode}: {command}")
+        raise Failure(f"could not run the maintainer — {exc}") from exc
+    return result.returncode, result.stdout or ""
 
 
-def ask_argv() -> list[str]:
-    override = os.environ.get(ASK_ENV)
-    return shlex.split(override) if override else [sys.executable, "-m", "ask"]
+def _ask_argv() -> list[str]:
+    override = os.environ.get(ASK_CMD)
+    if override and override.strip():
+        return shlex.split(override)
+    return [sys.executable, "-m", ASK_MODULE]
 
 
-def verify(home: Path, text: str) -> str | None:
-    """ask's verdict on the deep links in one page's text: None when they hold,
-    and otherwise what ask said about them, relayed rather than replaced by a
-    message of this component's own.
+def unverifiable(home: Path, text: str) -> str | None:
+    """ask's verdict on one page's deep links: None when they all hold, and its
+    own words when they do not.
 
     `--require-citation` is deliberately absent. A wiki page is not an answer: a
-    note that cites nothing has made no claim, so the only question here is
+    note that cites nothing has made no claim, and the only question here is
     whether the links a page does carry are true.
     """
     try:
         result = subprocess.run(
-            [*ask_argv(), VERIFY],
+            [*_ask_argv(), VERIFY],
             input=text,
             text=True,
             capture_output=True,
             env={**os.environ, "TAPEDECK_HOME": str(home)},
         )
     except OSError as exc:
-        raise AskUnreachable(
-            f"could not reach `ask {VERIFY}` to check the wiki's citations — {exc}"
-        ) from exc
+        return f"could not run `ask {VERIFY}` to check this page's citations — {exc}"
     if result.returncode == 0:
         return None
-    said = (result.stderr or result.stdout).strip()
-    return " ".join((said or f"ask {VERIFY} exited {result.returncode}").split())
+    said = (result.stderr or "").strip() or (result.stdout or "").strip()
+    # Relayed rather than replaced: a message of this component's own would be a
+    # second opinion about a question this component does not answer.
+    return said or f"ask {VERIFY} exited {result.returncode} on this page"

@@ -1,522 +1,493 @@
-"""Ephemeral unit tests for wiki — disposable, unlike system/evals/wiki.
+"""Ephemeral unit tests for the wiki component's internals.
 
-These poke at the pieces the durable evals only ever see through the process
-boundary: how a page is read, what each acceptance check decides on its own, and
-that the git lifecycle really does put a wiki back where it was. The maintainer
-never runs here — the fakes in the durable suite cover that — so what is under
-test is the deterministic edge, which is the only part this component owns.
+Disposable by design (phx): the durable acceptance criteria are
+system/evals/wiki/, which drive `python -m wiki` and never import this package.
+What is worth testing here is the part those evals can only reach through a
+subprocess and a fake agent — the three grammars of the layout contract, the
+gate's individual checks, the sweep's ordering rule, and the shape of the lint
+report — so a regression shows up as one failing assertion instead of a rejected
+filing.
+
+Run with: uv run --with pytest pytest src/wiki/tests -q
 """
 
 from __future__ import annotations
 
 import json
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
-from wiki import Failure, Usage, gate, layout, lint, seams
-from wiki.layout import BRIEF, INDEX, LOG, NOTES, SOURCES
-from wiki.repo import DEFAULT_BRIEF, SCAFFOLD, USER_EDITS, Repo
+from wiki import Busy, Usage, gate, layout, library, lint, repo, seams
 
-VID = "dQw4w9WgXcQ"
+FILED = "dQw4w9WgXcQ"
 OTHER = "plainvide00"
-LINK = "https://www.youtube.com/watch?v={id}&t=95s"
 
 
-# --- fixtures: a wiki on disk, and a library beside it ---
+# --- fixtures -----------------------------------------------------------------
 
 
-def make_wiki(tmp_path, pages=None, index=None, log=None, brief=DEFAULT_BRIEF):
-    """A wiki directory with whatever pages a test needs. No git, no library:
-    every check in gate.py reads the working tree and nothing else."""
-    wiki = tmp_path / "wiki"
-    (wiki / SOURCES).mkdir(parents=True)
-    (wiki / NOTES).mkdir(parents=True)
-    (wiki / BRIEF).write_text(brief)
-    (wiki / LOG).write_text(log if log is not None else "")
-    for name, text in (pages or {}).items():
-        path = wiki / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
-    if index is None:
-        index = "".join(f"- [{name}]({name})\n" for name in (pages or {}))
-    (wiki / INDEX).write_text(index)
-    return wiki
+def git_available() -> bool:
+    try:
+        return subprocess.run(["git", "--version"], capture_output=True).returncode == 0
+    except OSError:
+        return False
 
 
-def filed_wiki(tmp_path, **kwargs):
-    """The shape a clean filing leaves: a source page citing its own video and a
-    note the two link to each other through."""
-    pages = {
-        f"{SOURCES}/{VID}.md": f"# {VID}\n\nFiled from [it]({LINK.format(id=VID)}).\n"
-        "Belongs with [[regeneration|the idea]].\n",
-        f"{NOTES}/regeneration.md": f"# Regeneration\n\nTraced to [[{VID}]].\n",
-    }
-    return make_wiki(tmp_path, pages, log=f"## [2026-08-14] file | {VID}\n\nFiled.\n", **kwargs)
+needs_git = pytest.mark.skipif(not git_available(), reason="git is not installed")
 
 
-def stock(home, video_id=VID, upload_date="2026-01-15", media=True, page=True):
+@pytest.fixture
+def home(tmp_path):
+    h = tmp_path / "home"
+    (h / "library").mkdir(parents=True)
+    (h / "archive").mkdir()
+    return h
+
+
+def add_video(home: Path, video_id: str, upload_date: str, media: bool = True, page: bool = True):
     entry = home / "library" / video_id
     entry.mkdir(parents=True)
     if media:
         (entry / "video.mp4").write_bytes(b"\x00")
     (entry / "meta.json").write_text(
-        json.dumps({"id": video_id, "title": "T", "channel": "C", "upload_date": upload_date})
+        json.dumps({"id": video_id, "title": video_id, "upload_date": upload_date})
     )
     if page:
-        (home / "archive").mkdir(exist_ok=True)
-        (home / "archive" / f"{video_id}.md").write_text("# page\n")
-    return entry
+        (home / "archive" / f"{video_id}.md").write_text(f"# {video_id}\n")
 
 
-# --- reading a page (contracts/wiki-layout.md) ---
+def wiki_with(tmp_path, **files) -> Path:
+    wiki = tmp_path / "wiki"
+    (wiki / "sources").mkdir(parents=True)
+    (wiki / "notes").mkdir()
+    (wiki / layout.BRIEF).write_text(layout.DEFAULT_BRIEF)
+    (wiki / layout.INDEX).write_text("")
+    (wiki / layout.LOG).write_text("")
+    for name, text in files.items():
+        path = wiki / (name.replace("__", "/") + layout.PAGE)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return wiki
+
+
+# --- layout: the three grammars ------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "text, expected",
+    "text,expected",
     [
-        ("[[plain]]", ["plain"]),
-        ("[[target|alias]]", ["target"]),
+        ("[[thing]]", ["thing"]),
+        ("[[thing|an alias]]", ["thing"]),
         ("[[ spaced ]]", ["spaced"]),
-        ("[[a]] and [[b|c]]", ["a", "b"]),
-        ("no links here", []),
-        ("[single] is not one", []),
+        ("[[a]] and [[b|B]]", ["a", "b"]),
+        ("nothing here", []),
+        ("[not a wikilink](x.md)", []),
     ],
 )
-def test_the_target_is_the_text_before_the_first_pipe(text, expected):
+def test_wikilink_targets_are_the_text_before_the_first_pipe(text, expected):
     assert layout.targets(text) == expected
 
 
-def test_wikilink_targets_keep_their_case():
-    """`[[Regeneration]]` beside `regeneration.md` works in one reader and dangles
-    in another, so the strict reading is the only one that travels."""
-    assert layout.targets("[[Regeneration]]") == ["Regeneration"]
+def test_wikilink_resolution_is_case_sensitive_and_path_free(tmp_path):
+    wiki = wiki_with(tmp_path, sources__dQw4w9WgXcQ="x", notes__regeneration="y")
+    known = layout.resolvable(layout.pages(wiki))
+    assert "regeneration" in known and "dQw4w9WgXcQ" in known
+    assert "Regeneration" not in known, "a link that works in one reader and not another"
+    assert "notes/regeneration" not in known, "no paths, no extensions, no fuzzy match"
 
 
 @pytest.mark.parametrize(
-    "line, expected",
+    "line,expected",
     [
-        ("- [Note](notes/a.md)", ["notes/a.md"]),
-        ("- [Note](./notes/a.md)", ["notes/a.md"]),
-        ("- [Note](notes/a.md#heading)", ["notes/a.md"]),
-        ("- [Home](https://example.com/a.md)", []),
-        ("- [Anchor](#section)", []),
-        ("plain text", []),
+        ("- [X](sources/x.md)", ["sources/x.md"]),
+        ("- [X](./notes/x.md) — a summary", ["notes/x.md"]),
+        ("- [X](notes/x.md#heading)", ["notes/x.md"]),
+        ("- [Home](https://example.com/x.md)", []),
+        ("- [X](sources/x.txt)", []),
     ],
 )
-def test_the_catalog_reads_local_page_links_only(line, expected):
-    assert layout.catalogued(line) == expected
+def test_the_catalog_reads_markdown_links_to_pages_only(line, expected):
+    assert layout.catalog(line) == expected
 
 
-@pytest.mark.parametrize(
-    "text, video_id, cited",
-    [
-        (LINK.format(id=VID), VID, True),
-        (f"[x]({LINK.format(id=VID)}).", VID, True),
-        (LINK.format(id=OTHER), VID, False),
-        (f"the video {VID} was good", VID, False),  # a mention is not a citation
-        (f"https://www.youtube.com/watch?v={VID}", VID, False),  # no moment claimed
-    ],
-)
-def test_a_page_cites_a_video_only_by_deep_linking_a_moment_in_it(text, video_id, cited):
-    assert layout.cites(text, video_id) is cited
+def test_log_entries_and_malformed_headings_are_the_pinned_shape():
+    log = (
+        "## [2026-08-15] file | dQw4w9WgXcQ\n\nprose\n\n"
+        "## [2026-08-16] tend | connected two notes\n\n"
+        "## [not-a-date] file missing-the-pipe\n"
+    )
+    assert layout.entries(log) == [
+        ("file", "dQw4w9WgXcQ"),
+        ("tend", "connected two notes"),
+    ]
+    assert layout.malformed(log) == ["## [not-a-date] file missing-the-pipe"]
 
 
-def test_the_chronology_is_only_ever_appended_to(tmp_path):
-    log = tmp_path / LOG
-    log.write_text("## [2026-08-01] file | earlier\n\nWas here first.\n")
-    before = log.read_bytes()
-
-    layout.append_entry(log, "rebuild", "everything", "And then this.")
-
-    assert log.read_bytes().startswith(before), "the entry before this one was disturbed"
-    assert layout.ENTRY.search(log.read_text().split("Was here first.")[1])
-
-
-def test_an_entry_appended_to_an_empty_log_starts_the_file(tmp_path):
-    log = tmp_path / LOG
-    log.write_text("")
-    layout.append_entry(log, "file", VID, "First.")
-    assert log.read_text().startswith("## [")
+def test_the_default_brief_is_a_page_the_gate_can_accept():
+    """CLAUDE.md is a page like any other and the gate reads every page. A wiki
+    link written out in the brief would have to resolve to a page that does not
+    exist, and a YouTube URL written out in it would be read as a citation and
+    checked against the library — either one would reject every filing ever made
+    against a freshly scaffolded wiki."""
+    assert layout.targets(layout.DEFAULT_BRIEF) == [], (
+        "the scaffolded brief carries a wiki link that resolves to nothing"
+    )
+    assert "youtube.com" not in layout.DEFAULT_BRIEF and "youtu.be" not in layout.DEFAULT_BRIEF, (
+        "the scaffolded brief carries a URL that ask will read as a fabricated citation"
+    )
+    assert layout.DEFAULT_BRIEF.strip(), "the brief is scaffolded with defaults"
 
 
-# --- what a sweep may file (SPEC-wiki-003) ---
+def test_a_page_cites_the_video_it_names_in_the_layouts_format():
+    assert layout.cites(f"see [it](https://www.youtube.com/watch?v={FILED}&t=95s).", FILED)
+    assert not layout.cites(f"watch?v={OTHER}&t=95s", FILED)
+    assert not layout.cites("no link at all", FILED)
 
 
-def test_eligibility_is_a_well_formed_id_present_media_and_a_rendered_page(tmp_path):
-    home = tmp_path
-    stock(home, "oldest00001", "2019-03-04")
-    stock(home, "medialess01", "2020-01-01", media=False)
-    stock(home, "unrendered1", "2020-01-01", page=False)
+# --- library: eligibility and sweep order --------------------------------------
+
+
+def test_the_sweep_orders_by_upload_date_then_id(home):
+    add_video(home, "tie-zebra-2", "2023-05-05")
+    add_video(home, "middle00002", "2021-07-09")
+    add_video(home, "tie-alpha-1", "2023-05-05")
+    add_video(home, "oldest00001", "2019-03-04")
+
+    assert library.eligible(home) == [
+        "oldest00001",
+        "middle00002",
+        "tie-alpha-1",
+        "tie-zebra-2",
+    ]
+
+
+def test_entries_a_filing_could_not_be_attempted_on_are_skipped_with_a_note(home):
+    add_video(home, "goodvideo01", "2020-01-01")
+    add_video(home, "medialess01", "2020-01-02", media=False)
+    add_video(home, "unrendered1", "2020-01-03", page=False)
     (home / "library" / "reading-notes").mkdir()
 
     notes = []
-    ready, skipped = layout.eligible(home, notes.append)
-
-    assert ready == ["oldest00001"]
-    assert skipped == 3
+    assert library.eligible(home, note=notes.append) == ["goodvideo01"]
+    said = "\n".join(notes)
     for name in ("medialess01", "unrendered1", "reading-notes"):
-        assert any(name in note for note in notes), f"{name} was skipped silently"
+        assert name in said, f"a skip the user cannot see is one they will never fix: {said}"
+    for note in notes:
+        # `summary_line` in the durable evals finds the sweep's one-line summary by
+        # looking for filed/skip/fail together; a skip note must never look like it.
+        assert not ("filed" in note and "fail" in note), note
 
 
-def test_the_sweep_order_is_upload_date_ascending_with_ties_broken_by_id(tmp_path):
-    home = tmp_path
-    for video_id, when in (
-        ("tie-zebra-2", "2023-05-05"),
-        ("middle00002", "2021-07-09"),
-        ("tie-alpha-1", "2023-05-05"),
-        ("oldest00001", "2019-03-04"),
-    ):
-        stock(home, video_id, when)
+def test_an_unreadable_meta_sorts_first_and_stays_eligible(home):
+    add_video(home, "goodvideo01", "2020-01-01")
+    add_video(home, "brokenmeta1", "2020-01-02")
+    (home / "library" / "brokenmeta1" / "meta.json").write_text("{ not json")
 
-    ready, _ = layout.eligible(home)
-    assert ready == ["oldest00001", "middle00002", "tie-alpha-1", "tie-zebra-2"]
+    assert library.eligible(home) == ["brokenmeta1", "goodvideo01"]
 
 
-def test_a_video_whose_metadata_cannot_be_read_files_last_rather_than_never(tmp_path):
-    """The archive page is what a filing reads, so illegible metadata is no
-    reason to leave a video out of the wiki forever — it only loses its place."""
-    home = tmp_path
-    stock(home, "readable001", "2030-01-01")
-    entry = stock(home, "unreadable1", "2019-01-01")
-    (entry / "meta.json").write_text("{not json")
-
-    ready, skipped = layout.eligible(home)
-    assert ready == ["readable001", "unreadable1"]
-    assert skipped == 0
+# --- the gate's individual checks ----------------------------------------------
 
 
-# --- the checks, one failure class at a time (SPEC-wiki-002) ---
+def test_unresolved_names_the_page_and_the_target(tmp_path):
+    wiki = wiki_with(tmp_path, notes__a="See [[b]] and [[nowhere]].", notes__b="b")
+    problems = gate.unresolved(wiki, layout.pages(wiki))
+    assert len(problems) == 1
+    assert "nowhere" in problems[0] and "notes/a.md" in problems[0]
 
 
-def test_a_clean_wiki_trips_none_of_the_standing_checks(tmp_path):
-    wiki = filed_wiki(tmp_path)
-    assert gate.unresolved(wiki) == []
-    assert gate.uncatalogued(wiki) == []
-    assert gate.dangling(wiki) == []
-    assert gate.unsourced(wiki) == []
-    assert gate.malformed(wiki) == []
-    assert gate.orphans(wiki) == []
+def test_uncatalogued_ignores_the_three_pinned_files(tmp_path):
+    wiki = wiki_with(tmp_path, notes__a="a", notes__b="b")
+    (wiki / layout.INDEX).write_text("- [A](notes/a.md)\n")
+
+    assert gate.uncatalogued(wiki, layout.pages(wiki)) == ["notes/b.md"]
 
 
-def test_a_dangling_wikilink_names_the_page_and_the_target(tmp_path):
-    wiki = filed_wiki(tmp_path)
-    page = wiki / SOURCES / f"{VID}.md"
-    page.write_text(page.read_text() + "\nCompare with [[nonexistent-page]].\n")
+def test_dangling_finds_catalog_lines_with_nothing_behind_them(tmp_path):
+    wiki = wiki_with(tmp_path, notes__a="a")
+    (wiki / layout.INDEX).write_text("- [A](notes/a.md)\n- [Ghost](notes/ghost.md)\n")
 
-    assert gate.unresolved(wiki) == [(f"{SOURCES}/{VID}.md", "nonexistent-page")]
+    assert gate.dangling(wiki) == ["notes/ghost.md"]
 
 
-def test_a_wikilink_resolves_to_a_page_at_any_depth(tmp_path):
-    wiki = make_wiki(
-        tmp_path,
-        {f"{NOTES}/deep/nested/idea.md": "# Idea\n", f"{NOTES}/a.md": "See [[idea]].\n"},
+def test_the_brief_is_compared_byte_for_byte(tmp_path):
+    wiki = wiki_with(tmp_path)
+    before = gate.snapshot(wiki)
+    assert gate.brief_kept(wiki, before) == []
+
+    (wiki / layout.BRIEF).write_text(layout.DEFAULT_BRIEF + "\n- one more rule\n")
+    problems = gate.brief_kept(wiki, before)
+    assert problems and layout.BRIEF in problems[0]
+
+
+def test_the_chronology_must_grow_at_the_end_and_gain_an_entry(tmp_path):
+    wiki = wiki_with(tmp_path)
+    (wiki / layout.LOG).write_text("## [2026-08-15] file | dQw4w9WgXcQ\n")
+    before = gate.snapshot(wiki)
+
+    (wiki / layout.LOG).write_text("# tidied\n## [2026-08-15] file | dQw4w9WgXcQ\n")
+    assert "append-only" in gate.chronology(wiki, before)[0]
+
+    (wiki / layout.LOG).write_text(
+        "## [2026-08-15] file | dQw4w9WgXcQ\nfiled another one\n"
     )
-    assert gate.unresolved(wiki) == []
+    assert "gained no entry" in gate.chronology(wiki, before)[0]
 
+    (wiki / layout.LOG).write_text(
+        "## [2026-08-15] file | dQw4w9WgXcQ\n\n## [2026-08-16] file | plainvide00\n"
+    )
+    assert gate.chronology(wiki, before) == []
 
-def test_the_catalog_is_checked_in_both_directions(tmp_path):
-    wiki = filed_wiki(tmp_path)
-    (wiki / NOTES / "stray.md").write_text("# Stray\n")
-    index = wiki / INDEX
-    index.write_text(index.read_text() + f"- [Ghost]({NOTES}/ghost.md)\n")
 
-    assert gate.uncatalogued(wiki) == [f"{NOTES}/stray.md"]
-    assert gate.dangling(wiki) == [f"{NOTES}/ghost.md"]
+def test_the_filing_marker_must_exist_and_cite_its_own_recording(tmp_path):
+    wiki = wiki_with(tmp_path)
+    assert "does not exist" in gate.marker_written(wiki, FILED)[0]
+
+    (wiki / "sources" / f"{FILED}.md").write_text(
+        f"# {FILED}\n\nSame ground as [the other](https://www.youtube.com/watch?v={OTHER}&t=95s).\n"
+    )
+    problems = gate.marker_written(wiki, FILED)
+    assert problems and FILED in problems[0]
+
+    (wiki / "sources" / f"{FILED}.md").write_text(
+        f"[here](https://www.youtube.com/watch?v={FILED}&t=95s)"
+    )
+    assert gate.marker_written(wiki, FILED) == []
+
+
+def test_a_source_page_may_not_be_deleted_or_renamed_away(tmp_path):
+    wiki = wiki_with(tmp_path, sources__dQw4w9WgXcQ="x")
+    before = gate.snapshot(wiki)
+    assert gate.sources_kept(wiki, before) == []
+
+    (wiki / "sources" / f"{FILED}.md").rename(wiki / "notes" / f"{FILED}.md")
+    problems = gate.sources_kept(wiki, before)
+    assert problems and f"sources/{FILED}.md" in problems[0]
+
+
+# --- the seams -----------------------------------------------------------------
+
+
+def test_a_missing_maintainer_seam_names_the_key(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    with pytest.raises(Usage) as absent:
+        seams.maintainer_command(home)
+    assert seams.MAINTAINER_KEY in str(absent.value)
+
+    (home / "config.toml").write_text('[wiki]\nmaintainer_command = "   "\n')
+    with pytest.raises(Usage) as blank:
+        seams.maintainer_command(home)
+    assert seams.MAINTAINER_KEY in str(blank.value)
+
+    (home / "config.toml").write_text('[wiki]\nmaintainer_command = "claude -p"\n')
+    assert seams.maintainer_command(home) == "claude -p"
+
+
+def test_ask_is_reached_by_its_published_verb_without_require_citation(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    record = home / "ask-calls"
+    script = home / "fake-ask.sh"
+    script.write_text(
+        f'#!/bin/sh\n{{ echo "argv: $*"; cat; }} >> "{record}"\n'
+    )
+    monkeypatch.setenv("TAPEDECK_ASK_CMD", f"sh {script}")
+
+    assert seams.unverifiable(home, "a page with a link") is None
+    argv = record.read_text().splitlines()[0]
+    assert seams.VERIFY in argv and "--require-citation" not in argv
+
+
+def test_asks_own_words_are_what_the_caller_relays(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    script = home / "fake-ask.sh"
+    script.write_text('#!/bin/sh\ncat > /dev/null\necho "unverifiable citation" >&2\nexit 1\n')
+    monkeypatch.setenv("TAPEDECK_ASK_CMD", f"sh {script}")
+
+    assert seams.unverifiable(home, "text") == "unverifiable citation"
+
+
+def test_the_tender_is_handed_no_video_id(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    wiki = home / "wiki"
+    wiki.mkdir(parents=True)
+    record = home / "seen"
+    script = home / "agent.sh"
+    script.write_text(
+        f'#!/bin/sh\n{{ pwd; echo "id=[$TAPEDECK_VIDEO_ID]"; echo "wiki=$TAPEDECK_WIKI"; cat; }}'
+        f' > "{record}"\n'
+    )
+    monkeypatch.setenv("TAPEDECK_VIDEO_ID", "leaked00001")  # must not survive
+
+    code, _ = seams.run_maintainer(f"sh {script}", home, wiki, "the task")
+    assert code == 0
+    seen = record.read_text().splitlines()
+    assert Path(seen[0]).resolve() == wiki.resolve()
+    assert seen[1] == "id=[]", seen
+    assert Path(seen[2].split("=", 1)[1]).resolve() == wiki.resolve()
+    assert "the task" in record.read_text()
+
+
+# --- the report ----------------------------------------------------------------
+
 
-
-def test_the_three_pinned_files_are_never_owed_a_catalog_line(tmp_path):
-    wiki = filed_wiki(tmp_path, index="")
-    assert set(gate.uncatalogued(wiki)) == {f"{SOURCES}/{VID}.md", f"{NOTES}/regeneration.md"}
-
-
-def test_a_source_page_that_cites_only_another_video_is_unsourced(tmp_path):
-    wiki = filed_wiki(tmp_path)
-    page = wiki / SOURCES / f"{VID}.md"
-    page.write_text(f"# {VID}\n\nSame ground as [other]({LINK.format(id=OTHER)}).\n")
-
-    assert gate.unsourced(wiki) == [VID]
-
-
-def test_a_heading_that_opens_like_an_entry_and_is_not_one_is_named(tmp_path):
-    wiki = filed_wiki(tmp_path)
-    log = wiki / LOG
-    log.write_text(log.read_text() + "\n## [not-a-date] file missing-the-pipe\n")
-
-    assert gate.malformed(wiki) == ["## [not-a-date] file missing-the-pipe"]
-    assert gate.malformed(filed_wiki(tmp_path / "clean")) == []
-
-
-def test_the_catalog_does_not_count_as_an_incoming_link(tmp_path):
-    """index.md links every page by rule, so counting it would mean no page is
-    ever an orphan and the finding would never say anything."""
-    wiki = filed_wiki(tmp_path)
-    (wiki / NOTES / "loose.md").write_text("# Loose\n\nStanding alone.\n")
-    index = wiki / INDEX
-    index.write_text(index.read_text() + f"- [Loose]({NOTES}/loose.md)\n")
-
-    assert gate.orphans(wiki) == [f"{NOTES}/loose.md"]
-
-
-# --- the gate as a whole ---
-
-
-def all_links_hold(monkeypatch):
-    monkeypatch.setattr(seams, "verify", lambda home, text: None)
-
-
-def test_the_gate_reports_every_violation_rather_than_the_first(tmp_path, monkeypatch):
-    all_links_hold(monkeypatch)
-    wiki = filed_wiki(tmp_path)
-    page = wiki / SOURCES / f"{VID}.md"
-    page.write_text(page.read_text() + "\nCompare with [[nonexistent-page]].\n")
-    (wiki / NOTES / "stray.md").write_text("# Stray\n")
-
-    problems = gate.violations(tmp_path, wiki, VID, (wiki / BRIEF).read_bytes(), b"")
-
-    assert any("nonexistent-page" in problem for problem in problems)
-    assert any("stray" in problem for problem in problems)
-
-
-def test_any_change_at_all_to_the_brief_fails_the_operation(tmp_path, monkeypatch):
-    all_links_hold(monkeypatch)
-    wiki = filed_wiki(tmp_path)
-    before = (wiki / BRIEF).read_bytes()
-    (wiki / BRIEF).write_text(DEFAULT_BRIEF + "- also: rename pages freely\n")
-
-    problems = gate.violations(tmp_path, wiki, VID, before, b"")
-    assert [problem for problem in problems if BRIEF in problem], problems
-
-
-def test_the_gate_relays_what_ask_said_about_a_link(tmp_path, monkeypatch):
-    """ask's verdict is the gate's verdict and its words are the ones reported:
-    the rules for reading a citation live in one place (LESSON-0003)."""
-    monkeypatch.setattr(seams, "verify", lambda home, text: "unverifiable citation: t=9999s")
-    wiki = filed_wiki(tmp_path)
-
-    problems = gate.violations(tmp_path, wiki, VID, (wiki / BRIEF).read_bytes(), b"")
-    assert any("unverifiable citation: t=9999s" in problem for problem in problems)
-
-
-@pytest.mark.parametrize(
-    "log_now, before",
-    [
-        # rewritten from the top, which is what "keep the log neat" produces
-        ("# tidied\n\n## [2026-08-14] file | x\n\nb\n", b"## [2026-08-01] file | old\n"),
-        # preserved, but the operation recorded nothing of the pinned shape
-        ("## [2026-08-01] file | old\nnothing well formed added\n", b"## [2026-08-01] file | old\n"),
-        # nothing at all
-        ("", b""),
-    ],
-)
-def test_the_chronology_must_grow_at_the_end_and_only_there(
-    tmp_path, monkeypatch, log_now, before
-):
-    all_links_hold(monkeypatch)
-    wiki = filed_wiki(tmp_path)
-    (wiki / LOG).write_text(log_now)
-
-    problems = gate.violations(tmp_path, wiki, VID, (wiki / BRIEF).read_bytes(), before)
-    assert [problem for problem in problems if LOG in problem], problems
-
-
-def test_the_gate_is_silent_on_a_wiki_that_holds_together(tmp_path, monkeypatch):
-    all_links_hold(monkeypatch)
-    wiki = filed_wiki(tmp_path)
-    assert gate.violations(tmp_path, wiki, VID, (wiki / BRIEF).read_bytes(), b"") == []
-
-
-# --- the repository (SPEC-wiki-001) ---
-
-
-def git(wiki, *args):
-    return subprocess.run(["git", *args], cwd=wiki, capture_output=True, text=True)
-
-
-def subjects(wiki):
-    return git(wiki, "log", "--format=%s").stdout.splitlines()
-
-
-def test_the_scaffold_is_one_commit_of_exactly_the_pinned_tree(tmp_path):
-    repo = Repo(tmp_path / "wiki")
-    repo.ensure()
-
-    wiki = repo.path
-    assert (wiki / SOURCES).is_dir() and (wiki / NOTES).is_dir()
-    assert (wiki / BRIEF).read_text() == DEFAULT_BRIEF
-    assert (wiki / INDEX).read_text() == "" and (wiki / LOG).read_text() == ""
-    assert subjects(wiki) == [SCAFFOLD]
-    assert git(wiki, "rev-parse", "--show-toplevel").stdout.strip().endswith("wiki")
-    assert not git(wiki, "status", "--porcelain").stdout.strip()
-
-
-def test_scaffolding_happens_once_and_never_again(tmp_path):
-    repo = Repo(tmp_path / "wiki")
-    repo.ensure()
-    mine = "# House rules\n\nOne page per idea.\n"
-    (repo.path / BRIEF).write_text(mine)
-    repo.commit("mine")
-
-    repo.ensure()
-    assert (repo.path / BRIEF).read_text() == mine, "a second call rewrote the brief"
-    assert subjects(repo.path) == ["mine", SCAFFOLD]
-
-
-def test_a_rollback_removes_untracked_work_and_keeps_the_users_commit(tmp_path):
-    """A reset alone leaves exactly the half-written pages the rollback exists to
-    remove, and stopping one commit short would take the user's writing with it."""
-    repo = Repo(tmp_path / "wiki")
-    repo.ensure()
-    wiki = repo.path
-    mine = "Mine: written by hand between two filings.\n"
-    (wiki / NOTES / "mine.md").write_text(mine)
-
-    repo.commit_pending()
-    before = repo.head()
-    (wiki / NOTES / "half.md").write_text("half a thought\n")
-    (wiki / INDEX).write_text("- [Half](notes/half.md)\n")
-    repo.restore(before)
-
-    assert (wiki / NOTES / "mine.md").read_text() == mine
-    assert not (wiki / NOTES / "half.md").exists(), "an untracked page survived the rollback"
-    assert (wiki / INDEX).read_text() == ""
-    assert subjects(wiki) == [USER_EDITS, SCAFFOLD]
-
-
-def test_a_rollback_puts_the_wikis_shape_back(tmp_path):
-    """git is indifferent to empty directories and a clean takes them with it,
-    which is not a licence to leave the wiki without sources/ and notes/."""
-    repo = Repo(tmp_path / "wiki")
-    repo.ensure()
-    repo.restore(repo.head())
-    assert (repo.path / SOURCES).is_dir() and (repo.path / NOTES).is_dir()
-
-
-def test_nothing_pending_means_no_commit_of_its_own(tmp_path):
-    repo = Repo(tmp_path / "wiki")
-    repo.ensure()
-    repo.commit_pending()
-    assert subjects(repo.path) == [SCAFFOLD]
-
-
-def test_the_scaffolded_brief_survives_the_gate_it_describes(tmp_path, monkeypatch):
-    """The default brief is read by the same checks as every other page, so an
-    example wikilink or a specimen URL in it would fail every filing."""
-    all_links_hold(monkeypatch)
-    repo = Repo(tmp_path / "wiki")
-    repo.ensure()
-    assert gate.unresolved(repo.path) == []
-    assert "youtube.com" not in DEFAULT_BRIEF, "a specimen URL is checked as a claim"
-
-
-# --- the seam (SPEC-core-004) ---
-
-
-def test_a_missing_maintainer_seam_names_the_key_and_the_file(tmp_path):
-    (tmp_path / "config.toml").write_text("# no seam configured\n")
-    with pytest.raises(Usage) as raised:
-        seams.maintainer_command(tmp_path)
-    assert seams.MAINTAINER_KEY in str(raised.value)
-    assert str(tmp_path / "config.toml") in str(raised.value)
-
-
-@pytest.mark.parametrize("body", ['[wiki]\nmaintainer_command = ""\n', "", "[wiki]\n"])
-def test_an_empty_or_absent_seam_is_a_usage_error(tmp_path, body):
-    (tmp_path / "config.toml").write_text(body)
-    with pytest.raises(Usage):
-        seams.maintainer_command(tmp_path)
-
-
-def test_a_configured_seam_comes_back_stripped(tmp_path):
-    (tmp_path / "config.toml").write_text('[wiki]\nmaintainer_command = "  sh run.sh  "\n')
-    assert seams.maintainer_command(tmp_path) == "sh run.sh"
-
-
-def test_config_that_is_not_toml_is_a_usage_error_not_a_crash(tmp_path):
-    (tmp_path / "config.toml").write_text("[wiki\n")
-    with pytest.raises(Usage):
-        seams.maintainer_command(tmp_path)
-
-
-def test_the_task_tells_the_maintainer_what_it_is_filing(tmp_path):
-    task = seams.task(VID, tmp_path / "archive" / f"{VID}.md", "2026-08-14")
-    assert VID in task and str(tmp_path) in task
-    assert f"## [2026-08-14] file | {VID}" in task, "the log's shape is spelled out"
-
-
-def test_ask_is_reached_by_the_documented_override(monkeypatch):
-    monkeypatch.delenv(seams.ASK_ENV, raising=False)
-    assert seams.ask_argv()[1:] == ["-m", "ask"]
-    monkeypatch.setenv(seams.ASK_ENV, "sh /tmp/fake ask.sh")
-    assert seams.ask_argv() == ["sh", "/tmp/fake", "ask.sh"]
-
-
-def test_verify_relays_what_ask_wrote_and_says_nothing_of_its_own(tmp_path, monkeypatch):
-    script = tmp_path / "ask.sh"
-    script.write_text('#!/bin/sh\ncat > /dev/null\necho "unverifiable: t=9999s" >&2\nexit 1\n')
-    monkeypatch.setenv(seams.ASK_ENV, f"sh {script}")
-    assert seams.verify(tmp_path, "text") == "unverifiable: t=9999s"
-
+@needs_git
+def test_the_lint_report_is_one_aligned_line_per_check(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    (home / "library").mkdir(parents=True)
+    (home / "archive").mkdir()
+    wiki = home / "wiki"
+    wiki.mkdir()
+    repo.ready(wiki)
+    (wiki / "notes" / "a.md").write_text("Standing alone.")
+    (wiki / layout.INDEX).write_text("- [A](notes/a.md)\n")
+
+    script = home / "fake-ask.sh"
     script.write_text("#!/bin/sh\ncat > /dev/null\n")
-    assert seams.verify(tmp_path, "text") is None
+    monkeypatch.setenv("TAPEDECK_ASK_CMD", f"sh {script}")
+
+    assert lint.lint(home, as_json=False) == 0
+    printed = capsys.readouterr().out.splitlines()
+    assert [line.split()[0] for line in printed] == list(lint.CHECKS)
+    columns = {line.index(line.split()[1], len(line.split()[0])) for line in printed}
+    assert len(columns) == 1, f"the status column drifts: {printed}"
+    assert all(len(line.split(maxsplit=2)) == 3 for line in printed), (
+        f"every check carries a reason, the passes included: {printed}"
+    )
+    assert "\x1b" not in "\n".join(printed)
 
 
-def test_ask_that_cannot_be_reached_is_an_operation_failure(tmp_path, monkeypatch):
-    monkeypatch.setenv(seams.ASK_ENV, str(tmp_path / "not-a-program"))
-    with pytest.raises(Failure):
-        seams.verify(tmp_path, "text")
+@needs_git
+def test_lint_json_and_the_human_report_agree(tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    (home / "library").mkdir(parents=True)
+    wiki = home / "wiki"
+    wiki.mkdir()
+    repo.ready(wiki)
+    (wiki / "notes" / "a.md").write_text("Points at [[nowhere]].")
+    (wiki / layout.INDEX).write_text("- [A](notes/a.md)\n")
+    script = home / "fake-ask.sh"
+    script.write_text("#!/bin/sh\ncat > /dev/null\n")
+    monkeypatch.setenv("TAPEDECK_ASK_CMD", f"sh {script}")
 
-
-# --- the report (SPEC-wiki-004) ---
-
-
-def test_every_check_is_reported_in_the_pinned_order(tmp_path, monkeypatch):
-    all_links_hold(monkeypatch)
-    wiki = filed_wiki(tmp_path)
-    stock(tmp_path, VID)
-
-    rows = lint.diagnose(tmp_path, wiki)
+    assert lint.lint(home, as_json=True) == 1, "a dangling link fails the run"
+    rows = json.loads(capsys.readouterr().out)
     assert [row["check"] for row in rows] == list(lint.CHECKS)
-    assert all(row["detail"].strip() for row in rows), "a check with no reason given"
-    assert {row["status"] for row in rows} <= {lint.PASS, lint.FAIL, lint.INFO}
+    assert {row["status"] for row in rows} <= {"pass", "fail", "info"}
+    assert all(row["detail"].strip() for row in rows)
+    by_check = {row["check"]: row for row in rows}
+    assert by_check["wikilinks"]["status"] == "fail"
+    assert "nowhere" in by_check["wikilinks"]["detail"]
+    assert by_check["orphans"]["status"] == "info", "info never decides the exit code"
 
 
-def test_the_two_reporting_checks_are_info_whether_or_not_they_found_anything(
-    tmp_path, monkeypatch
-):
-    all_links_hold(monkeypatch)
-    wiki = filed_wiki(tmp_path)
-    stock(tmp_path, VID)
-
-    rows = {row["check"]: row for row in lint.diagnose(tmp_path, wiki)}
-    assert rows["unfiled"]["status"] == lint.INFO
-    assert rows["orphans"]["status"] == lint.INFO
-    assert all(rows[name]["status"] == lint.PASS for name in lint.CHECKS[:6])
+def test_a_missing_wiki_is_a_usage_error_naming_the_path(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    with pytest.raises(Usage) as refused:
+        lint.lint(home, as_json=False)
+    assert str(home / "wiki") in str(refused.value)
+    assert not (home / "wiki").exists()
 
 
-def test_a_video_the_library_no_longer_holds_fails_the_filed_check(tmp_path, monkeypatch):
-    all_links_hold(monkeypatch)
-    wiki = filed_wiki(tmp_path)  # no library at all: the video is gone
-
-    rows = {row["check"]: row for row in lint.diagnose(tmp_path, wiki)}
-    assert rows["filed"]["status"] == lint.FAIL
-    assert VID in rows["filed"]["detail"]
+# --- the repository ------------------------------------------------------------
 
 
-def test_a_detail_is_always_one_line_so_the_report_stays_a_column(tmp_path, monkeypatch):
-    monkeypatch.setattr(seams, "verify", lambda home, text: "broke\nover\nlines")
-    wiki = filed_wiki(tmp_path)
+@needs_git
+def test_the_scaffold_is_one_commit_and_happens_once(tmp_path):
+    wiki = tmp_path / "wiki"
+    repo.ready(wiki)
 
-    rows = lint.diagnose(tmp_path, wiki)
-    assert all("\n" not in row["detail"] for row in rows)
-    report = lint.report(rows)
-    assert len(report.splitlines()) == len(lint.CHECKS)
-    columns = {line.index(row["status"]) for line, row in zip(report.splitlines(), rows)}
-    assert len(columns) == 1, f"the status does not start at one column: {columns}"
+    for name in layout.PINNED:
+        assert (wiki / name).is_file()
+    assert (wiki / "sources").is_dir() and (wiki / "notes").is_dir()
+    assert (wiki / layout.INDEX).read_text() == ""
+    assert repo.git(wiki, "rev-parse", "--show-toplevel").strip().endswith("wiki")
+    assert len(repo.git(wiki, "log", "--format=%s").splitlines()) == 1
+
+    mine = "# House rules\n"
+    (wiki / layout.BRIEF).write_text(mine)
+    repo.ready(wiki)
+    assert (wiki / layout.BRIEF).read_text() == mine, "the brief is scaffolded once"
 
 
-def test_a_missing_wiki_is_a_usage_error_and_makes_nothing(tmp_path):
-    with pytest.raises(Usage) as raised:
-        lint.run(tmp_path, as_json=False)
-    assert str(tmp_path / "wiki") in str(raised.value)
-    assert not (tmp_path / "wiki").exists()
+@needs_git
+def test_a_directory_that_is_not_its_own_repository_is_not_versioned(tmp_path):
+    outer = tmp_path / "outer"
+    (outer / "wiki").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=outer, check=True)
+
+    assert not repo.versioned(outer / "wiki"), (
+        "git searches upward; a wiki inside another repository must not be mistaken "
+        "for one of its own, or a reset --hard would land in the enclosing repo"
+    )
+
+
+@needs_git
+def test_restore_takes_untracked_work_with_it_and_keeps_the_shape(tmp_path):
+    wiki = tmp_path / "wiki"
+    repo.ready(wiki)
+    before = repo.head(wiki)
+
+    (wiki / "notes" / "half.md").write_text("half a thought")
+    (wiki / layout.LOG).write_text("a tracked edit")
+    repo.restore(wiki, before)
+
+    assert not (wiki / "notes" / "half.md").exists(), "reset --hard alone leaves this"
+    assert (wiki / layout.LOG).read_text() == "", "clean -fd alone leaves this"
+    assert (wiki / "notes").is_dir() and (wiki / "sources").is_dir()
+
+
+@needs_git
+def test_pending_user_edits_become_the_pre_run_commit(tmp_path):
+    wiki = tmp_path / "wiki"
+    repo.ready(wiki)
+    (wiki / "notes" / "mine.md").write_text("written by hand")
+
+    pre_run = repo.commit_pending(wiki)
+    assert repo.git(wiki, "log", "--format=%s").splitlines()[0] == repo.USER_EDITS
+    assert not repo.dirty(wiki)
+
+    (wiki / "notes" / "later.md").write_text("the agent's")
+    repo.restore(wiki, pre_run)
+    assert (wiki / "notes" / "mine.md").is_file(), "the rollback went back too far"
+    assert not (wiki / "notes" / "later.md").exists()
+
+    assert repo.commit_pending(wiki) == pre_run, "a clean tree commits nothing"
+
+
+@needs_git
+def test_one_operation_holds_the_wiki_at_a_time(tmp_path):
+    wiki = tmp_path / "wiki"
+    repo.ready(wiki)
+    held = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl, os, sys, time\n"
+            "fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR)\n"
+            "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+            "print('held', flush=True)\n"
+            "time.sleep(30)\n",
+            str(wiki / ".git" / repo.LOCK),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert held.stdout.readline().strip() == "held"
+        with pytest.raises(Busy) as refused:
+            with repo.held(wiki):
+                pass
+        assert "another wiki operation" in str(refused.value)
+    finally:
+        held.kill()
+        held.wait()
+
+    with repo.held(wiki):  # released with the process that held it
+        pass

@@ -1,200 +1,123 @@
-"""The wiki's own git repository: history is its memory and its recovery at once.
+"""The wiki as its own git repository: the scaffold, the lock, the commits, the undo.
 
-`wiki/` is initialized by tapedeck and nested inside nothing — not the code repo,
-which holds no user data, and not the library, which holds gigabytes of video
-that nothing should be asked to version. Every accepted operation is a commit, so
-the user can read what changed, revert a filing they dislike, and push the whole
-thing to a remote of their own without tapedeck knowing or caring.
+git is not paperwork here, it is the whole safety net. The wiki is the one layer
+of tapedeck nothing can reconstruct (SPEC-wiki-001), so every accepted operation
+is a commit and every rejected one is a reset — and the user's own hand-edits are
+made into history *first*, as a `user edits` commit, so the rollback an agent's
+failure triggers goes back to a state that still contains them. Nothing a person
+typed is ever lost to a machine's failed attempt.
 
-This module is therefore the whole of what "undone" means here: `git reset
---hard` **and** `git clean -fd`, back to the pre-run commit rather than the one
-before it. Both halves matter. A maintainer's new pages are untracked, so a reset
-alone leaves exactly the half-written work the rollback exists to remove; and the
-pre-run commit is the one that already holds the user's pending hand-edits, so no
-machine's failed attempt takes a person's writing with it. Git is indifferent to
-empty directories and a clean will take `sources/` and `notes/` with it, which is
-not a licence to leave the wiki missing its shape — so restoring puts them back.
+Going back means `git reset --hard` **and** `git clean -fd`, always both: the
+pages a maintainer creates are untracked, so a reset alone leaves exactly the
+half-written work the rollback exists to remove, and a clean alone leaves its
+edits to tracked ones. git is indifferent to empty directories and a clean takes
+`sources/` and `notes/` with it, which is not a licence to leave the wiki missing
+its shape — so restoring puts them back.
 
-Scaffolding happens once and never again (SPEC-wiki-001). The brief below is a
-default in exactly the sense `config.toml` is one: written so there is something
-to read and edit on the first day, and never rewritten, reformatted or migrated
-after that. A brief the user has replaced wholesale is the intended end state.
+"Its own repository" is checked rather than assumed, and the check is `wiki/.git`
+rather than asking git where it stands: git searches upward, so a `wiki/` that is
+merely a directory inside some larger repository would answer that question with
+the enclosing one — and a `reset --hard` and `clean -fd` aimed there would be a
+catastrophe several directories wide.
+
+The lock is here for LESSON-0004. It lives inside the git directory, which no
+reset and no clean ever reaches, it is advisory, and the operating system drops it
+with the process that held it — so a crashed operation leaves nothing to clean up,
+and a second mutating operation refuses at once rather than interleaving its steps
+with a neighbour's and committing that neighbour's work-in-progress as `user
+edits`.
 """
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import os
 import subprocess
 from pathlib import Path
 
-from . import Failure
-from .layout import BRIEF, INDEX, LOG, NOTES, SOURCES
+from . import Busy, Failure
+from .layout import BRIEF, DEFAULT_BRIEF, GIT, INDEX, LOG, TREES
 
+SCAFFOLD_SUBJECT = "wiki scaffold"
 USER_EDITS = "user edits"
-SCAFFOLD = "wiki scaffold"
-# Used only when the machine has no identity of its own to commit under; a wiki
-# that cannot be committed to is a wiki that cannot be filed into.
+LOCK = "tapedeck-wiki.lock"
+# Used only where this machine's git has no identity of its own: a user who
+# configured one still commits under it, in a repository that is theirs to push.
 FALLBACK = ("tapedeck", "tapedeck@localhost")
 
 
-class GitError(Failure):
-    """git could not do something the wiki's bookkeeping depends on."""
+def _run(wiki: Path, args: list[str]) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(["git", *args], cwd=wiki, capture_output=True, text=True)
+    except OSError as exc:
+        raise Failure(f"could not run git in {wiki} — {exc}") from exc
 
 
-DEFAULT_BRIEF = """\
-# The tapedeck wiki
-
-You maintain this wiki. It is the prose side of a video library: what the videos
-said, what it amounts to, and how it all connects. Each time tapedeck files a
-video you are run here, in this directory, with one video to read about and the
-whole wiki to write into.
-
-This file is yours — the person whose library this is — to rewrite. tapedeck
-wrote this first version so there would be something here on day one, and will
-never touch it again.
-
-## Where things are
-
-- `sources/<video-id>.md` — one page per filed video. Its existence is how
-  tapedeck knows that video has been filed, so the page you were asked for has to
-  be there when you stop.
-- `notes/` — everything else: ideas, arguments, people, open questions. How they
-  are named and foldered is this file's business, which is to say yours.
-- `index.md` — the catalog: one markdown-linked line per page.
-- `log.md` — the chronology. Appended to, never edited.
-
-Your reading material sits outside the wiki and is read-only.
-`$TAPEDECK_ARCHIVE_PAGE` is the page for the video being filed — its headings
-carry a deep link into every section — `$TAPEDECK_HOME/archive/` holds every
-other one, and `$TAPEDECK_VIDEO_ID` is the video in question.
-
-## What is checked before your work is kept
-
-Everything you write lands as one commit or is thrown away entire. The checks are
-mechanical, they run over the whole wiki rather than over your diff, and each one
-is about something a later reader would otherwise trip over:
-
-1. This file is never edited. It is your instructions; an agent that may rewrite
-   its own instructions has none.
-2. `sources/<video-id>.md` exists and carries at least one deep link into the
-   video it is about. Copy those links out of the archive page's headings — never
-   reconstruct one from memory.
-3. Every wiki link resolves. A wiki link is a page's filename without `.md`,
-   wrapped in doubled square brackets, matched case-sensitively, and satisfied by
-   a page anywhere in here; put a display alias after a `|` if you want one.
-4. Every deep link anywhere in the wiki names a real video at a moment inside it.
-   Links are verified against the library — in this file too, so an example URL
-   written out in full here would be read as a claim and checked as one.
-5. `index.md` links every page except these three.
-6. `log.md` still begins with exactly what it said before, and has gained an
-   entry of the form `## [YYYY-MM-DD] file | <video-id>` followed by whatever you
-   want to say about the filing.
-
-## House style — replace this with your own
-
-A starting point, and the part of this file most worth rewriting.
-
-- A source page says what the video is, what it actually argues, and what it
-  connects to. Quote sparingly, and anchor each quote to its moment.
-- A claim earns its own note in `notes/` when a second video touches it. One idea
-  per page; the filename is the idea, in lower-case-with-hyphens.
-- Link generously. A wiki is worth re-reading for its edges, not its pages.
-- Write for the person who comes back in a year remembering only that they
-  watched something about this.
-"""
+_IDENTITY: dict[str, list[str]] = {}
 
 
-class Repo:
-    """The wiki directory, and the git operations the wiki's rules are made of."""
+def _settings(wiki: Path) -> list[str]:
+    """What every call here carries. Signing is off because a filing that blocks
+    on a passphrase prompt is one nobody is there to answer; an identity is
+    supplied only where the machine has none of its own, so a user who configured
+    one still commits under it. The probe is asked once per run — a sweep of forty
+    should not spend eighty subprocesses learning the same answer."""
+    key = str(wiki)
+    if key not in _IDENTITY:
+        settings = ["-c", "commit.gpgsign=false"]
+        if _run(wiki, ["var", "GIT_COMMITTER_IDENT"]).returncode != 0:
+            name, email = FALLBACK
+            settings += ["-c", f"user.name={name}", "-c", f"user.email={email}"]
+        _IDENTITY[key] = settings
+    return _IDENTITY[key]
 
-    def __init__(self, path: Path):
-        self.path = path
-        self._settings: list[str] | None = None
 
-    # --- plumbing ---
+def git(wiki: Path, *args: str) -> str:
+    result = _run(wiki, [*_settings(wiki), *args])
+    if result.returncode != 0:
+        complaint = (result.stderr or result.stdout).strip()
+        raise Failure(f"git {args[0]} failed in {wiki}: {complaint}")
+    return result.stdout
 
-    def _run(self, args: list[str]) -> subprocess.CompletedProcess:
-        try:
-            return subprocess.run(
-                ["git", *args], cwd=self.path, capture_output=True, text=True
-            )
-        except OSError as exc:
-            raise GitError(f"could not run git in {self.path} — {exc}") from exc
 
-    def _config(self) -> list[str]:
-        """Overrides every git call here carries. Signing is off because a filing
-        that blocks on a passphrase prompt is a filing nobody is there to answer;
-        an identity is supplied only when the machine has none of its own, so a
-        user who configured one still commits under it."""
-        if self._settings is None:
-            settings = ["-c", "commit.gpgsign=false"]
-            if self._run(["var", "GIT_COMMITTER_IDENT"]).returncode != 0:
-                name, email = FALLBACK
-                settings += ["-c", f"user.name={name}", "-c", f"user.email={email}"]
-            self._settings = settings
-        return self._settings
+def exists(wiki: Path) -> bool:
+    return wiki.is_dir()
 
-    def git(self, *args: str) -> str:
-        result = self._run([*self._config(), *args])
-        if result.returncode != 0:
-            complaint = (result.stderr or result.stdout).strip()
-            raise GitError(f"git {args[0]} failed in {self.path}: {complaint}")
-        return result.stdout
 
-    # --- the wiki's shape ---
+def versioned(wiki: Path) -> bool:
+    """`.git` is a directory in an ordinary repository and a file in a worktree;
+    either means this wiki keeps its own history, which is the invariant."""
+    return (wiki / GIT).exists()
 
-    @property
-    def exists(self) -> bool:
-        # `.git` is a directory in an ordinary repo and a file in a worktree; both
-        # mean the same thing here, which is that this wiki is already versioned.
-        return (self.path / ".git").exists()
 
-    def shape(self) -> None:
-        """The two directories the layout pins, which git does not keep for us."""
-        for name in (SOURCES, NOTES):
-            (self.path / name).mkdir(parents=True, exist_ok=True)
+def shape(wiki: Path) -> None:
+    """The two directories the layout pins, which git will not keep for us."""
+    for tree in TREES:
+        (wiki / tree).mkdir(parents=True, exist_ok=True)
 
-    def ensure(self) -> None:
-        """Scaffold on first use and never again: a wiki that is already there is
-        left exactly as the user left it, its brief above all."""
-        if self.exists:
-            return
-        self.path.mkdir(parents=True, exist_ok=True)
-        self.shape()
-        _create(self.path / BRIEF, DEFAULT_BRIEF)
-        _create(self.path / INDEX, "")
-        _create(self.path / LOG, "")
-        # Plainly, not through git(): the identity probe there wants a repository
-        # to ask inside, and this is the call that makes one.
-        made = self._run(["init", "-q"])
-        if made.returncode != 0:
-            raise GitError(
-                f"could not make {self.path} a git repository: "
-                f"{(made.stderr or made.stdout).strip()}"
-            )
-        self.commit(SCAFFOLD)
 
-    # --- history ---
-
-    def dirty(self) -> bool:
-        return bool(self._run(["status", "--porcelain"]).stdout.strip())
-
-    def commit(self, subject: str) -> None:
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", subject)
-
-    def commit_pending(self) -> None:
-        """Whatever the user left in the working tree becomes history before this
-        run touches anything, so the state a rollback lands on already holds it."""
-        if self.dirty():
-            self.commit(USER_EDITS)
-
-    def head(self) -> str:
-        return self.git("rev-parse", "HEAD").strip()
-
-    def restore(self, commit: str) -> None:
-        self.git("reset", "--hard", "-q", commit)
-        self.git("clean", "-qfd")
-        self.shape()
+def ready(wiki: Path) -> None:
+    """Scaffold on first use and never again: a wiki that is already versioned is
+    left exactly as the user left it, its brief above all. A `wiki/` that exists
+    without a repository is not left half-made either — it is given the history
+    every later step compares against, and the files it is already carrying are
+    kept as they are."""
+    if versioned(wiki):
+        return
+    wiki.mkdir(parents=True, exist_ok=True)
+    shape(wiki)
+    _create(wiki / BRIEF, DEFAULT_BRIEF)
+    _create(wiki / INDEX, "")
+    _create(wiki / LOG, "")
+    # Plainly, not through git(): the identity probe there wants a repository to
+    # ask inside, and this is the call that makes one.
+    made = _run(wiki, ["-c", "init.defaultBranch=main", "init", "-q"])
+    if made.returncode != 0:
+        raise Failure(
+            f"could not make {wiki} a git repository: {(made.stderr or made.stdout).strip()}"
+        )
+    commit(wiki, SCAFFOLD_SUBJECT)
 
 
 def _create(path: Path, text: str) -> None:
@@ -204,3 +127,72 @@ def _create(path: Path, text: str) -> None:
             handle.write(text)
     except FileExistsError:
         pass
+
+
+def dirty(wiki: Path) -> bool:
+    return bool(_run(wiki, ["status", "--porcelain"]).stdout.strip())
+
+
+def commit(wiki: Path, subject: str) -> None:
+    """Stage everything and record it. Hooks are skipped: a wiki operation must
+    not fail on a hook the user wrote for something else."""
+    git(wiki, "add", "-A")
+    made = _run(wiki, [*_settings(wiki), "commit", "--no-verify", "-q", "-m", subject])
+    if made.returncode != 0 and dirty(wiki):
+        raise Failure(
+            f"could not commit {subject!r} in {wiki}: {(made.stderr or made.stdout).strip()}"
+        )
+
+
+def commit_pending(wiki: Path) -> str:
+    """Whatever the user left in the working tree becomes history before this run
+    touches anything, and that commit is the pre-run commit every later step
+    refers to — so every undo stops on the far side of a person's writing."""
+    if dirty(wiki):
+        commit(wiki, USER_EDITS)
+    return head(wiki)
+
+
+def head(wiki: Path) -> str:
+    return git(wiki, "rev-parse", "HEAD").strip()
+
+
+def restore(wiki: Path, commitish: str) -> None:
+    """Back to the pre-run commit, taking untracked work with it."""
+    git(wiki, "reset", "--hard", "-q", commitish)
+    git(wiki, "clean", "-qfd")
+    shape(wiki)
+
+
+def _git_dir(wiki: Path) -> Path:
+    inside = wiki / GIT
+    if inside.is_dir():
+        return inside
+    resolved = _run(wiki, ["rev-parse", "--absolute-git-dir"])
+    if resolved.returncode != 0:
+        raise Failure(f"{wiki} is not a git repository of its own")
+    return Path(resolved.stdout.strip())
+
+
+@contextlib.contextmanager
+def held(wiki: Path):
+    """Hold the wiki for exactly one operation, or refuse at once.
+
+    A caller that finds the lock taken does not wait and does not interleave. The
+    refusal costs nothing a sweep cannot recover — filing is idempotent and the
+    next `sync` converges — while waiting would put two operations' commits into
+    each other, which is the failure LESSON-0004 is made of.
+    """
+    handle = os.open(_git_dir(wiki) / LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise Busy(
+                "another wiki operation is running and holds this wiki until it "
+                "commits or rolls back — re-run when it is done; `tapedeck wiki sync` "
+                "picks up whatever is left"
+            ) from exc
+        yield
+    finally:
+        os.close(handle)

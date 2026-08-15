@@ -1,168 +1,150 @@
-"""The acceptance gate, and the checks `lint` re-asks of a standing wiki.
+"""The acceptance gate: what a maintainer's work has to survive to be committed.
 
-The maintainer may write anything; this decides what lands (SPEC-wiki-002). Two
-properties matter more than any individual check. It judges the **whole wiki**
-rather than the diff, because a filing that fixes its own page while breaking a
-link three notes away is exactly the failure worth catching. And every check is
-independent and every failure is reported, because the maintainer gets one run
-per operation and the user pays for each — a gate that reports one fault at a
-time turns one rejection into several.
+tapedeck does not review the agent's prose, its taxonomy, or its judgment about
+what deserves a note. It reviews the result, and it reviews the **whole wiki**
+rather than the diff — a maintainer edits wherever the brief sends it, and a
+filing that fixes its own page while breaking a link three notes away is exactly
+the failure this catches.
 
-Each violation names the thing that broke it: the file that changed, the target
-that dead-ends, the page the catalog forgot. A rejection nobody can act on costs
-a maintainer run and buys nothing.
+Every check is independent and every failure is reported. One rejected run costs a
+maintainer invocation, and a gate that stopped at the first violation would turn
+one rejection into several. Every violation names the thing that broke it — the
+file that changed, the target that dead-ends, the page the catalog forgot —
+because a rejection nobody can act on buys nothing.
 
-The individual checks are exported because `lint` asks the same questions of a
-wiki nobody just wrote (SPEC-wiki-004). The gate is a moment and the wiki is a
-life: what it accepts is sound the second it is committed, and nothing gates the
-rename, the deletion or the reclaimed video that comes after.
+Three of the checks are about a before and an after, and what they compare against
+is read off the disk before the agent runs rather than out of git afterwards: the
+question is what the file said, not what a checkout of it would say.
+
+The individual checks are exported because `lint` re-asks them of a wiki nobody
+just wrote (SPEC-wiki-004), and because the two must never disagree — a linter
+that sent the user to fix a page the gate is perfectly happy with would be worse
+than no linter. The one thing neither of them re-derives is citation grammar:
+pages go to ask's published `verify`, one page's text per invocation, and what ask
+says about a bad link is what reaches the user (LESSON-0003).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NamedTuple
 
-from . import seams
-from .layout import (
-    BRIEF,
-    ENTRY,
-    INDEX,
-    LOG,
-    OPENS_LIKE_ENTRY,
-    PAGE,
-    PINNED,
-    SOURCES,
-    catalogued,
-    cites,
-    pages,
-    rel,
-    source_page,
-    source_pages,
-    targets,
-    text_of,
-)
+from . import layout, seams
 
 
-def violations(
-    home: Path, wiki: Path, video_id: str, brief_before: bytes | None, log_before: bytes
-) -> list[str]:
-    """Everything wrong with the wiki as the maintainer left it, all of it."""
-    return [
-        *_brief_kept(wiki, brief_before),
-        *_filed(wiki, video_id),
-        *(
-            f"{page}: the wiki link to {target!r} resolves to no page in the wiki"
-            for page, target in unresolved(wiki)
+class Before(NamedTuple):
+    """What the wiki said when the operation began."""
+
+    brief: bytes | None
+    log: bytes
+    sources: frozenset[str]
+
+
+def snapshot(wiki: Path) -> Before:
+    """Taken after the `user edits` commit and before the agent runs, so what the
+    gate compares against is the state the rollback would return to."""
+    brief = wiki / layout.BRIEF
+    log = wiki / layout.LOG
+    return Before(
+        brief=brief.read_bytes() if brief.is_file() else None,
+        log=log.read_bytes() if log.is_file() else b"",
+        sources=frozenset(
+            layout.name(wiki, page) for page in layout.source_pages(wiki)
         ),
-        *(f"{page}: {said}" for page, said in unverifiable(home, wiki)),
-        *(
-            f"{INDEX} does not link {page} — a page the catalog omits is a page "
-            f"nobody opening this directory will find"
-            for page in uncatalogued(wiki)
-        ),
-        *_chronology(wiki, log_before),
-    ]
+    )
 
 
-# --- the two checks that are about this operation ---
+def brief_kept(wiki: Path, before: Before) -> list[str]:
+    """The user's instructions to the maintainer, byte for byte.
 
-
-def _brief_kept(wiki: Path, before: bytes | None) -> list[str]:
-    path = wiki / BRIEF
-    if (path.read_bytes() if path.is_file() else None) == before:
+    An agent that may rewrite its own instructions has none — it has a draft — so
+    any change at all fails, including one the maintainer believes is an
+    improvement.
+    """
+    path = wiki / layout.BRIEF
+    now = path.read_bytes() if path.is_file() else None
+    if now == before.brief:
         return []
     return [
-        f"{BRIEF} was changed — the brief is the user's instructions to the "
-        f"maintainer, and a maintainer that may rewrite its own instructions has "
-        f"none, so any change at all fails the whole operation"
+        f"{layout.BRIEF} was changed — the brief is the user's instructions to the "
+        f"maintainer, and an agent that may rewrite its own instructions has none"
     ]
 
 
-def _filed(wiki: Path, video_id: str) -> list[str]:
-    path = source_page(wiki, video_id)
-    name = f"{SOURCES}/{video_id}{PAGE}"
-    if not path.is_file():
+def marker_written(wiki: Path, video_id: str) -> list[str]:
+    """The filing's own claim: the page exists, and it is anchored in the
+    recording it describes rather than being a summary of a memory."""
+    page = layout.source_page(wiki, video_id)
+    where = layout.name(wiki, page)
+    if not page.is_file():
         return [
-            f"{name} does not exist — that page is the whole record that "
+            f"{where} does not exist — that page is the whole record that "
             f"{video_id} has been filed"
         ]
-    if not cites(text_of(path), video_id):
+    if not layout.cites(layout.read(page), video_id):
         return [
-            f"{name} carries no deep link into {video_id} — a source page with no "
-            f"anchor in its own recording is a summary of a memory rather than a "
-            f"reading of it"
+            f"{where} carries no deep link into {video_id} itself — a source page "
+            f"with no anchor in its own recording is a summary of a memory"
         ]
     return []
 
 
-def _chronology(wiki: Path, before: bytes) -> list[str]:
-    """Append-only as a byte-prefix, which is the only reading of it an agent
-    cannot argue with, and then one new entry of the pinned shape."""
-    path = wiki / LOG
-    if not path.is_file():
-        return [f"{LOG} is missing — the chronology is the wiki's record of itself"]
-    now = path.read_bytes()
-    if not now.startswith(before):
-        return [
-            f"{LOG} no longer begins with what it said before this run — the "
-            f"chronology is append-only, and an entry that can be revised later is "
-            f"not a record of what happened"
-        ]
-    if not ENTRY.search(now[len(before) :].decode("utf-8", "replace")):
-        return [
-            f"{LOG} gained no entry of the pinned shape "
-            f"'## [YYYY-MM-DD] <op> | <subject>' — an accepted operation owes the "
-            f"chronology a line, or the history has silent gaps"
-        ]
-    return []
+def sources_kept(wiki: Path, before: Before) -> list[str]:
+    """No page under `sources/` deleted or renamed away.
 
-
-# --- the checks that are about the wiki, whoever wrote it ---
-
-
-def unresolved(wiki: Path) -> list[tuple[str, str]]:
-    """Every wiki link that points at no page, as (page, target).
-
-    The layout contract's rule and no other: the target is the text before the
-    first `|`, matched case-sensitively against page basenames with `.md`
-    stripped, satisfied by a page anywhere under `wiki/`. A dangling link is a
-    page the writer believed existed, and it is the one defect nothing reading
-    the wiki afterwards can route around.
+    Filed-state is not bookkeeping the wiki keeps beside its content: the page's
+    existence is the answer to "has this video been filed", and `sync` has no
+    other. A tidy-up that folded one away would un-file a video silently, the next
+    sweep would spend a maintainer run recreating what a maintainer had just
+    decided to remove, and nothing in the wiki would be wrong enough for any other
+    check to say so.
     """
-    known = {page.stem for page in pages(wiki)}
     return [
-        (rel(wiki, page), target)
-        for page in pages(wiki)
-        for target in targets(text_of(page))
+        f"{where} was deleted or renamed away — that page's existence is what "
+        f"records its video as filed, and removing it un-files that video silently"
+        for where in sorted(before.sources)
+        if not (wiki / where).is_file()
+    ]
+
+
+def unresolved(wiki: Path, pages: list[Path]) -> list[str]:
+    """Every wikilink that points at no page.
+
+    The layout contract's rule and no other: the text before the first `|`,
+    matched case-sensitively against page basenames with `.md` stripped, satisfied
+    by a page anywhere under `wiki/`. A dangling link is a page the writer
+    believed existed, and it is the one defect nothing reading the wiki afterwards
+    can route around.
+    """
+    known = layout.resolvable(pages)
+    return [
+        f"{layout.name(wiki, page)}: the wiki link [[{target}]] resolves to no page"
+        for page in pages
+        for target in layout.targets(layout.read(page))
         if target not in known
     ]
 
 
-def unverifiable(home: Path, wiki: Path) -> list[tuple[str, str]]:
-    """Every page whose deep links ask cannot vouch for, as (page, what ask said).
-
-    One page's text per invocation, so a verdict is always attributable to a
-    page, and through ask's published verb so that the gate and the linter can
-    never disagree about a link (LESSON-0003).
-    """
+def unverifiable(home: Path, wiki: Path, pages: list[Path]) -> list[str]:
+    """Every page whose deep links ask cannot vouch for, in ask's own words."""
     found = []
-    for page in pages(wiki):
-        said = seams.verify(home, text_of(page))
+    for page in pages:
+        said = seams.unverifiable(home, layout.read(page))
         if said is not None:
-            found.append((rel(wiki, page), said))
+            found.append(f"{layout.name(wiki, page)}: {said}")
     return found
 
 
-def uncatalogued(wiki: Path) -> list[str]:
-    """Pages the catalog does not mention. The three pinned files are not in it
-    by rule; everything else must be, since `index.md` is how a reader learns
-    what is in here."""
-    index = wiki / INDEX
-    listed = set(catalogued(text_of(index))) if index.is_file() else set()
+def uncatalogued(wiki: Path, pages: list[Path]) -> list[str]:
+    """Pages the catalog does not mention. The three pinned files are outside it
+    by rule; everything else must be in it, since `index.md` is how a reader
+    learns what is here and a page it omits is a page nobody will find."""
+    listed = set(layout.catalog(layout.read(wiki / layout.INDEX)))
     return [
-        rel(wiki, page)
-        for page in pages(wiki)
-        if rel(wiki, page) not in PINNED and rel(wiki, page) not in listed
+        layout.name(wiki, page)
+        for page in pages
+        if layout.name(wiki, page) not in layout.PINNED
+        and layout.name(wiki, page) not in listed
     ]
 
 
@@ -170,41 +152,62 @@ def dangling(wiki: Path) -> list[str]:
     """Catalog lines with nothing behind them — the failure a person produces by
     deleting or renaming a page and leaving the line describing it. The gate has
     no reason to check this and `lint` has every reason to."""
-    index = wiki / INDEX
-    if not index.is_file():
-        return []
     return [
-        target for target in catalogued(text_of(index)) if not (wiki / target).exists()
+        target
+        for target in layout.catalog(layout.read(wiki / layout.INDEX))
+        if not (wiki / target).is_file()
     ]
 
 
-def unsourced(wiki: Path) -> list[str]:
-    """Source pages that no longer cite their own video — prose survives edits
-    that its citations do not."""
-    return [page.stem for page in source_pages(wiki) if not cites(text_of(page), page.stem)]
+def chronology(wiki: Path, before: Before) -> list[str]:
+    """Append-only as a byte-prefix — the only reading of it an agent cannot argue
+    with — and then one new entry of the pinned shape, since an accepted operation
+    that recorded nothing leaves a silent gap in the wiki's account of itself."""
+    path = wiki / layout.LOG
+    if not path.is_file():
+        return [f"{layout.LOG} is missing — the chronology is the wiki's own record"]
+    now = path.read_bytes()
+    if not now.startswith(before.log):
+        return [
+            f"{layout.LOG} no longer begins with what it said before this run — the "
+            f"chronology is append-only, and an entry that can be revised later is "
+            f"not a record of what happened"
+        ]
+    fresh = now[len(before.log) :].decode("utf-8", errors="replace")
+    if not layout.entries(fresh):
+        return [
+            f"{layout.LOG} gained no entry of the pinned shape "
+            f"'{layout.ENTRY_SHAPE}' — an accepted operation owes the chronology a "
+            f"line, or the history has silent gaps"
+        ]
+    return []
 
 
-def malformed(wiki: Path) -> list[str]:
-    """Headings in the chronology that open like an entry and are not one. The
-    shape is what keeps the log greppable without tooling."""
-    log = wiki / LOG
-    if not log.is_file():
-        return []
-    return [
-        line for line in OPENS_LIKE_ENTRY.findall(text_of(log)) if not ENTRY.fullmatch(line)
+def verdict(
+    home: Path,
+    wiki: Path,
+    before: Before,
+    video_id: str | None = None,
+    keep_sources: bool = False,
+) -> list[str]:
+    """Everything wrong with the wiki as the agent left it, all of it.
+
+    `video_id` asks the filing's own question — that this video's marker appeared.
+    `keep_sources` asks the same concern the other way round, and is what stands
+    in its place on a run that files no video: that no marker disappeared.
+    """
+    pages = layout.pages(wiki)
+    problems = brief_kept(wiki, before)
+    if video_id is not None:
+        problems += marker_written(wiki, video_id)
+    if keep_sources:
+        problems += sources_kept(wiki, before)
+    problems += unresolved(wiki, pages)
+    problems += unverifiable(home, wiki, pages)
+    problems += [
+        f"{layout.INDEX} does not link {where} — a page the catalog omits is a page "
+        f"nobody opening this directory will find"
+        for where in uncatalogued(wiki, pages)
     ]
-
-
-def orphans(wiki: Path) -> list[str]:
-    """Pages no other page links to. The catalog does not count as an incoming
-    link: it links every page by rule, so counting it would mean no page is ever
-    an orphan and the finding would never say anything."""
-    linked: set[str] = set()
-    for page in pages(wiki):
-        if rel(wiki, page) != INDEX:
-            linked.update(targets(text_of(page)))
-    return [
-        rel(wiki, page)
-        for page in pages(wiki)
-        if rel(wiki, page) not in PINNED and page.stem not in linked
-    ]
+    problems += chronology(wiki, before)
+    return problems

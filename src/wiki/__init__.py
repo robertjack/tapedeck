@@ -1,26 +1,45 @@
-"""wiki — the library's prose side: an AI-authored, git-versioned companion at
-`$TAPEDECK_HOME/wiki/`.
+"""wiki — the library's prose side: what the videos said, and what was made of it.
 
-Boundary: `python -m wiki file <id> | sync [--dry-run] | lint [--json] |
-rebuild [--yes]`. Sole tapedeck-side writer of everything under `wiki/` and of
-nothing outside it — in particular not `config.toml`, which is cli's
-(system/contracts/wiki-layout.md). The user co-authors by hand, in any editor, at
-any time, and that is the arrangement rather than a hazard: every operation
-commits what it finds pending before it risks anything of its own.
+Sole tapedeck-side writer of `$TAPEDECK_HOME/wiki/**`
+(system/contracts/wiki-layout.md), and the one layer SPEC-core-002 does not
+govern: it is accumulated, path-dependent state, so it gets git rather than a
+regenerate verb. Boundary: `python -m wiki file|sync|lint|rebuild|tend`.
 
-The design is probabilistic inside and deterministic at the edges
-(SPEC-wiki-002). A configured maintainer reads the brief and writes whatever the
-brief asks of it; tapedeck reviews none of that. What it reviews is the result,
-mechanically, over the whole wiki, and the answer is a commit or a rollback to
-exactly where the run began. This is also the one layer SPEC-core-002 does not
-govern: nothing in the library can reconstruct the particular wiki that exists,
-which is why it gets git and the derived layers do not.
+The design is the same in every verb that writes — **probabilistic inside,
+deterministic at the edges**. A configured agent reads the brief and edits the
+wiki as it sees fit; tapedeck reviews none of its prose and all of its result,
+mechanically, over the whole wiki, and either commits it or resets the tree back
+to where the run began.
+
+Two vocabularies are consumed rather than re-derived (LESSON-0003): ingest's id
+grammar and rule for what counts as a downloaded video, and ask's published
+`verify` boundary, which is the only reader of citation grammar in this system.
+The names this component publishes to the rest of tapedeck live in
+`wiki.seams` (the maintainer seam and its default) and `wiki.layout` (the pinned
+tree). Nothing here imports a submodule, so those two are importable on their own.
 """
+
+from __future__ import annotations
 
 
 class Usage(ValueError):
-    """A mistake in the asking, or a seam that is not configured — exit 2."""
+    """The request cannot be attempted as it stands — exit 2, nothing spent."""
 
 
 class Failure(RuntimeError):
-    """An operation that was attempted and did not complete — exit 1."""
+    """An operation that could not complete — exit 1.
+
+    `lines` carries every reason at once: a gate that reported one violation per
+    run would turn one rejected filing into several maintainer invocations.
+    """
+
+    def __init__(self, *lines: str):
+        super().__init__(lines[0] if lines else "")
+        self.lines = list(lines)
+
+
+class Busy(Failure):
+    """Another operation holds the wiki (LESSON-0004). Refused, never queued."""
+
+
+__all__ = ["Busy", "Failure", "Usage"]

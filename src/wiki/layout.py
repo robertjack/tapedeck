@@ -1,200 +1,231 @@
-"""Reading the wiki as system/contracts/wiki-layout.md defines it.
+"""The wiki's shape: the five pinned paths, and the three grammars over them.
 
-Five paths are pinned and everything else about the wiki's shape belongs to the
-brief, so the only things this module knows how to find are those five: the
-brief, the catalog, the chronology, a source page and the notes tree. The rules
-for reading them live here once because the acceptance gate (SPEC-wiki-002) and
-`lint` (SPEC-wiki-004) ask the same questions of the same files — a linter that
-disagreed with the gate about a link would be worse than no linter, since it
-would send the user to fix a page the gate is perfectly happy with.
+This module is system/contracts/wiki-layout.md written down once. Everything the
+gate and the linter check mechanically is asked here — where a page lives, what a
+`[[wikilink]]` points at, what the catalog links, what a chronology entry looks
+like — so the two of them can never disagree about what the contract says.
 
-Two questions here are other components' and are consumed rather than re-derived
-(LESSON-0003). Whether a directory name is a video id and whether its media is
-present are ingest's, so `eligible` asks ingest. Whether a deep link is *true* —
-where its URL ends when a full stop follows it, what an unknown duration waives —
-is ask's, and is asked of `ask verify` in seams.py. What is read here is only
-whether a page points at a given video at all, which is a question about the page
-rather than about the link.
+What is deliberately absent is as load-bearing as what is here. There is no
+YouTube-link parser: whether a deep link is real is ask's vocabulary and is
+consumed through ask's published `verify` boundary (LESSON-0003), and the one
+question this module answers about a link is whether a page mentions the deep-link
+form of a given video at all — the library layout's own format, not a second
+reading of it. There is no page template, no taxonomy and no naming rule either:
+those live in `CLAUDE.md`, which is the user's, and a clause about them here would
+be specifying how someone else is allowed to think.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import re
 from datetime import date
 from pathlib import Path
 
-import ingest
-
-# system/contracts/library-layout.md
-DEFAULT_HOME = "~/dev/storage/tapedeck"
-LIBRARY = "library"
-ARCHIVE = "archive"
-META_NAME = "meta.json"
-
-# system/contracts/wiki-layout.md — the whole pinned tree
 WIKI = "wiki"
+SOURCES = "sources"
+NOTES = "notes"
 BRIEF = "CLAUDE.md"
 INDEX = "index.md"
 LOG = "log.md"
-SOURCES = "sources"
-NOTES = "notes"
+# The three files the catalog does not list and the orphan check does not judge.
 PINNED = (BRIEF, INDEX, LOG)
+TREES = (SOURCES, NOTES)
 PAGE = ".md"
+GIT = ".git"
 
-# `[[target]]` or `[[target|alias]]`: the target is the text before the first `|`.
+# `[[target]]` or `[[target|alias]]`: the target is the text before the first `|`,
+# matched case-sensitively against page basenames with `.md` stripped.
 WIKILINK = re.compile(r"\[\[([^\[\]]+)\]\]")
-# An ordinary markdown link, which is how the catalog names a page.
-MD_LINK = re.compile(r"\[[^\]\n]*\]\(([^)\s]+)\)")
-# The chronology's pinned heading, and anything that merely opens like one.
-ENTRY = re.compile(r"^## \[\d{4}-\d{2}-\d{2}\] \S+ \| .+$", re.MULTILINE)
-OPENS_LIKE_ENTRY = re.compile(r"^## \[.*$", re.MULTILINE)
-
-# An upload_date that could not be read. Sorts after every real date, so a video
-# whose metadata is illegible files last instead of never.
-UNDATED = "~"
-
-
-def home_dir() -> Path:
-    return Path(os.environ.get("TAPEDECK_HOME") or DEFAULT_HOME).expanduser()
+# The catalog's line: an ordinary markdown link whose target is a page's path
+# relative to the wiki root.
+MARKDOWN_LINK = re.compile(r"\]\(\s*([^()\s]+)\s*\)")
+# The chronology's entry, fixed so the log stays greppable without tooling.
+ENTRY = re.compile(r"^## \[\d{4}-\d{2}-\d{2}\] (\S+) \| (.+)$")
+ENTRY_OPENS = "## ["
+ENTRY_SHAPE = "## [YYYY-MM-DD] <op> | <subject>"
 
 
 def wiki_dir(home: Path) -> Path:
+    """`$TAPEDECK_HOME/wiki` — beside `library/` and `archive/`, its own git repo."""
     return home / WIKI
 
 
-def entry_of(home: Path, video_id: str) -> Path:
-    return home / LIBRARY / video_id
-
-
-def archive_page(home: Path, video_id: str) -> Path:
-    return home / ARCHIVE / f"{video_id}{PAGE}"
-
-
 def source_page(wiki: Path, video_id: str) -> Path:
+    """One page per filed video. Its existence is the filed-state marker: there is
+    no manifest to keep in step, so `ls sources/` is the answer to what is filed."""
     return wiki / SOURCES / f"{video_id}{PAGE}"
 
 
-# --- the pages themselves ---
+def filed(wiki: Path, video_id: str) -> bool:
+    return source_page(wiki, video_id).is_file()
 
 
 def pages(wiki: Path) -> list[Path]:
-    """Every markdown page in the wiki, git's own directory excluded."""
+    """Every markdown page in the wiki, in a stable order. The git directory is
+    not the wiki: nothing under it is a page and nothing there is ever judged."""
     found = [
         path
         for path in wiki.rglob(f"*{PAGE}")
-        if path.is_file() and ".git" not in path.relative_to(wiki).parts
+        if path.is_file() and GIT not in path.relative_to(wiki).parts
     ]
     return sorted(found)
 
 
 def source_pages(wiki: Path) -> list[Path]:
-    directory = wiki / SOURCES
-    if not directory.is_dir():
-        return []
-    return sorted(path for path in directory.glob(f"*{PAGE}") if path.is_file())
+    """Every filed video's page — `ls sources/` is the answer to what is filed."""
+    tree = wiki / SOURCES
+    return sorted(page for page in tree.glob(f"*{PAGE}") if page.is_file())
 
 
-def rel(wiki: Path, page: Path) -> str:
+def name(wiki: Path, page: Path) -> str:
+    """A page as the catalog and every message names it: `notes/thing.md`."""
     return page.relative_to(wiki).as_posix()
 
 
-def text_of(page: Path) -> str:
-    return page.read_text(encoding="utf-8", errors="replace")
+def is_pinned(wiki: Path, page: Path) -> bool:
+    return name(wiki, page) in PINNED
 
 
-def bytes_of(page: Path) -> bytes | None:
-    return page.read_bytes() if page.is_file() else None
+def read(page: Path) -> str:
+    """A page's text, never an exception. Undecodable bytes are replaced rather
+    than swallowed: a page tapedeck cannot read cleanly still has links in it, and
+    silently reading it as empty would wave every one of them through."""
+    try:
+        return page.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def targets(text: str) -> list[str]:
-    """The wikilink targets a page offers, in order."""
+    """The wikilink targets in a page, in order, aliases stripped."""
     return [link.split("|", 1)[0].strip() for link in WIKILINK.findall(text)]
 
 
-def catalogued(text: str) -> list[str]:
-    """The wiki paths `index.md` links to, relative to the wiki root."""
-    listed = []
-    for target in MD_LINK.findall(text):
-        if "://" in target or target.startswith("#"):
-            continue  # an outward link is not a claim about a page in here
-        cleaned = target.split("#", 1)[0].split("?", 1)[0].strip()
-        if cleaned.startswith("./"):
-            cleaned = cleaned[2:]
-        if cleaned:
-            listed.append(cleaned)
-    return listed
+def resolvable(pages: list[Path]) -> set[str]:
+    """What a wikilink may resolve to: any page's basename with `.md` stripped,
+    from any depth. No paths, no extensions, no fuzzy or nearest-match."""
+    return {page.stem for page in pages}
+
+
+def catalog(index_text: str) -> list[str]:
+    """The wiki pages `index.md` links to, as paths relative to the wiki root.
+
+    Only markdown links naming a `.md` file count: the brief decides everything
+    else about a catalog line — grouping, ordering, whether the trailing dash
+    carries a summary — and an outbound URL in an annotation is not a claim that
+    the wiki contains a page.
+    """
+    found = []
+    for target in MARKDOWN_LINK.findall(index_text):
+        if "://" in target:
+            continue
+        path = target.split("#", 1)[0].strip().removeprefix("./")
+        if path.endswith(PAGE):
+            found.append(path)
+    return found
+
+
+def entries(log_text: str) -> list[tuple[str, str]]:
+    """The chronology as `(op, subject)` pairs, oldest first."""
+    found = []
+    for line in log_text.splitlines():
+        match = ENTRY.match(line)
+        if match:
+            found.append((match.group(1), match.group(2)))
+    return found
+
+
+def malformed(log_text: str) -> list[str]:
+    """Lines that open like an entry and are not one. The heading shape is what
+    keeps the log readable by `grep`, so a heading that drifted out of it is an
+    event the chronology can no longer be read to contain."""
+    return [
+        line.rstrip()
+        for line in log_text.splitlines()
+        if line.startswith(ENTRY_OPENS) and not ENTRY.match(line)
+    ]
+
+
+def deep_link_form(video_id: str) -> str:
+    """How a moment in this video is addressed, in the library layout's one
+    format — quoted to the maintainer so it never has to invent the shape."""
+    return f"https://www.youtube.com/watch?v={video_id}&t=<seconds>s"
 
 
 def cites(text: str, video_id: str) -> bool:
-    """Whether the text carries a deep link into this video, in the library
-    layout's `watch?v=<id>&t=<seconds>s` shape. Whether that link is true is
-    ask's question and is asked of ask; this one is about the page."""
-    return bool(re.search(rf"watch\?v={re.escape(video_id)}&t=\d", text))
+    """Does this page anchor itself in this recording?
+
+    Deliberately the narrowest possible question: whether the layout's deep-link
+    form for *this* id appears at all. Whether the links a page carries are true
+    is decided by ask and by nothing here, so this never has to know where a URL
+    ends or what an unknown duration waives.
+    """
+    return f"watch?v={video_id}" in text
 
 
 def today() -> str:
     return date.today().isoformat()
 
 
-def append_entry(path: Path, op: str, subject: str, body: str) -> None:
-    """Add one entry to the chronology, leaving every byte before it in place."""
-    old = text_of(path) if path.is_file() else ""
-    lead = "" if not old else ("\n" if old.endswith("\n") else "\n\n")
-    path.write_text(
-        f"{old}{lead}## [{today()}] {op} | {subject}\n\n{body}\n", encoding="utf-8"
-    )
+# The brief is a page like any other, and the gate reads every page: a wiki link
+# written out here would have to resolve, and a YouTube URL written out here would
+# be read as a citation and checked against the library. So this text describes
+# both forms rather than spelling either one — which is also the warning the file
+# gives its reader.
+DEFAULT_BRIEF = """# The maintainer's brief
 
+You are the maintainer of this wiki: the prose side of a tapedeck library — what
+the videos said, and what was made of it. tapedeck wrote this file once and will
+never write it again. It is the user's. Rewriting it wholesale is the intended end
+state, not a fault.
 
-# --- what a sweep may file ---
+## The layout
 
+    CLAUDE.md           this brief — never edited by the maintainer
+    index.md            the catalog: one markdown-linked line per page
+    log.md              the chronology, append-only
+    sources/<id>.md     one page per filed video; its existence is the filed marker
+    notes/              free-form pages; how they are organized is this file's business
 
-def upload_date(entry: Path) -> str:
-    """The date a sweep orders by. Metadata that cannot be read sorts last rather
-    than stopping anything: the archive page is what a filing reads, and an
-    illegible `meta.json` is no reason to leave a video out of the wiki forever."""
-    try:
-        meta = json.loads((entry / META_NAME).read_text(encoding="utf-8"))
-        stamp = meta.get("upload_date") if isinstance(meta, dict) else None
-    except (OSError, ValueError):
-        return UNDATED
-    return stamp if isinstance(stamp, str) and stamp else UNDATED
+Everything is plain markdown, so the directory opens as an Obsidian vault with no
+conversion and reads fine in `grep`. Pages point at each other with a wiki link:
+a page's filename without `.md`, wrapped in doubled square brackets, with a
+display alias after a `|` if you want one. Every accepted operation is a git
+commit, so a filing you dislike is one `git revert` away.
 
+A moment in a video is addressed by its ordinary YouTube watch URL, carrying the
+video id and a `t=` offset in seconds. The archive page you file from already
+carries one in every section heading — copy them from there, and never
+reconstruct one from memory.
 
-def eligible(home: Path, note=None) -> tuple[list[str], int]:
-    """The library entries a sweep could file, in `upload_date` order with ties
-    broken by id, and the count of what it had to pass over.
+## What tapedeck checks after every operation
 
-    The three preconditions are `file`'s own, hoisted to the front so the sweep
-    never starts an operation it knows will fail (SPEC-wiki-003). Everything else
-    under `library/` is a permanent resident of a real library — a directory of
-    the user's own, an entry whose media `rm --media-only` reclaimed, one archive
-    has not rendered yet — and a sweep that failed on those could never converge.
-    """
-    library = home / LIBRARY
-    ready: list[tuple[str, str]] = []
-    skipped = 0
-    for entry in sorted(library.iterdir()) if library.is_dir() else []:
-        if not entry.is_dir():
-            continue
-        video_id = entry.name
-        if not ingest.VIDEO_ID.fullmatch(video_id):
-            reason = "not a video id — skipped, it is not tapedeck's"
-        elif not ingest.has_video(entry):
-            reason = (
-                "no video file — skipped; its media was reclaimed and the wiki "
-                "files from the library, not from a gap in it"
-            )
-        elif not archive_page(home, video_id).is_file():
-            reason = (
-                f"no archive page — skipped; the maintainer reads that page, so "
-                f"`tapedeck add {video_id}` has to render it first"
-            )
-        else:
-            ready.append((upload_date(entry), video_id))
-            continue
-        skipped += 1
-        if note is not None:
-            note(f"{video_id}: {reason}")
-    return [video_id for _, video_id in sorted(ready)], skipped
+An operation that breaks any of these is rejected whole and its work is discarded:
+
+- This file is byte-identical to how the operation found it.
+- `sources/<id>.md` exists for the video being filed and carries at least one deep
+  link into that video.
+- Every wiki link resolves — case-sensitively, against page filenames with `.md`
+  stripped, satisfied by a page anywhere under `wiki/`.
+- Every deep link anywhere in the wiki names a real video in this library at a
+  moment inside it. In this file too: a URL written out here in full would be read
+  as a claim and checked as one, which is why there is not one on this page.
+- `index.md` links every page except the three above.
+- `log.md` still begins with exactly what it said before and has gained an entry
+  of the form `## [YYYY-MM-DD] <op> | <subject>`.
+
+Nothing above says what a page should contain. That is what the rest of this file
+is for.
+
+## Conventions — replace these with your own
+
+- A source page opens with the title and channel, then what the video actually
+  argues, in your words, with a deep link at every claim worth returning to.
+- A claim earns its own note when a second video has made it. Name notes for the
+  idea, lower-case and hyphenated: `notes/cache-invalidation.md`.
+- Prefer linking to repeating. When a page starts explaining something another
+  page owns, link that page instead.
+- Say what you doubt. A note that records the objection is worth more later than
+  one that only records the claim.
+- Write for the reader you will be in a year, who remembers none of this.
+"""

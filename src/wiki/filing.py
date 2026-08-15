@@ -1,22 +1,23 @@
-"""The verbs that write: one filing, and the two sweeps built out of it.
+"""The operations that write: `file`, `sync`, `rebuild`, `tend`.
 
-`file <id>` is the unit of work, and both sweeps are loops around that operation
-rather than second implementations of it (SPEC-wiki-003, SPEC-wiki-005) — the
-same maintainer seam, the same whole-wiki gate, the same `user edits` pre-run
-commit, one commit per accepted filing and one rollback per rejected one. A sweep
-that verified less than the single verb would be a way to get unreviewed prose
-into the wiki by asking for more of it at once, and per-video commits are what
-keep the history legible after a sweep of forty.
+All four are one operation with different reasons for running it. Whatever is
+pending in the working tree is committed as `user edits`; the maintainer runs; if
+it crashes or the gate refuses, the tree goes back to that pre-run commit and the
+run exits 1; otherwise everything it wrote is committed under a name that says
+what happened. `sync` is a loop around that operation and `rebuild` is the same
+loop preceded by a deliberate reset — neither is a second implementation of it,
+because a sweep that verified less than the single verb would be a way to get
+unreviewed prose into the wiki by asking for more of it at once.
 
-One video's failure never stops a sweep. The alternative is a sweep whose result
-depends on where in the alphabet the first bad video sat: the user re-runs it,
-pays for everything again, and stops at the next bad one.
+`tend` is the same operation again, with the one rule filing does not need — no
+source page may be deleted or renamed away — and, in its default mode, with the
+whole result thrown away. That discard is unconditional and is the whole
+guarantee: an agent told to be read-only is a hope, and a reset afterwards is a
+fact.
 
-`rebuild` is the same sweep from zero, and it is the only verb here that asks
-before it acts. It destroys hand-written prose that nothing can re-derive, so
-consent is the specification: without `--yes` it executes nothing at all and only
-says what it would do. Git is what makes saying yes survivable — the wiki it
-replaces is one `git show` away for as long as the repository lasts.
+One operation holds the wiki at a time (LESSON-0004). The lock is taken once, by
+the verb, and held across every filing it performs, so a sweep's commits can never
+be interleaved with a neighbour's half-written pages.
 """
 
 from __future__ import annotations
@@ -27,218 +28,375 @@ from pathlib import Path
 
 import ingest
 
-from . import Failure, Usage, gate, seams
-from .layout import (
-    BRIEF,
-    INDEX,
-    LOG,
-    NOTES,
-    SOURCES,
-    append_entry,
-    archive_page,
-    bytes_of,
-    eligible,
-    entry_of,
-    source_page,
-    today,
-    wiki_dir,
-)
-from .repo import Repo
+from . import Failure, Usage, gate, layout, library, repo, seams
 
-RESET = "wiki rebuild: reset"
+FILE_OP = "file"
+TEND_OP = "tend"
+REBUILD_OP = "rebuild"
+RESET_SUBJECT = "wiki rebuild: reset"
+TEND_SUBJECT = "wiki tend"
+
+GATE_RULES = """  - CLAUDE.md is byte-identical to how you found it. Never edit the brief.
+  - Every [[wikilink]] in every page resolves — case-sensitively, against page
+    filenames with .md stripped, anywhere under wiki/.
+  - Every deep link in every page names a real video in this library at a
+    timestamp inside it. Never cite a moment you have not read.
+  - index.md links every page in the wiki except CLAUDE.md, index.md and log.md.
+  - log.md still begins with exactly what it said before, and has gained at least
+    one entry of the form:
+        {entry}
+    Append to the chronology. Never reword, reorder, deduplicate or tidy it."""
+
+FILE_TASK = """You are the maintainer of this wiki. Read CLAUDE.md in this directory first:
+it is the brief, it is the user's, and where it disagrees with anything below
+about *what to write*, it wins.
+
+File one video into the wiki:
+
+    video id      {video_id}
+    archive page  {page}
+    wiki root     {wiki}   (your working directory)
+
+The archive page is the video's metadata and its transcript, rendered. Read it,
+then write sources/{video_id}.md and whatever the brief says this material earns
+under notes/ — connecting it to what the wiki already holds is the point of the
+exercise, so read the pages it touches before you add another. Link pages to each
+other with [[wikilinks]]. Then bring index.md and log.md up to date.
+
+tapedeck checks the result mechanically after you exit, over the whole wiki, and
+rejects the operation — discarding everything you wrote — unless all of this holds:
+
+  - sources/{video_id}.md exists and carries at least one deep link to
+    {video_id} itself, in the form {link}
+{rules}
+
+Nothing above is about the quality of what you write. That is the brief's, and
+yours."""
+
+TEND_REPORT_TASK = """You are the maintainer of this wiki. Read CLAUDE.md in this directory first: it
+is the brief, and it is what the pages you are about to read were written under.
+
+    wiki root     {wiki}   (your working directory)
+
+Read the whole wiki and report what you found. This run is read-only and the
+guarantee is mechanical rather than a request: tapedeck resets and cleans the
+working tree after you exit, so nothing you write to a file will survive. Print
+your findings as prose on stdout. That is the entire product of this run, it
+reaches the user unedited, and nothing parses it.
+
+Look for what a mechanical check cannot see:
+
+  - pages that contradict each other, and claims a later source supersedes
+  - concepts the pages keep naming that no page has ever defined
+  - cross-links that plainly should exist and do not
+  - orphans worth connecting, and pages that have drifted from the brief
+  - questions the material raises that nobody has chased
+
+Be specific: name the pages, quote the sentences, and say what you would do about
+it. A finding the user cannot act on is not a finding."""
+
+TEND_APPLY_TASK = """You are the maintainer of this wiki. Read CLAUDE.md in this directory first: it
+is the brief, it is the user's, and it governs what a page should say.
+
+    wiki root     {wiki}   (your working directory)
+
+Read the whole wiki and improve it. Resolve contradictions, connect pages that
+belong linked, write the page a concept has earned by being mentioned everywhere
+and defined nowhere, and merge or delete notes that have gone redundant.
+Reshaping notes/ is exactly what this run is for: notes may be created,
+rewritten, split, merged and deleted freely.
+
+tapedeck checks the result mechanically after you exit, over the whole wiki, and
+rejects the operation — discarding everything you did — unless all of this holds:
+
+  - No page under sources/ is deleted or renamed away. A source page's existence
+    is what records that its video has been filed; removing one un-files that
+    video silently and the next sweep will pay to recreate it. Their prose is
+    yours to edit; their paths are not.
+{rules}
+
+File no video: a video with no page yet is `tapedeck wiki sync`'s work, not
+yours."""
 
 
-def note(message: str) -> None:
-    print(message, file=sys.stderr)
+def _rules(op: str) -> str:
+    return GATE_RULES.format(entry=f"## [{layout.today()}] {op} | <subject>")
 
 
-# --- one video ---
+def file_task(wiki: Path, video_id: str, page: Path) -> str:
+    return FILE_TASK.format(
+        video_id=video_id,
+        page=page,
+        wiki=wiki,
+        link=layout.deep_link_form(video_id),
+        rules=_rules(FILE_OP),
+    )
 
 
-def file_one(home: Path, wiki: Path, repo: Repo, video_id: str, command: str) -> None:
-    """The operation every wiki filing is: the user's pending work committed, the
-    maintainer run, the whole wiki judged, and then either one commit or a
-    rollback to exactly where this began."""
-    repo.commit_pending()
-    before = repo.head()
-    brief_before = bytes_of(wiki / BRIEF)
-    log_before = bytes_of(wiki / LOG) or b""
-
-    try:
-        seams.run_maintainer(
-            command, home, wiki, video_id, archive_page(home, video_id), today()
-        )
-        problems = gate.violations(home, wiki, video_id, brief_before, log_before)
-    except Failure as exc:
-        repo.restore(before)
-        raise Failure(f"{video_id}: {exc}") from exc
-
-    if problems:
-        repo.restore(before)
+def perform(
+    home: Path,
+    wiki: Path,
+    command: str,
+    task: str,
+    subject: str,
+    video_id: str | None = None,
+    archive_page: Path | None = None,
+    keep_sources: bool = False,
+) -> None:
+    """One accept-or-roll-back operation, from the pre-run commit to the commit
+    or the rollback. The caller holds the lock for exactly this span."""
+    pre_run = repo.commit_pending(wiki)
+    before = gate.snapshot(wiki)
+    code, _ = seams.run_maintainer(command, home, wiki, task, video_id, archive_page)
+    if code != 0:
+        repo.restore(wiki, pre_run)
         raise Failure(
-            f"{video_id}: the wiki this filing produced was not accepted:\n  "
-            + "\n  ".join(problems)
+            f"the maintainer exited {code} — whatever it left half-written has been "
+            f"rolled back, and the wiki is where it was"
         )
-    repo.commit(f"wiki file {video_id}")
+    problems = gate.verdict(home, wiki, before, video_id=video_id, keep_sources=keep_sources)
+    if problems:
+        repo.restore(wiki, pre_run)
+        raise Failure(*problems)
+    repo.commit(wiki, subject)
 
 
-def file_verb(home: Path, video_id: str) -> int:
-    """`file <id>`: the cheap questions first, so nothing probabilistic runs until
-    every one of them is settled."""
+# --- `file <id>` --------------------------------------------------------------
+
+
+def file_one(home: Path, wiki: Path, command: str, video_id: str) -> None:
+    """The filing itself, once every cheap question is settled and the lock held."""
+    page = library.archive_page(home, video_id)
+    perform(
+        home,
+        wiki,
+        command,
+        file_task(wiki, video_id, page),
+        f"wiki {FILE_OP} {video_id}",
+        video_id=video_id,
+        archive_page=page,
+    )
+
+
+def file_video(home: Path, video_id: str) -> int:
+    """`file <id>`: nothing probabilistic runs until the cheap questions are
+    settled, and the cheapest of them is whether there is anything to do."""
     if not ingest.VIDEO_ID.fullmatch(video_id):
-        raise Usage(f"{video_id!r} is not a video id — ids are 11 characters wide")
-    entry = entry_of(home, video_id)
-    if not entry.is_dir():
-        raise Usage(f"no video {video_id} in the library — `tapedeck list` has what is")
-    if not ingest.has_video(entry):
-        raise Usage(
-            f"{video_id} has no video file in the library — its media was reclaimed, "
-            f"and `tapedeck add {video_id}` fetches it back"
-        )
-    page = archive_page(home, video_id)
+        raise Usage(f"{video_id!r} is not a video id — ids are 11 characters")
+    if not library.holds(home, video_id):
+        raise Usage(f"no video {video_id} in the library — `tapedeck list` shows what is")
+    page = library.archive_page(home, video_id)
     if not page.is_file():
         raise Failure(
             f"{video_id}: no archive page at {page} — the maintainer files from that "
             f"page, so `tapedeck add {video_id}` has to render it first"
         )
 
-    wiki = wiki_dir(home)
-    if source_page(wiki, video_id).is_file():
-        note(f"{video_id} is already filed — nothing to do")
+    wiki = layout.wiki_dir(home)
+    if layout.filed(wiki, video_id):
+        print(
+            f"{video_id}: already filed ({layout.name(wiki, layout.source_page(wiki, video_id))})"
+            f" — nothing to do",
+            file=sys.stderr,
+        )
         return 0
-
     command = seams.maintainer_command(home)
-    repo = Repo(wiki)
-    repo.ensure()
-    file_one(home, wiki, repo, video_id, command)
+    repo.ready(wiki)
+    with repo.held(wiki):
+        file_one(home, wiki, command, video_id)
     return 0
 
 
-# --- the whole library ---
+# --- sweeping -----------------------------------------------------------------
 
 
-def sweep(
-    home: Path,
-    wiki: Path,
-    repo: Repo,
-    command: str,
-    pending: list[str],
-    already: int,
-    skipped: int,
-) -> int:
-    """File each unfiled video in turn, survive the ones that fail, and account
-    for every outcome in one line — the count is what the user came back to read."""
-    filed = failed = 0
-    for position, video_id in enumerate(pending, start=1):
-        note(f"[{position}/{len(pending)}] filing {video_id}")
+def sweep(home: Path, wiki: Path, command: str, unfiled: list[str]) -> int:
+    """File each of these, one commit and one gate at a time.
+
+    One video's failure never stops the sweep: it is reported, its own operation
+    is rolled back by the rules every filing follows, and the next video begins —
+    the alternative is a sweep whose result depends on where in the alphabet the
+    first bad video sat.
+    """
+    failed = 0
+    for position, video_id in enumerate(unfiled, start=1):
+        print(f"[{position}/{len(unfiled)}] filing {video_id}", file=sys.stderr)
         try:
-            file_one(home, wiki, repo, video_id, command)
-            filed += 1
+            file_one(home, wiki, command, video_id)
         except Failure as exc:
             failed += 1
-            note(f"error: {exc}")
-    print(f"filed {filed}, already filed {already}, skipped {skipped}, failed {failed}")
+            print(f"error: {video_id} was not filed:", file=sys.stderr)
+            for line in exc.lines:
+                print(f"  {line}", file=sys.stderr)
+    return failed
+
+
+def report(filed: int, already: int, skipped: int, failed: int) -> int:
+    """The one line the user came back to read, in words that grep the same on
+    every machine."""
+    print(
+        f"{filed} filed, {already} already filed, {skipped} skipped, {failed} failed"
+    )
     return 1 if failed else 0
 
 
-def unfiled(wiki: Path, ids: list[str]) -> list[str]:
-    """Eligible and carrying no source page. There is no queue and no manifest:
-    the filed-state marker is the page's existence, so the question "what is
-    left" is answered by the filesystem and cannot disagree with itself."""
-    return [video_id for video_id in ids if not source_page(wiki, video_id).is_file()]
+def selection(home: Path, wiki: Path) -> tuple[list[str], list[str], int]:
+    """`(eligible, unfiled, skipped)` — the sweep's whole selection rule.
+
+    Unfiled is eligible and carrying no source page, and there is no queue and no
+    last-synced marker behind it: the filesystem answers "what is left", so it
+    cannot disagree with itself. A user who deletes a source page has asked for
+    that video to be filed again, and the next sweep obliges without being told.
+    """
+    skips: list[str] = []
+    eligible = library.eligible(home, note=skips.append)
+    for note in skips:
+        print(note, file=sys.stderr)
+    return eligible, [vid for vid in eligible if not layout.filed(wiki, vid)], len(skips)
 
 
 def sync(home: Path, dry_run: bool) -> int:
-    ids, skipped = eligible(home, note)
-    wiki = wiki_dir(home)
-    pending = unfiled(wiki, ids)
+    wiki = layout.wiki_dir(home)
+    eligible, unfiled, skipped = selection(home, wiki)
     if dry_run:
-        # A rehearsal changes nothing whatsoever, and creating a repository is
-        # not nothing: a user asking what a sweep would do has not asked for one.
-        for video_id in pending:
+        # A rehearsal changes nothing whatsoever — in particular it does not
+        # scaffold a wiki, since creating a repository is not "nothing", and it
+        # never reads the maintainer seam, so it is answerable on a machine where
+        # no agent is configured at all.
+        for video_id in unfiled:
             print(video_id)
         return 0
     command = seams.maintainer_command(home)
-    repo = Repo(wiki)
-    repo.ensure()
-    return sweep(home, wiki, repo, command, pending, len(ids) - len(pending), skipped)
+    if not unfiled:
+        # Idempotence with a price attached: the maintainer costs time and money,
+        # so a converged library must not spend one invocation to learn that.
+        return report(0, len(eligible), skipped, 0)
+    repo.ready(wiki)
+    with repo.held(wiki):
+        failed = sweep(home, wiki, command, unfiled)
+    return report(len(unfiled) - failed, len(eligible) - len(unfiled), skipped, failed)
 
 
-# --- from zero ---
+# --- `rebuild` ----------------------------------------------------------------
 
 
-def _clearable(wiki: Path) -> dict[str, list[Path]]:
-    """Every file the reset would remove, by the directory it sits in."""
-    return {
-        name: sorted(path for path in (wiki / name).rglob("*") if path.is_file())
-        for name in (SOURCES, NOTES)
-    }
+def existing(home: Path) -> Path:
+    """The wiki a verb about an existing wiki's contents needs. `file` and `sync`
+    scaffold because they are about to write a filing into one; asking `rebuild`
+    or `tend` for a wiki that was never built is a usage error rather than an
+    invitation, and which wiki was resolved is the whole question a surprising
+    $TAPEDECK_HOME raises."""
+    wiki = layout.wiki_dir(home)
+    if not repo.exists(wiki):
+        raise Usage(
+            f"no wiki at {wiki} — `tapedeck wiki file <id>` or `tapedeck wiki sync` "
+            f"is what brings one into being"
+        )
+    return wiki
 
 
-def _preview(wiki: Path, ids: list[str]) -> None:
-    """What `--yes` would consent to, said before any of it has happened."""
-    clearable = _clearable(wiki)
+def preview(wiki: Path, eligible: list[str]) -> int:
+    """What `--yes` would consent to, read before any of it has happened."""
+    pages = {tree: len(list((wiki / tree).rglob(f"*{layout.PAGE}"))) for tree in layout.TREES}
     print(f"wiki: {wiki}")
     print(
-        f"the reset would remove {len(clearable[SOURCES])} file(s) under {SOURCES}/ "
-        f"and {len(clearable[NOTES])} under {NOTES}/, and empty {INDEX}. "
-        f"{BRIEF} and {LOG} survive it untouched."
+        "would remove: "
+        + ", ".join(f"{count} page(s) under {tree}/" for tree, count in pages.items())
+        + f", and empty {layout.INDEX}"
     )
-    print(f"it would then refile {len(ids)} video(s), in this order:")
-    for video_id in ids:
-        print(f"  {video_id}")
-    print(
-        "nothing has happened yet — re-run with --yes to do it. The wiki as it "
-        "stands stays in this repository's history and can be read back out of it "
-        "long after."
-    )
+    print(f"would keep: {layout.BRIEF} and {layout.LOG}, and the whole git history")
+    if eligible:
+        print(f"would refile {len(eligible)}, in this order:")
+        for video_id in eligible:
+            print(f"  {video_id}")
+    else:
+        print("would refile nothing — no video in the library is eligible")
+    return 0
 
 
-def _reset(repo: Repo, wiki: Path, cleared: int) -> None:
+def reset(wiki: Path, count: int) -> None:
     """One commit, because the state being recorded is "the old wiki, entire" and
-    the user restoring it should have exactly one thing to name."""
-    for name in (SOURCES, NOTES):
-        directory = wiki / name
-        if directory.is_dir():
-            shutil.rmtree(directory)
-    repo.shape()
-    (wiki / INDEX).write_text("", encoding="utf-8")
-    append_entry(
-        wiki / LOG,
-        "rebuild",
-        f"the wiki was emptied and refiled ({cleared} file(s) cleared)",
-        "Everything under sources/ and notes/ was removed and the catalog reset; "
-        "the filings below are the library read again from the start.",
+    the user restoring it should have exactly one thing to name.
+
+    Two files survive untouched and both survivals are the point: the brief is the
+    user's and is most often the reason the rebuild was asked for, and the log is
+    append-only — a chronology a rebuild could clear would be one that forgets its
+    own most consequential event.
+    """
+    for tree in layout.TREES:
+        shutil.rmtree(wiki / tree, ignore_errors=True)
+    repo.shape(wiki)
+    (wiki / layout.INDEX).write_text("", encoding="utf-8")
+    log = wiki / layout.LOG
+    entry = (
+        f"\n## [{layout.today()}] {REBUILD_OP} | cleared the wiki and read the library again\n\n"
+        f"Everything under {layout.SOURCES}/ and {layout.NOTES}/ was removed and the "
+        f"catalog reset; {count} eligible video(s) follow, filed from the start. The "
+        f"wiki as it stood is one commit back and can be read out of the history.\n"
     )
-    repo.commit(RESET)
+    log.write_text(layout.read(log) + entry, encoding="utf-8")
+    repo.commit(wiki, RESET_SUBJECT)
 
 
 def rebuild(home: Path, yes: bool) -> int:
-    wiki = wiki_dir(home)
-    if not wiki.is_dir():
-        # `file` and `sync` scaffold because filing into a wiki is what they are
-        # for; rebuild is a verb about an existing wiki's contents.
-        raise Usage(
-            f"no wiki at {wiki} — `python -m wiki file <id>` or `python -m wiki sync` "
-            f"is what brings one into being"
-        )
-    ids, skipped = eligible(home, note)
+    wiki = existing(home)
+    eligible, _, skipped = selection(home, wiki)
     if not yes:
-        _preview(wiki, ids)
-        return 0
-
+        return preview(wiki, eligible)
     # Before anything is destroyed: a reset whose refill cannot run is the one
     # outcome nobody wants.
     command = seams.maintainer_command(home)
-    cleared = sum(len(found) for found in _clearable(wiki).values())
-    repo = Repo(wiki)
-    # A wiki that exists is always a repository of its own (the layout contract),
-    # and every step below is a git operation: one that ran against a directory
-    # some *other* repository happened to contain would commit and clean there.
-    # This repairs that invariant and cannot create a wiki — a missing one exited
-    # two checks ago.
-    repo.ensure()
-    repo.commit_pending()
-    _reset(repo, wiki, cleared)
-    pending = unfiled(wiki, ids)
-    return sweep(home, wiki, repo, command, pending, len(ids) - len(pending), skipped)
+    # Every step below is a git operation, and one run against a directory that
+    # some *other* repository happens to contain would commit and clean there.
+    # This repairs the layout contract's invariant and cannot create a wiki — a
+    # missing one exited two checks ago.
+    repo.ready(wiki)
+    with repo.held(wiki):
+        repo.commit_pending(wiki)
+        reset(wiki, len(eligible))
+        failed = sweep(home, wiki, command, eligible)
+    return report(len(eligible) - failed, 0, skipped, failed)
+
+
+# --- `tend` -------------------------------------------------------------------
+
+
+def tend(home: Path, yes: bool) -> int:
+    wiki = existing(home)
+    command = seams.maintainer_command(home)
+    repo.ready(wiki)  # the same repair `rebuild` makes, and for the same reason
+    with repo.held(wiki):
+        if yes:
+            perform(
+                home,
+                wiki,
+                command,
+                TEND_APPLY_TASK.format(wiki=wiki, rules=_rules(TEND_OP)),
+                TEND_SUBJECT,
+                keep_sources=True,
+            )
+            return 0
+        return read_only(home, wiki, command)
+
+
+def read_only(home: Path, wiki: Path, command: str) -> int:
+    """The reading. The user's pending work is committed first — the discard below
+    takes untracked files with it, so a note typed this morning would otherwise be
+    destroyed by the one verb that promised to change nothing — and then the tree
+    is reset and cleaned whatever the agent did with it.
+
+    There is no commit and no log entry: the chronology records accepted
+    operations, and a run that accepted nothing is not an event in the wiki's
+    history, however much the user learned from it.
+    """
+    pre_run = repo.commit_pending(wiki)
+    code, said = seams.run_maintainer(command, home, wiki, TEND_REPORT_TASK.format(wiki=wiki))
+    repo.restore(wiki, pre_run)
+    if said.strip():
+        print(said if said.endswith("\n") else said + "\n", end="")
+    if code != 0:
+        raise Failure(
+            f"the tender exited {code} — a crashed reader has not read the wiki, "
+            f"whatever it managed to print on the way down"
+        )
+    return 0
