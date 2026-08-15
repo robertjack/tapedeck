@@ -21,10 +21,13 @@ command = "just eval wiki"
 # eval suites put the assembly at ~29401. The component deliberately stays whole —
 # sync, lint and rebuild are the same vocabulary as file, and splitting them would
 # scatter it (LESSON-0003's concern, one layer up).
-context_tokens = 32000
+# Raised 32000 -> 42000 for the tend round: SPEC-wiki-006, the lock clause,
+# LESSON-0004 and two eval suites measured ~38608.
+context_tokens = 42000
 # Above the usual 8000/6000 default: the component carries its own git lifecycle
 # (scaffold, per-run commit, hard reset/clean on gate failure) plus a six-check
 # whole-wiki acceptance gate, on top of driving the maintainer subprocess itself.
 # Raised 10000 -> 16000: file's generation landed at ~7161 and the sweep round
 # adds three verbs (sync, the eight-check lint report with --json, rebuild).
-src_tokens = 16000
+# Raised 16000 -> 20000: tend (two modes) plus the operation lock.
+src_tokens = 20000
