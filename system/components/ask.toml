@@ -17,8 +17,12 @@ path = "system/evals/ask/"
 command = "just eval ask"
 
 [budget]
-context_tokens = 8000
+# Raised 8000 -> 12000: SPEC-ask-005 (the published verify verb) put the assembled
+# context at ~9983 tokens, over the old cap before any regen could start.
+context_tokens = 12000
 # Raised 6000 -> 8000: the last generation landed at 5997/6000 and its own notes said
 # the budget must rise before any new clause arrives rather than prose be squeezed out
-# of the implementation. SPEC-ask-004 and the citation-parsing clauses are that clause.
-src_tokens = 8000
+# of the implementation. SPEC-ask-004 and the citation-parsing clauses were that clause.
+# Raised 8000 -> 10000 for the same reason: SPEC-ask-005 adds a verb (arg parsing,
+# stdin path, the two flags) even though its verification core is shared.
+src_tokens = 10000
