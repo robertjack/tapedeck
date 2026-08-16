@@ -1,0 +1,49 @@
+{
+  "id": "gen-20260816T011547Z-transcribe-843e",
+  "component": "transcribe",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "harness SPEC-context-002 formula v3 (consumed_contracts joins the root hash)",
+      "SPEC-index-002 amended by the 2026-08-16 yield audit"
+    ]
+  },
+  "root_hash": "sha256:843e7dd71751400d8ca29aee773c663aa5c5624f70c501b1eac02290b73176aa",
+  "inputs": {
+    "manifest": "sha256:7efcb7db3b518116a2f1b5c5d60563230cceefaf913d4cdabe6f90b913833ee1",
+    "clauses": {
+      "SPEC-transcribe-001": "sha256:ead8fdabe4074adae1bc975801abc40c2821424b8e68a9b0d5a2ef9e9b9e8e12",
+      "SPEC-transcribe-002": "sha256:9ba4155521dd0a793a0c70d699655ccf59adf25425c63cbc21bfe3aeab38c6ab",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:6198c9e7f18dfc7122ecb9294beb756e694845fae408bbdcadd21db0c5ed93e8",
+      "system/contracts/transcript.schema.json": "sha256:5badcff15976c09aca2cd6ed396f815e4a7b27832fce287101d01d7b12358b5e"
+    },
+    "eval_sources": {
+      "system/evals/transcribe/test_parakeet.py": "sha256:b6d2d2637c0f754e0aedec8315e4c237785bd8e73a94ad13ae3002bbfbe74f7d",
+      "system/evals/transcribe/test_transcribe.py": "sha256:a177da52b1a8c7329e70cdce663dd58562e54fe645d34aaf6439b7c8857440c8"
+    },
+    "lessons": {
+      "LESSON-0002": "sha256:4253011e9974914f60098f5f36137081a2221671750bb2854b9f50eb26ad0db8"
+    },
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:bb9bc0258920ba6692de9ad974abb490acf79331d6f1061b8b04bd05aab1c8ff"
+    },
+    "consumed_contracts": {}
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "none (re-attestation, no generation)",
+    "session_ref": "claude-code:097e6628-0afa-463d-9d82-e9370863230c"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation only: 241/241 durable evals green. Hash inputs moved (harness hash formula, plus SPEC-index-002 for index); no implementation changed."
+}

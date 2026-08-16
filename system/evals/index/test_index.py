@@ -65,6 +65,26 @@ def test_k_limits_results(home):
     assert len(search_json(home, "content", "-k", "1")) == 1
 
 
+def test_multi_word_query_is_one_query(home):
+    # SPEC-index-002, promoted by the 2026-08-16 yield audit: every eval here used a
+    # single-token query, so an independent implementation of this same clause made
+    # `search neural networks` a usage error and still passed all 233 evals
+    two_video_home(home)
+    r = idx(home, "search", "core", "idea")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "0:01:35" in r.stdout, r.stdout
+    assert json.loads(idx(home, "search", "core", "idea", "--json").stdout)
+
+
+def test_absent_index_is_an_error_not_an_empty_answer(home):
+    # SPEC-index-002: the quiet empty answer belongs to a query that matched nothing,
+    # never to a library with no database. The rebuild exited 0 printing nothing,
+    # which at a terminal is indistinguishable from "no results".
+    r = idx(home, "search", "anything")
+    assert r.returncode != 0, "a missing index answered exactly like an empty one"
+    assert "reindex" in (r.stdout + r.stderr).lower(), "the remedy was not named"
+
+
 def test_no_matches_is_quietly_empty(home):
     two_video_home(home)
     r = idx(home, "search", "xylophone")

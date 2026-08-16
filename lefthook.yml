@@ -1,7 +1,10 @@
 # phx commit gate (harness SPEC-core-003): commits touching src/ need provenance
-# trailers or a taxed escape hatch. The gate script lives in the harness repo.
+# trailers or a taxed escape hatch. `phx gate` runs it from the installed harness
+# (harness SPEC-cli-007). This line used to name an absolute path into the phx
+# repo's *generated* src/ — machine-specific, and inside the burn radius of phx's
+# next regeneration, which would have deleted the gate mid-sweep.
 # One-time setup after clone: `lefthook install`
 commit-msg:
   commands:
     phx-gate:
-      run: sh /Users/robbiejack/dev/phoenix/phx/src/hooks/commit_gate.sh {1}
+      run: phx gate {1}
