@@ -21,6 +21,13 @@ commit → `phx regen <component> --trigger=...` → green → redeploy.
 - **Evals**: `just eval <component>` / `just eval-all`. Red-first before every ticket.
 - **Never touch the repo while a regen is in flight** — the sandbox treats any file
   appearing mid-attempt as a stray generator write and deletes it on rollback.
+  **This addresses coordinator sessions, not the generator.** If you were handed a
+  regeneration ticket and told to write into the owned paths, you *are* the generator
+  `phx regen` invoked: the deleted `src/<component>/` and the running `phx regen`
+  process are your own burn and your own parent, not a neighbour's work. Write the
+  implementation. (Two attempts of the 2026-08-17 wiki round were spent on a generator
+  that read this bullet, checked `git status` and `pgrep`, concluded a peer session was
+  mid-regen, and stood down — politely, and at full cost.)
 - **Deploy discipline**: after every green regen of user-facing code,
   `uv tool install --force ~/dev/personal/tapedeck` — the installed tool is a
   SNAPSHOT and does not track the repo. Then smoke-test the deployed binary from a
