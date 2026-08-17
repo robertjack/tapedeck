@@ -1,0 +1,71 @@
+{
+  "id": "gen-20260817T172201Z-cli-5004",
+  "component": "cli",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "SPEC-wiki-011 round: system/contracts/wiki-layout.md gained the code-span rule for wikilink resolution, and cli consumes wiki, so that contract sits in cli's consumed_contracts. cli neither parses wikilinks nor reads wiki pages \u2014 its only published read of the wiki is whether sources/<id>.md exists (SPEC-cli-009). No code change owed."
+    ]
+  },
+  "root_hash": "sha256:5004901cc2ec511e9c944b88f405a39f658dffcddd6e781be7b241c00f679a5b",
+  "inputs": {
+    "manifest": "sha256:656432ff5f6db7d47a2166128372eb6863a1175ebf8a8352a0cb26204f4340e8",
+    "clauses": {
+      "SPEC-cli-001": "sha256:63d955a7a7651e48f1c5fac7aa591463eb4e22304430b5649093ed968a4b3425",
+      "SPEC-cli-002": "sha256:d93260f40d918251e700ce4185b44249bfa984eeab383f1011cbc7ff307828ad",
+      "SPEC-cli-003": "sha256:5fd4ef02cda9afdf75d1963a3ef769d4c36fef4973c6673f607dddf167e5f6cb",
+      "SPEC-cli-004": "sha256:1a2e5a8db8af8e2a3182b06eae8eca1b5e5ac0081509a3716045839ada36961e",
+      "SPEC-cli-005": "sha256:e244ac3111380ec3bc0a030a000659274774e945430a5ad8c4abebbfa9ea40d9",
+      "SPEC-cli-006": "sha256:15418ed31b76937913a91277ce0a6ae8746c13893f1308103579e20fef757cda",
+      "SPEC-cli-007": "sha256:320ce72e7a1564b6a8a6a26818284c5bdb276057a3b3180c954089dd8e3b3913",
+      "SPEC-cli-008": "sha256:15451335ef159e368bd9c857c5414cfb74e8cd42fe4252cef5f9d161416f2a70",
+      "SPEC-cli-009": "sha256:abb5eb9779f934364dbac44a0ad0f5693b28472a2e676bc0f011c4364b017cca",
+      "SPEC-cli-010": "sha256:34b8ee8024308b88672dfd5becdd0619ccf183e0f72b96723a706b8cb4d50c9a",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/cli-surface.md": "sha256:79b8055dfe7a5b99eb8fc0f98fd09bbdf40abc1d5e78918f6d5c34e2ba2b9651"
+    },
+    "eval_sources": {
+      "system/evals/cli/test_add_autofile.py": "sha256:ad87f53bde9cac6fe0fa2a0c4daa05a48a48ddbfaa4dfae6640d568db43feb43",
+      "system/evals/cli/test_add_collection.py": "sha256:24e54181ad822acbcd0d3a527654680225a085130a12386f38cff7f2c91ff506",
+      "system/evals/cli/test_cli.py": "sha256:7cd34c061ca8b49961d01af7325d25d5d17869c08a17c88b02c0b9d000462d6e",
+      "system/evals/cli/test_doctor.py": "sha256:b7b463558fffec7bd7de69dcbacfa0295997e908d0cf983f67d5aa56e8601e09",
+      "system/evals/cli/test_help.py": "sha256:bccc4522447f7f56fc48d56619303ce06bf9effff2cbed9955851ac34f3499fe",
+      "system/evals/cli/test_portability.py": "sha256:35909122ce6649f2e3f27cb73f856cc305822d17600ab9a479c1a171390e1563",
+      "system/evals/cli/test_retranscribe.py": "sha256:1927d5ad0030681ed265625f8dc92d5aa92f88a7f8a53364a3a89f8dfe581e58",
+      "system/evals/cli/test_rm.py": "sha256:666a41c2155ce70b91f98e4d6772979d3571f6694c309df10bbf3e666d53aa1e",
+      "system/evals/cli/test_setup.py": "sha256:2338ee424bfa980332f079bccb51fefbc6f1e9becb6266587c826868fa40b3d3",
+      "system/evals/cli/test_staging_notes.py": "sha256:a1b7d28b08aeca8f73afb807563f35f71991c8419f2f1f85f70c8a44dd2174f1",
+      "system/evals/cli/test_wiki_surface.py": "sha256:54d53d47a837a9b1244cf721583dea9bc66369e618caa5092d33973cc976577a"
+    },
+    "lessons": {
+      "LESSON-0003": "sha256:c8f5d869f21ef882ccf20dbe57346069f2788b654691d86dba3bdfbe07268030",
+      "LESSON-0005": "sha256:8cb8f31074e01f16a33c3f928e3d3a806f7f24051cd4707ccd6d5aa75528b126"
+    },
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:bb9bc0258920ba6692de9ad974abb490acf79331d6f1061b8b04bd05aab1c8ff"
+    },
+    "consumed_contracts": {
+      "system/contracts/ask-citations.md": "sha256:c39d794a33fe974b202551d46f51e4126e431290268152aed458a6f10f747c03",
+      "system/contracts/library-layout.md": "sha256:4e290db436ebeda51fa6eeca0460c8d7e9d76d83218f46fff9e87095e0f724f7",
+      "system/contracts/meta.schema.json": "sha256:98c560566ec2aea13d57aec61ed91cf6cb94a3aff698c909b640131e77f64bbd",
+      "system/contracts/transcript.schema.json": "sha256:5badcff15976c09aca2cd6ed396f815e4a7b27832fce287101d01d7b12358b5e",
+      "system/contracts/wiki-layout.md": "sha256:fe0848c01c06da9fee05d2119f41b6113c6260d12e9b83a97d5ef75e3b1b6e63"
+    }
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "none (re-attestation, no generation)",
+    "session_ref": "claude-code:61ade2c7-3fd7-4c72-a203-97a017e92550"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation only: 281/281 green. wiki alone was regenerated this round (gen-20260817T170121Z-wiki-4514)."
+}
