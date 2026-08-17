@@ -1,0 +1,49 @@
+{
+  "id": "gen-20260817T081327Z-index-26d9",
+  "component": "index",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": [
+      "SPEC-ingest-003 round: system/contracts/library-layout.md gained the staging-directory section, and index declares that contract, so its hash moved. reindex walks archive/*.md, never library/, so staging directories are outside its reach entirely. No code change owed."
+    ]
+  },
+  "root_hash": "sha256:26d94e71f20ab30073d633af22943ab6c6fa3cedb9cdbefb2f75b074733ab2a8",
+  "inputs": {
+    "manifest": "sha256:88fed72a5ef558ac0997068161511c7210ed3b3b8d93d6f3ca55c91553e5b0cf",
+    "clauses": {
+      "SPEC-index-001": "sha256:ba9cd0867089026affd3b9910209295b2bac746f64546ed2f75652d1e5ead9a0",
+      "SPEC-index-002": "sha256:be968fcbe3f1280a7705eee39dd0912ad1e9d700bb3a26dc4430d1d1fde829c8",
+      "SPEC-index-003": "sha256:14eea381850f042a7e89b4ce40b0f67bff83735ff5f8f2ff8ef2be5dfb4f501d",
+      "SPEC-index-004": "sha256:d59a3577e26d37e3cf976b03a3a93dd60aa0030b16953e175be698bbbd12f6fd",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:4e290db436ebeda51fa6eeca0460c8d7e9d76d83218f46fff9e87095e0f724f7"
+    },
+    "eval_sources": {
+      "system/evals/index/test_index.py": "sha256:89707fa70d9de9612d1f407e70f1970996905e324bb810a9a13ac6f5c9206618",
+      "system/evals/index/test_stemming.py": "sha256:8f638da5bceb1478efdd094dc3297cf3b94e7eec4c9c921570730a46ff4bd982"
+    },
+    "lessons": {
+      "LESSON-0005": "sha256:8cb8f31074e01f16a33c3f928e3d3a806f7f24051cd4707ccd6d5aa75528b126"
+    },
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:bb9bc0258920ba6692de9ad974abb490acf79331d6f1061b8b04bd05aab1c8ff"
+    },
+    "consumed_contracts": {}
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "none (re-attestation, no generation)",
+    "session_ref": "claude-code:61ade2c7-3fd7-4c72-a203-97a017e92550"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "notes": "Re-attestation only: 272/272 green. ingest, cli and wiki were regenerated this round (gen-20260817T072536Z-ingest-f70f, gen-20260817T073314Z-cli-7260, gen-20260817T075812Z-wiki-15e3); this component's only moved input is the library-layout contract it cites."
+}
