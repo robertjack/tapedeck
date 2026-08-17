@@ -25,7 +25,11 @@ by line as it arrives: a line that parses as a Claude Code stream event becomes
 one compact progress line the moment it lands, never batched until exit. The run's
 product — what a caller like `tend` relays to the user — is the result event's
 text when the whole stdout parsed as such a stream, and the raw stdout byte for
-byte otherwise, so a maintainer that narrates nothing loses nothing.
+byte otherwise, so a maintainer that narrates nothing loses nothing. The same
+result event, when it carries them, is where the run's cost figures come from
+(SPEC-wiki-008): duration, tokens, price — the only numbers that say whether
+keeping this wiki is getting more expensive, handed back beside the product so a
+caller can fold them into the chronology without re-parsing anything.
 """
 
 from __future__ import annotations
@@ -128,6 +132,28 @@ def _announce_event(event: dict) -> None:
         print(f"  · result: {event.get('subtype', 'done')}", file=sys.stderr, flush=True)
 
 
+def _cost(event: dict | None) -> dict:
+    """What the result event says this run cost, read defensively: any field can
+    be absent, and a maintainer that does not stream hands back nothing at all —
+    never a malformed figure and never a row of zeroes standing in for one."""
+    found: dict = {}
+    if not isinstance(event, dict):
+        return found
+    duration_ms = event.get("duration_ms")
+    if isinstance(duration_ms, (int, float)):
+        found["duration_s"] = round(duration_ms / 1000)
+    cost_usd = event.get("total_cost_usd")
+    if isinstance(cost_usd, (int, float)):
+        found["cost_usd"] = float(cost_usd)
+    usage = event.get("usage")
+    if isinstance(usage, dict):
+        for key in ("input_tokens", "output_tokens"):
+            value = usage.get(key)
+            if isinstance(value, int):
+                found[key] = value
+    return found
+
+
 def _feed(stdin, text: str) -> None:
     """Write the task on a thread of its own: a maintainer that starts writing
     output before it has finished reading stdin must never deadlock against a
@@ -151,13 +177,15 @@ def run_maintainer(
     label: str,
     video_id: str | None = None,
     archive_page: Path | None = None,
-) -> tuple[int, str]:
+) -> tuple[int, str, dict]:
     """Run the agent from inside the wiki with the task on stdin, watched rather
     than awaited. `label` is the one line that announces the run before the
     process starts — the filing names its video, a tend names its mode — so
     silence before it is tapedeck settling the cheap questions and silence after
-    it is the agent working. Returns the exit code and the run's product; what it
-    did to the wiki is judged afterwards by the gate and never taken on trust.
+    it is the agent working. Returns the exit code, the run's product, and what
+    the result event said it cost (empty when the maintainer did not stream one);
+    what it did to the wiki is judged afterwards by the gate and never taken on
+    trust.
     """
     print(label, file=sys.stderr, flush=True)
     env = {**os.environ, "TAPEDECK_HOME": str(home), "TAPEDECK_WIKI": str(wiki)}
@@ -190,6 +218,7 @@ def run_maintainer(
     raw: list[str] = []
     events = others = 0
     result_text: str | None = None
+    result_event: dict | None = None
     for line in iter(process.stdout.readline, ""):
         raw.append(line)
         event = _event(line.strip())
@@ -201,6 +230,7 @@ def run_maintainer(
         _announce_event(event)
         if event.get("type") == _RESULT:
             result_text = str(event.get("result", ""))
+            result_event = event
     process.stdout.close()
     feeder.join()
     code = process.wait()
@@ -208,7 +238,8 @@ def run_maintainer(
     stdout = "".join(raw)
     streamed = events > 0 and others == 0
     product = result_text if streamed and result_text is not None else stdout
-    return code, product
+    cost = _cost(result_event) if streamed else {}
+    return code, product, cost
 
 
 def _ask_argv() -> list[str]:

@@ -125,6 +125,18 @@ def catalog(index_text: str) -> list[str]:
     return found
 
 
+def opening_heading(text: str) -> str | None:
+    """The page's own first heading, if it has one — the only annotation tapedeck
+    can know about a page without being told what it means (SPEC-wiki-008)."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            if heading:
+                return heading
+    return None
+
+
 def entries(log_text: str) -> list[tuple[str, str]]:
     """The chronology as `(op, subject)` pairs, oldest first."""
     found = []
@@ -182,8 +194,8 @@ state, not a fault.
 ## The layout
 
     CLAUDE.md           this brief — never edited by the maintainer
-    index.md            the catalog: one markdown-linked line per page
-    log.md              the chronology, append-only
+    index.md            the catalog — tapedeck appends a line per page after every run
+    log.md              the chronology — tapedeck appends an entry per run, append-only
     sources/<id>.md     one page per filed video; its existence is the filed marker
     notes/              free-form pages; how they are organized is this file's business
 
@@ -210,9 +222,9 @@ An operation that breaks any of these is rejected whole and its work is discarde
 - Every deep link anywhere in the wiki names a real video in this library at a
   moment inside it. In this file too: a URL written out here in full would be read
   as a claim and checked as one, which is why there is not one on this page.
-- `index.md` links every page except the three above.
-- `log.md` still begins with exactly what it said before and has gained an entry
-  of the form `## [YYYY-MM-DD] <op> | <subject>`.
+- `index.md` and `log.md`: tapedeck keeps both current by construction after every
+  run — appending a catalog line for any page you left out of it, and one
+  chronology entry for a run that added none of its own. Neither is your job.
 
 Nothing above says what a page should contain. That is what the rest of this file
 is for.

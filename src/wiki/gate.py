@@ -22,6 +22,13 @@ that sent the user to fix a page the gate is perfectly happy with would be worse
 than no linter. The one thing neither of them re-derives is citation grammar:
 pages go to ask's published `verify`, one page's text per invocation, and what ask
 says about a bad link is what reaches the user (LESSON-0003).
+
+The catalog and the chronology are checked here exactly as they always were
+(SPEC-wiki-008): every page linked from `index.md`, `log.md` grown by a
+well-formed entry. What changed is not this module but what runs before it —
+tapedeck's own bookkeeping reconciles both after the maintainer exits and before
+`verdict` is asked anything, so these two checks are now invariants satisfied by
+construction rather than obligations an agent can fail.
 """
 
 from __future__ import annotations

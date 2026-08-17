@@ -3,11 +3,12 @@
 All four are one operation with different reasons for running it. Whatever is
 pending in the working tree is committed as `user edits`; the maintainer runs; if
 it crashes or the gate refuses, the tree goes back to that pre-run commit and the
-run exits 1; otherwise everything it wrote is committed under a name that says
-what happened. `sync` is a loop around that operation and `rebuild` is the same
-loop preceded by a deliberate reset — neither is a second implementation of it,
-because a sweep that verified less than the single verb would be a way to get
-unreviewed prose into the wiki by asking for more of it at once.
+run exits 1; otherwise tapedeck reconciles the catalog and the chronology
+(SPEC-wiki-008) and everything is committed under a name that says what happened.
+`sync` is a loop around that operation and `rebuild` is the same loop preceded by
+a deliberate reset — neither is a second implementation of it, because a sweep
+that verified less than the single verb would be a way to get unreviewed prose
+into the wiki by asking for more of it at once.
 
 `tend` is the same operation again, with the one rule filing does not need — no
 source page may be deleted or renamed away — and, in its default mode, with the
@@ -31,7 +32,7 @@ from pathlib import Path
 
 import ingest
 
-from . import Failure, Usage, gate, layout, library, repo, seams
+from . import Failure, Usage, bookkeeping, gate, layout, library, repo, seams
 
 FILE_OP = "file"
 TEND_OP = "tend"
@@ -39,16 +40,14 @@ REBUILD_OP = "rebuild"
 RESET_SUBJECT = "wiki rebuild: reset"
 TEND_SUBJECT = "wiki tend"
 
+# What the maintainer still has to satisfy — the catalog and the chronology are no
+# longer on this list, because tapedeck keeps both current itself (SPEC-wiki-008)
+# and a task that named them would be an instruction to go and maintain them.
 GATE_RULES = """  - CLAUDE.md is byte-identical to how you found it. Never edit the brief.
   - Every [[wikilink]] in every page resolves — case-sensitively, against page
     filenames with .md stripped, anywhere under wiki/.
   - Every deep link in every page names a real video in this library at a
-    timestamp inside it. Never cite a moment you have not read.
-  - index.md links every page in the wiki except CLAUDE.md, index.md and log.md.
-  - log.md still begins with exactly what it said before, and has gained at least
-    one entry of the form:
-        {entry}
-    Append to the chronology. Never reword, reorder, deduplicate or tidy it."""
+    timestamp inside it. Never cite a moment you have not read."""
 
 FILE_TASK = """You are the maintainer of this wiki. Read CLAUDE.md in this directory first:
 it is the brief, it is the user's, and where it disagrees with anything below
@@ -64,7 +63,8 @@ The archive page is the video's metadata and its transcript, rendered. Read it,
 then write sources/{video_id}.md and whatever the brief says this material earns
 under notes/ — connecting it to what the wiki already holds is the point of the
 exercise, so read the pages it touches before you add another. Link pages to each
-other with [[wikilinks]]. Then bring index.md and log.md up to date.
+other with [[wikilinks]]. tapedeck keeps the catalog and the chronology current
+after you exit, so neither is your job.
 
 tapedeck checks the result mechanically after you exit, over the whole wiki, and
 rejects the operation — discarding everything you wrote — unless all of this holds:
@@ -107,7 +107,8 @@ Read the whole wiki and improve it. Resolve contradictions, connect pages that
 belong linked, write the page a concept has earned by being mentioned everywhere
 and defined nowhere, and merge or delete notes that have gone redundant.
 Reshaping notes/ is exactly what this run is for: notes may be created,
-rewritten, split, merged and deleted freely.
+rewritten, split, merged and deleted freely. tapedeck keeps the catalog and the
+chronology current after you exit, so neither is your job.
 
 tapedeck checks the result mechanically after you exit, over the whole wiki, and
 rejects the operation — discarding everything you did — unless all of this holds:
@@ -122,17 +123,13 @@ File no video: a video with no page yet is `tapedeck wiki sync`'s work, not
 yours."""
 
 
-def _rules(op: str) -> str:
-    return GATE_RULES.format(entry=f"## [{layout.today()}] {op} | <subject>")
-
-
 def file_task(wiki: Path, video_id: str, page: Path) -> str:
     return FILE_TASK.format(
         video_id=video_id,
         page=page,
         wiki=wiki,
         link=layout.deep_link_form(video_id),
-        rules=_rules(FILE_OP),
+        rules=GATE_RULES,
     )
 
 
@@ -143,6 +140,7 @@ def perform(
     task: str,
     subject: str,
     label: str,
+    op: str,
     video_id: str | None = None,
     archive_page: Path | None = None,
     keep_sources: bool = False,
@@ -151,13 +149,19 @@ def perform(
     or the rollback. The caller holds the lock for exactly this span."""
     pre_run = repo.commit_pending(wiki)
     before = gate.snapshot(wiki)
-    code, _ = seams.run_maintainer(command, home, wiki, task, label, video_id, archive_page)
+    code, product, cost = seams.run_maintainer(
+        command, home, wiki, task, label, video_id, archive_page
+    )
     if code != 0:
         repo.restore(wiki, pre_run)
         raise Failure(
             f"the maintainer exited {code} — whatever it left half-written has been "
             f"rolled back, and the wiki is where it was"
         )
+    # Reconciled before the gate judges anything, so a rejection rolls this back
+    # with everything else and the gate sees exactly what is about to land.
+    bookkeeping.reconcile_catalog(wiki)
+    bookkeeping.reconcile_log(wiki, before.log, op, product, cost, video_id or "the whole wiki")
     problems = gate.verdict(home, wiki, before, video_id=video_id, keep_sources=keep_sources)
     if problems:
         repo.restore(wiki, pre_run)
@@ -178,6 +182,7 @@ def file_one(home: Path, wiki: Path, command: str, video_id: str) -> None:
         file_task(wiki, video_id, page),
         f"wiki {FILE_OP} {video_id}",
         f"filing {video_id}",
+        FILE_OP,
         video_id=video_id,
         archive_page=page,
     )
@@ -376,9 +381,10 @@ def tend(home: Path, yes: bool) -> int:
                 home,
                 wiki,
                 command,
-                TEND_APPLY_TASK.format(wiki=wiki, rules=_rules(TEND_OP)),
+                TEND_APPLY_TASK.format(wiki=wiki, rules=GATE_RULES),
                 TEND_SUBJECT,
                 "tending (apply)",
+                TEND_OP,
                 keep_sources=True,
             )
             return 0
@@ -396,7 +402,7 @@ def read_only(home: Path, wiki: Path, command: str) -> int:
     history, however much the user learned from it.
     """
     pre_run = repo.commit_pending(wiki)
-    code, said = seams.run_maintainer(
+    code, said, _ = seams.run_maintainer(
         command, home, wiki, TEND_REPORT_TASK.format(wiki=wiki), "tending (report)"
     )
     repo.restore(wiki, pre_run)

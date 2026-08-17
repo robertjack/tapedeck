@@ -11,7 +11,10 @@ wiki as it sees fit; tapedeck reviews none of its prose and all of its result,
 mechanically, over the whole wiki, and either commits it or resets the tree back
 to where the run began. A maintainer run is watched rather than awaited
 (SPEC-wiki-007): it announces itself before it starts and its stream events
-become progress on stderr as they arrive.
+become progress on stderr as they arrive. The catalog and the chronology are
+tapedeck's own bookkeeping, reconciled after the run and before the result is
+judged (SPEC-wiki-008) — an agent that stays silent about either has left nothing
+undone.
 
 Two vocabularies are consumed rather than re-derived (LESSON-0003): ingest's id
 grammar and rule for what counts as a downloaded video, and ask's published
