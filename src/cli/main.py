@@ -1,26 +1,6 @@
-"""The tapedeck surface: the verbs, the global options, and the exit codes.
-
-SPEC-cli-001 and system/contracts/cli-surface.md. The thirteen verbs here are the
-whole of it; adding one is a durable-layer change requiring a new clause, so the
-parser below is deliberately a flat, boring list rather than anything that could
-grow a verb by accident.
-
-Two things happen in a fixed order on every run. `--version` is answered first,
-from the installed distribution's own metadata, before any library work at all
-(SPEC-cli-006): it is the first thing a stranger runs after installing, and it
-must not depend on this machine's layout or on any external tool. Then
-`$TAPEDECK_HOME` is resolved and scaffolded, because every remaining verb needs a
-home and a first run should not be a chore.
-
-`wiki` is the one verb this parser does not parse. It is a group, and SPEC-cli-009
-hands it over whole: everything after the word goes to `python -m wiki` untouched,
-including `--help`, so the wiki's own surface has exactly one copy of itself and
-a flag it grows tomorrow reaches the installed tapedeck with no code here. The
-subparser registered for it exists so `tapedeck --help` lists the verb and
-`tapedeck help wiki` has a usage to quote — never to inspect what the user typed.
-
-Exit codes are the contract's: 0 success, 1 the operation failed, 2 the asking
-was wrong. Human output goes to stdout, diagnostics and progress to stderr.
+"""The `tapedeck` entrypoint (SPEC-cli-001): argument parsing, home
+resolution, and dispatch to the other components — never re-deriving their
+vocabulary, only routing to it.
 """
 
 from __future__ import annotations
@@ -29,187 +9,166 @@ import argparse
 import sys
 from importlib import metadata
 
-import ingest
-from transcribe.transcriber import ConfigError as TranscribeConfigError
+from . import components
+from . import doctor as doctor_module
+from . import home as home_module
+from . import pipeline
+from . import setup as setup_module
+from . import teach
+from . import views
 
-from . import Failure, Usage, components, doctor, home, pipeline, setup, teach, views
-
-DIST = "tapedeck"
-DESCRIPTION = "A local video brain: download, transcribe, archive, ask."
-EPILOG = "`tapedeck help` is a tour; `tapedeck help manual` is the whole manual."
-WIKI = "wiki"
-
-USAGE_ERRORS = (Usage, ingest.BadRequest, TranscribeConfigError)
-FAILURES = (Failure, OSError)
-# The two verbs whose whole job is to report on a broken installation. A home
-# that cannot be made is one of the things they are for, so they reach their own
-# report and say so there rather than dying on the way to it.
-DIAGNOSTIC = ("doctor", "setup")
+PROG = "tapedeck"
 
 
 def build_parser() -> tuple[argparse.ArgumentParser, dict]:
-    """The parser, and the subparsers by name so `help <verb>` can quote them."""
-    parser = argparse.ArgumentParser(prog=DIST, description=DESCRIPTION, epilog=EPILOG)
+    parser = argparse.ArgumentParser(
+        prog=PROG, description="A local video brain: download, transcribe, archive, ask."
+    )
     parser.add_argument(
         "--version", action="store_true", help="print the installed version and exit"
     )
-    subs = parser.add_subparsers(dest="verb", metavar="<verb>")
-    verbs: dict[str, argparse.ArgumentParser] = {}
+    sub = parser.add_subparsers(dest="verb", required=True)
+    subparsers: dict = {}
 
-    def verb(name: str, blurb: str) -> argparse.ArgumentParser:
-        verbs[name] = subs.add_parser(name, help=blurb, description=blurb)
-        return verbs[name]
-
-    adding = verb("add", "fetch, transcribe, archive and index a video, playlist or channel")
-    adding.add_argument("url", help="a video URL or id, or a playlist or channel URL")
-    adding.add_argument("--force", action="store_true", help="re-fetch one video from scratch")
-
-    finding = verb("search", "ranked timestamped excerpts with deep links")
-    finding.add_argument("query", nargs="+")
-    finding.add_argument("-k", type=int, help="max results (default 8)")
-    finding.add_argument("--json", action="store_true", help="emit the same fields structurally")
-
-    asking = verb("ask", "a cited answer from the library")
-    asking.add_argument("question", nargs="+")
-    asking.add_argument("-k", type=int, help="sources to retrieve (--fast only)")
-    asking.add_argument("--fast", action="store_true", help="strict retrieval instead of the agent")
-    asking.add_argument("--video", help="answer from this library video alone")
-
-    browsing = verb("list", "one line per video: id, date, channel, title")
-    browsing.add_argument("--json", action="store_true", help="emit the same fields structurally")
-
-    showing = verb("show", "metadata and the archive page for one video")
-    showing.add_argument("video_id", metavar="id")
-    showing.add_argument("--json", action="store_true", help="emit the same fields structurally")
-
-    verb("reindex", "rebuild tapedeck.db from archive/ alone")
-
-    removing = verb("rm", "remove a video everywhere, or reclaim just its disk")
-    removing.add_argument("video_id", metavar="id")
-    removing.add_argument(
-        "--media-only", action="store_true", help="delete the video file, keep the knowledge"
+    p = sub.add_parser(
+        "add", help="ingest, transcribe, archive and index one video, or sweep a collection"
     )
+    p.add_argument("url", help="a video URL/id, or a playlist/channel URL")
+    p.add_argument("--force", action="store_true", help="re-fetch a single video from scratch")
+    subparsers["add"] = p
 
-    redoing = verb("retranscribe", "re-derive every transcript a newer model has superseded")
-    redoing.add_argument("--dry-run", action="store_true", help="list what would be redone")
+    p = sub.add_parser("search", help="ranked timestamped excerpts with deep links")
+    p.add_argument("query", nargs="+")
+    p.add_argument("-k", type=int, default=8, help="max results (default 8)")
+    p.add_argument("--json", action="store_true", help="emit the same fields structurally")
+    subparsers["search"] = p
 
-    routing = verb(WIKI, "the prose layer: file, sync, lint or rebuild the wiki")
-    routing.add_argument(
-        "args",
-        nargs=argparse.REMAINDER,
-        metavar="...",
-        help="handed to the wiki component untouched — `tapedeck wiki --help` is its own usage",
+    p = sub.add_parser("ask", help="answer a question from the library, with cited sources")
+    p.add_argument("question", nargs="+")
+    p.add_argument("-k", type=int, default=None, help="sources to retrieve in --fast mode")
+    p.add_argument("--fast", action="store_true", help="retrieve, then answer (no agent)")
+    p.add_argument("--video", help="answer from this one video alone")
+    subparsers["ask"] = p
+
+    p = sub.add_parser("list", help="one line per video: id, date, channel, title")
+    p.add_argument("--json", action="store_true")
+    subparsers["list"] = p
+
+    p = sub.add_parser("show", help="metadata and archive path for one video")
+    p.add_argument("video_id")
+    p.add_argument("--json", action="store_true")
+    subparsers["show"] = p
+
+    p = sub.add_parser("reindex", help="rebuild tapedeck.db from archive/ alone")
+    subparsers["reindex"] = p
+
+    p = sub.add_parser("rm", help="remove a video, or just reclaim its media")
+    p.add_argument("video_id")
+    p.add_argument(
+        "--media-only", action="store_true", help="keep metadata/transcript/archive/index"
     )
+    subparsers["rm"] = p
 
-    verb("adapt-parakeet", "stdin to stdout: parakeet JSON into the whisper shape")
-
-    checking = verb("doctor", "check the seams, the tools and this machine; change nothing")
-    checking.add_argument("--json", action="store_true", help="emit the same checks structurally")
-
-    starting = verb("setup", "first run: scaffold the home, check it, and name what would fix it")
-    starting.add_argument(
-        "--yes", action="store_true", help="run the printed commands, then check again"
+    p = sub.add_parser(
+        "retranscribe", help="re-derive transcripts superseded by the configured model"
     )
+    p.add_argument("--dry-run", action="store_true")
+    subparsers["retranscribe"] = p
 
-    teaching = verb("help", "a tour, a verb's usage and example, or the full manual")
-    teaching.add_argument("topic", nargs="?", metavar="<verb>|manual")
+    p = sub.add_parser(
+        "wiki", help="the prose layer: file, sync, lint, rebuild, tend (routed to python -m wiki)"
+    )
+    subparsers["wiki"] = p
 
-    return parser, verbs
+    p = sub.add_parser("adapt-parakeet", help="stdin/stdout filter: parakeet JSON to whisper shape")
+    subparsers["adapt-parakeet"] = p
+
+    p = sub.add_parser("doctor", help="diagnose this installation; changes nothing")
+    p.add_argument("--json", action="store_true")
+    subparsers["doctor"] = p
+
+    p = sub.add_parser("setup", help="first-run wizard: scaffold, check, print remedies")
+    p.add_argument("--yes", action="store_true", help="run the printed remedies")
+    subparsers["setup"] = p
+
+    p = sub.add_parser("help", help="a one-screen tour, per-verb help, or the full manual")
+    p.add_argument("topic", nargs="?")
+    subparsers["help"] = p
+
+    return parser, subparsers
 
 
-def report_version() -> int:
-    """The installed version, from the distribution's metadata — `pyproject.toml`
-    is the single source of truth and no string here duplicates it. A build whose
-    own metadata cannot be read is broken, and says so rather than inventing a
-    number for a user to report in a bug."""
+def cmd_version() -> int:
     try:
-        print(f"{DIST} {metadata.version(DIST)}")
-    except metadata.PackageNotFoundError:
-        print(
-            f"error: {DIST} cannot read its own package metadata, so it cannot say "
-            "what version it is — this install is broken; reinstall it",
-            file=sys.stderr,
-        )
+        version = metadata.version("tapedeck")
+    except metadata.PackageNotFoundError as exc:
+        print(f"error: tapedeck's package metadata could not be read — {exc}", file=sys.stderr)
         return 1
+    print(version)
     return 0
 
 
-def dispatch(args, deck, verbs) -> int:
-    if args.verb == "add":
-        return pipeline.add(deck, args.url, args.force)
-    if args.verb == "search":
-        return views.search(deck, args.query, args.k, args.json)
-    if args.verb == "ask":
-        return views.ask(deck, args.question, args.k, args.fast, args.video)
-    if args.verb == "list":
-        return views.listing(deck, args.json)
-    if args.verb == "show":
-        return views.show(deck, args.video_id, args.json)
-    if args.verb == "reindex":
-        return views.reindex(deck)
-    if args.verb == "rm":
-        return views.remove(deck, args.video_id, args.media_only)
-    if args.verb == "retranscribe":
-        return pipeline.retranscribe(deck, args.dry_run)
-    if args.verb == WIKI:  # only reachable if the routing above ever stops firing
-        return components.passthrough(WIKI, args.args, deck)
-    if args.verb == "adapt-parakeet":
-        # transcribe owns the filter; the cli only puts it on the installed
-        # surface, so the published parakeet seam works wherever tapedeck does
-        # and needs no assumption about which python is on PATH.
-        return components.passthrough("transcribe", ["from-parakeet"], deck)
-    if args.verb == "doctor":
-        return doctor.run(deck, args.json)
-    if args.verb == "setup":
-        return setup.run(deck, args.yes)
-    return teach.teach(args.topic, verbs)
-
-
 def main(argv=None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    parser, verbs = build_parser()
+    raw = list(sys.argv[1:] if argv is None else argv)
 
-    if argv[:1] == [WIKI]:
-        # Routed before parsing, so nothing here reads, validates, reorders or
-        # rewords a single word of the wiki's surface (SPEC-cli-009).
-        try:
-            deck = prepared(WIKI)
-        except OSError as exc:
-            return _report(exc, 1)
-        return components.passthrough(WIKI, argv[1:], deck)
+    # --version is answered before any library work (SPEC-cli-006).
+    if raw[:1] == ["--version"]:
+        return cmd_version()
 
-    args = parser.parse_args(argv)
+    # `wiki` is handed over whole (SPEC-cli-009): everything after it goes to
+    # `python -m wiki` untouched, including its own `-h`/`--help`, which is
+    # why this bypasses argparse entirely rather than routing through a
+    # subparser that would try to interpret those tokens itself.
+    if raw[:1] == ["wiki"]:
+        home = home_module.home_dir()
+        home_module.ensure_home(home)
+        return components.run_passthrough("wiki", raw[1:], home)
+
+    parser, subparsers = build_parser()
+    args = parser.parse_args(raw)
     if args.version:
-        return report_version()
-    if args.verb is None:
-        parser.print_usage(sys.stderr)
-        print("error: a verb is required — `tapedeck help` for a tour", file=sys.stderr)
-        return 2
+        return cmd_version()
 
-    try:
-        return dispatch(args, prepared(args.verb), verbs)
-    except USAGE_ERRORS as exc:
-        return _report(exc, 2)
-    except FAILURES as exc:
-        return _report(exc, 1)
+    home = home_module.home_dir()
+    home_module.ensure_home(home)
 
+    if args.verb == "add":
+        return pipeline.cmd_add(args, home)
+    if args.verb == "search":
+        search_args = ["search", *args.query, "-k", str(args.k)]
+        if args.json:
+            search_args.append("--json")
+        return components.run_passthrough("index", search_args, home)
+    if args.verb == "ask":
+        ask_args = ["run", *args.question]
+        if args.k is not None:
+            ask_args += ["-k", str(args.k)]
+        if args.fast:
+            ask_args.append("--fast")
+        if args.video:
+            ask_args += ["--video", args.video]
+        return components.run_passthrough("ask", ask_args, home)
+    if args.verb == "list":
+        return views.cmd_list(args, home)
+    if args.verb == "show":
+        return views.cmd_show(args, home)
+    if args.verb == "reindex":
+        return components.run_passthrough("index", ["reindex"], home)
+    if args.verb == "rm":
+        return pipeline.cmd_rm(args, home)
+    if args.verb == "retranscribe":
+        return pipeline.cmd_retranscribe(args, home)
+    if args.verb == "adapt-parakeet":
+        return components.run_passthrough("transcribe", ["from-parakeet"], home)
+    if args.verb == "doctor":
+        return doctor_module.cmd_doctor(args, home)
+    if args.verb == "setup":
+        return setup_module.cmd_setup(args, home)
+    if args.verb == "help":
+        return teach.cmd_help(args, home, subparsers)
 
-def prepared(verb: str):
-    """The resolved home, scaffolded — the first-run courtesy every verb performs
-    and none of them repeats."""
-    deck = home.resolve()
-    try:
-        home.scaffold(deck)
-    except OSError as exc:
-        if verb not in DIAGNOSTIC:
-            raise
-        print(f"warning: could not prepare {deck} — {exc}", file=sys.stderr)
-    return deck
-
-
-def _report(exc, code: int) -> int:
-    print(f"error: {exc}", file=sys.stderr)
-    return code
+    parser.error(f"unknown verb {args.verb!r}")
+    return 2
 
 
 if __name__ == "__main__":

@@ -1,5 +1,3 @@
-"""`python -m cli` — the same entry point the `tapedeck` console script uses."""
-
 import sys
 
 from .main import main

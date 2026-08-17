@@ -1,22 +1,7 @@
-"""How the cli talks to the components that own the library's paths.
-
-Each component is a module CLI — `python -m ingest add`, `python -m transcribe
-run`, `python -m archive render`, `python -m index update`, `python -m ask run`,
-`python -m wiki file` — and the cli drives exactly that boundary, the same one
-each component's own durable evaluations use. Nothing here reaches past it into
-an internal the component never promised to keep.
-
-The resolved home travels in the environment because the cli is the sole
-authority on where the library is (SPEC-cli-001); a child left to work out its
-own default could find a different one.
-
-Three ways to run a child, and the difference is whose answer stdout carries.
-A `stage` is one link of the derivation chain: its stdout is the path it just
-wrote — progress, not the answer — so it is folded into our stderr, leaving
-`add`'s stdout for the summary alone. `passthrough` is for the verbs the cli
-delegates whole; there the component's stdout *is* the answer and its exit code
-is ours. `capture` is for the one case where the cli reads a component's output
-itself: the ids in a collection.
+"""Shared plumbing: invoking the other components as subprocesses, and
+reading the read-only vocabulary they publish (LESSON-0003) rather than
+re-deriving it — the video id grammar and what counts as downloaded media
+are ingest's, consumed here, never rewritten.
 """
 
 from __future__ import annotations
@@ -26,40 +11,62 @@ import subprocess
 import sys
 from pathlib import Path
 
-STDERR_FD = 2
+from ingest import fetch as ingest_fetch
+from ingest import sources as ingest_sources
+
+VIDEO_ID = ingest_sources.VIDEO_ID
 
 
-def _argv(module: str, args) -> list[str]:
-    # This interpreter, so the components found are the ones installed beside us.
-    return [sys.executable, "-m", module, *args]
+def env_for(home: Path, **extra: str) -> dict:
+    return {**os.environ, "TAPEDECK_HOME": str(home), **extra}
 
 
-def _env(home: Path) -> dict:
-    return {**os.environ, "TAPEDECK_HOME": str(home)}
-
-
-def stage(module: str, args, home: Path, quiet: bool = False) -> int:
-    """One link of the chain. Its stdout joins our diagnostics on stderr — it is
-    the path the component just wrote, which is progress worth watching during a
-    long `add`. `quiet` drops it instead, for the calls where the cli has already
-    said what happened and the child's echo would only be a second, stranger
-    account of it."""
-    sys.stderr.flush()
-    where = subprocess.DEVNULL if quiet else STDERR_FD
-    return subprocess.run(_argv(module, args), env=_env(home), stdout=where).returncode
-
-
-def passthrough(module: str, args, home: Path) -> int:
-    """Hand the verb over whole: the child's stdio is ours, and so is its exit."""
-    sys.stdout.flush()
-    sys.stderr.flush()
-    return subprocess.run(_argv(module, args), env=_env(home)).returncode
-
-
-def capture(module: str, args, home: Path) -> tuple[int, str]:
-    """Run a component for its output. Its stderr still reaches the user."""
-    sys.stderr.flush()
+def run_quiet(module: str, args: list[str], home: Path) -> int:
+    """`python -m <module> <args>` with our stdout kept clean for cli's own
+    summaries; the child's stderr streams straight through, which is where
+    every component's own progress and diagnostics already go."""
     result = subprocess.run(
-        _argv(module, args), env=_env(home), stdout=subprocess.PIPE, text=True, errors="replace"
+        [sys.executable, "-m", module, *args],
+        env=env_for(home),
+        stdout=subprocess.DEVNULL,
+    )
+    return result.returncode
+
+
+def run_passthrough(module: str, args: list[str], home: Path) -> int:
+    """`python -m <module> <args>` with stdio fully inherited — a direct
+    delegation (search, ask, reindex, the wiki group) where the component's
+    own stdout and stderr are the user's, unedited."""
+    result = subprocess.run([sys.executable, "-m", module, *args], env=env_for(home))
+    return result.returncode
+
+
+def run_capture_stdout(module: str, args: list[str], home: Path) -> tuple[int, str]:
+    """Like `run_passthrough`, but stdout is ours to read — for a listing
+    whose lines become the sweep's own work list, while progress on stderr
+    still streams live."""
+    result = subprocess.run(
+        [sys.executable, "-m", module, *args],
+        env=env_for(home),
+        stdout=subprocess.PIPE,
+        text=True,
     )
     return result.returncode, result.stdout or ""
+
+
+def is_video_id(text: str) -> bool:
+    return bool(VIDEO_ID.fullmatch(text or ""))
+
+
+def has_media(entry: Path) -> bool:
+    return ingest_fetch.has_video(entry)
+
+
+def video_files(entry: Path) -> list[Path]:
+    return ingest_fetch.videos(entry)
+
+
+def staging_video(name: str) -> str | None:
+    """The video id a `.fetching-*` directory of ours is downloading, or
+    None — ingest's own answer to SPEC-ingest-003, never re-derived here."""
+    return ingest_fetch.staging(name)

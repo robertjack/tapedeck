@@ -1,221 +1,192 @@
-"""`doctor` — a diagnosis of this installation, for the moment `add` failed and
-the user cannot tell whether the fault is theirs, the machine's, or tapedeck's.
-
-It changes nothing, touches the network never, and runs none of the tools it asks
-about: it resolves names on `PATH`, it does not execute what it finds. A broken
-seam is exactly when you want to ask about it, and rehearsing it is how a
-diagnosis becomes an incident.
-
-The checks are derived from the configuration seams (SPEC-cli-007), never from a
-list of tools kept here. tapedeck has no opinion about which downloader or
-transcriber a user runs (SPEC-core-004), so doctor may not have one either: it
-takes each command template in config.toml, takes its head executable — the first
-shell word — and looks for that name. Point `transcriber_command` somewhere else
-and doctor starts checking for somewhere else, with no change to this file.
-
-Required means `add` cannot run without it. The `[ask]` seams and the `[wiki]`
-maintainer are optional on the same footing, and each says which half of the tool
-its absence costs: `ask` needs the librarian and `search` never does; the wiki's
-writing verbs and `add`'s filing epilogue need the maintainer and the four-stage
-chain never does. Neither ever decides the exit code.
-
-Every check is reported, passes included, because a diagnosis that prints only
-complaints cannot tell "checked and fine" from "never looked".
-
-This module is also where `setup` gets its diagnosis (SPEC-cli-008), which is why
-a row carries one thing the report never prints: `missing`, the executable that
-could not be found. The wizard needs the name to look up a remedy, and deriving
-it a second time over there is exactly the drift LESSON-0003 is about.
+"""`doctor` (SPEC-cli-007) and the check machinery `setup` reuses verbatim
+(SPEC-cli-008): one report, two verbs, so a check added here appears in
+`setup` with no code there.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import platform
+import platform as platform_module
+import re
 import shlex
 import shutil
 import sqlite3
 import sys
 import tomllib
-from contextlib import closing
 from pathlib import Path
 
-from .home import CONFIG_NAME
+CONFIG_NAME = "config.toml"
+REQUIRED = "required"
+OPTIONAL = "optional"
 
-PASS, FAIL, OPTIONAL = "pass", "fail", "optional"
-# What a check is, on the wire and in the report: everything else on a row is
-# ours (system/contracts/cli-surface.md pins `--json` to these three).
-PUBLIC = ("check", "status", "detail")
-
-# What an optional seam's absence costs. Required seams carry no such line
-# because there is nothing to weigh: without them `add` has nothing to run.
-REQUIRED = None
-ASK_COSTS = "ask needs it, search does not"
-WIKI_COSTS = (
-    "the wiki verbs that write need it, and so does the filing `add` does after "
-    "each video; the four-stage chain never does"
-)
-
-# The seams, in the order the report emits them.
+# SPEC-cli-007's fixed order: the seams by dotted config key, then what the
+# derivation chain needs whatever tools fill it.
 SEAMS = (
-    ("ingest", "fetcher_command", REQUIRED),
-    ("ingest", "lister_command", REQUIRED),
-    ("transcribe", "transcriber_command", REQUIRED),
-    ("ask", "librarian_command", ASK_COSTS),
-    ("ask", "answerer_command", ASK_COSTS),
-    ("wiki", "maintainer_command", WIKI_COSTS),
+    ("ingest.fetcher_command", "ingest", "fetcher_command", REQUIRED, None),
+    ("ingest.lister_command", "ingest", "lister_command", REQUIRED, None),
+    ("transcribe.transcriber_command", "transcribe", "transcriber_command", REQUIRED, None),
+    ("ask.librarian_command", "ask", "librarian_command", OPTIONAL, "ask needs it, search does not"),
+    ("ask.answerer_command", "ask", "answerer_command", OPTIONAL, "ask --fast needs it, search does not"),
+    (
+        "wiki.maintainer_command",
+        "wiki",
+        "maintainer_command",
+        OPTIONAL,
+        "the wiki verbs that write and add's auto-filing epilogue need it, lint does not",
+    ),
 )
-TRANSCRIBER = ("transcribe", "transcriber_command")
-# Transcribers that exist only for Apple Silicon. Named here because the platform
-# check is about the silicon, not about the tool: any other transcriber is
-# portable and this check has nothing to say about it.
+
 MLX_TOOLS = ("mlx_whisper", "parakeet-mlx")
+# `VAR=value cmd` sets VAR for cmd; the head is the first word that isn't one
+# of these assignments (SPEC-cli-010).
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
-def row(check: str, status: str, detail: str, missing: str | None = None) -> dict:
-    return {"check": check, "status": status, "detail": detail, "missing": missing}
-
-
-def public(rows: list[dict]) -> list[dict]:
-    """The rows as the surface promises them: check, status, detail, nothing else."""
-    return [{key: item[key] for key in PUBLIC} for item in rows]
-
-
-def config(home: Path) -> tuple[dict, str | None]:
-    """config.toml as data, or the reason it could not be read. Unreadable is not
-    a crash here: "your config is not valid TOML" is a diagnosis too."""
+def _load_config(home: Path) -> dict:
     path = home / CONFIG_NAME
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8")), None
-    except FileNotFoundError:
-        return {}, f"no {path}"
-    except (OSError, ValueError) as exc:
-        return {}, f"{path} could not be read — {exc}"
+        return tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        return {}
 
 
-def setting(settings: dict, section: str, key: str) -> str:
-    """One seam's command template, or "" if this config does not set it."""
-    table = settings.get(section)
-    command = table.get(key) if isinstance(table, dict) else None
-    return command.strip() if isinstance(command, str) else ""
-
-
-def head(command: str) -> str:
-    """The head executable of a command template: its first shell word. A template
-    built from pipeline or `&&` stages has more heads than this; the first one is
-    the one that always has to resolve, because nothing else runs without it."""
+def head(command: str) -> str | None:
+    """The first shell word that is not a `NAME=value` assignment."""
     try:
-        words = shlex.split(command)
-    except ValueError:  # unbalanced quoting — the shell would not run it either
-        words = command.split()
-    return words[0] if words else ""
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    for token in tokens:
+        if not ASSIGNMENT.match(token):
+            return token
+    return None
 
 
-def seam_row(settings: dict, section: str, key: str, costs: str | None, unreadable) -> dict:
-    check = f"{section}.{key}"
-    required = costs is REQUIRED
-    bad = FAIL if required else OPTIONAL
-    command = setting(settings, section, key)
-    if not command:
-        why = "nothing for `add` to run" if required else costs
-        return row(check, bad, f"{unreadable or f'not set in {CONFIG_NAME}'} — {why}")
-    name = head(command)
-    if name and shutil.which(name):
-        # The name that resolved, not the path it resolved to: which prefix a
-        # tool happens to sit in is noise in a diagnosis, and a column of
-        # absolute paths is a column nobody skims.
-        return row(check, PASS, f"{name} on PATH")
-    detail = f"{name}: not on PATH"
-    return row(check, bad, detail if required else f"{detail} — {costs}", missing=name)
+def _seam_row(name, section, key, kind, reason, config) -> dict:
+    value = (config.get(section) or {}).get(key)
+    unresolved_status = OPTIONAL if kind == OPTIONAL else "fail"
+    if not isinstance(value, str) or not value.strip():
+        detail = f"not configured — add [{section}] {key} to config.toml"
+        if reason:
+            detail += f" ({reason})"
+        return {"check": name, "status": unresolved_status, "detail": detail, "executable": None}
+    program = head(value.strip())
+    if program is None:
+        return {
+            "check": name,
+            "status": unresolved_status,
+            "detail": f"{value.strip()!r} names no program",
+            "executable": None,
+        }
+    resolved = shutil.which(program)
+    if resolved:
+        return {
+            "check": name,
+            "status": "pass",
+            "detail": f"{program} — resolves on PATH",
+            "executable": program,
+        }
+    detail = f"{program}: not on PATH"
+    if reason and kind == OPTIONAL:
+        detail += f" — {reason}"
+    return {"check": name, "status": unresolved_status, "detail": detail, "executable": program}
 
 
-def ffmpeg_row() -> dict:
-    if shutil.which("ffmpeg"):
-        return row("ffmpeg", PASS, "ffmpeg on PATH")
-    return row(
-        "ffmpeg",
-        FAIL,
-        "ffmpeg: not on PATH — the downloader merges the separate video and "
-        "audio streams with it",
-        missing="ffmpeg",
-    )
+def _ffmpeg_row() -> dict:
+    resolved = shutil.which("ffmpeg")
+    if resolved:
+        return {
+            "check": "ffmpeg",
+            "status": "pass",
+            "detail": "ffmpeg — resolves on PATH",
+            "executable": "ffmpeg",
+        }
+    return {"check": "ffmpeg", "status": "fail", "detail": "ffmpeg: not on PATH", "executable": "ffmpeg"}
 
 
-def home_row(home: Path) -> dict:
+def _home_row(home: Path) -> dict:
     if not home.is_dir():
-        return row("home", FAIL, f"{home}: the library home is not a directory")
+        return {"check": "home", "status": "fail", "detail": f"{home} does not exist", "executable": None}
     if not os.access(home, os.W_OK):
-        return row("home", FAIL, f"{home}: the library home is not writable")
-    return row("home", PASS, f"{home} (writable)")
+        return {"check": "home", "status": "fail", "detail": f"{home} is not writable", "executable": None}
+    return {"check": "home", "status": "pass", "detail": f"{home} — resolved and writable", "executable": None}
 
 
-def fts5_row() -> dict:
+def _fts5_row() -> dict:
     try:
-        with closing(sqlite3.connect(":memory:")) as db:
-            db.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")
-    except sqlite3.Error as exc:
-        return row(
-            "fts5",
-            FAIL,
-            f"this python's sqlite3 has no FTS5 ({exc}) — without it there is no index",
-        )
-    return row("fts5", PASS, f"SQLite {sqlite3.sqlite_version} with FTS5")
+        conn = sqlite3.connect(":memory:")
+        try:
+            conn.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")
+        finally:
+            conn.close()
+    except sqlite3.OperationalError as exc:
+        return {
+            "check": "fts5",
+            "status": "fail",
+            "detail": f"SQLite FTS5 is not available in this python — {exc}",
+            "executable": None,
+        }
+    return {"check": "fts5", "status": "pass", "detail": "available", "executable": None}
 
 
-def platform_row(transcriber: str) -> dict:
-    machine = platform.machine()
-    here = f"{sys.platform}/{machine}"
-    apple_silicon = sys.platform == "darwin" and machine == "arm64"
-    tool = next((name for name in MLX_TOOLS if name in transcriber), None)
-    if tool and not apple_silicon:
-        return row(
-            "platform",
-            FAIL,
-            f"{tool} is MLX, and MLX needs Apple Silicon (arm64 macOS); this is "
-            f"{here} — [transcribe] transcriber_command in {CONFIG_NAME} is one "
-            "line away from a transcriber that runs here",
-        )
-    if tool:
-        return row("platform", PASS, f"{here} runs {tool}")
-    return row("platform", PASS, f"{here}; the configured transcriber is portable")
+def _platform_row(config: dict) -> dict:
+    section = config.get("transcribe") or {}
+    command = section.get("transcriber_command")
+    program = head(command.strip()) if isinstance(command, str) and command.strip() else None
+    if program not in MLX_TOOLS:
+        return {
+            "check": "platform",
+            "status": "pass",
+            "detail": "the configured transcriber is not Apple-Silicon-only",
+            "executable": None,
+        }
+    apple_silicon = sys.platform == "darwin" and platform_module.machine() == "arm64"
+    if apple_silicon:
+        return {
+            "check": "platform",
+            "status": "pass",
+            "detail": f"{program} needs Apple Silicon macOS — this machine qualifies",
+            "executable": None,
+        }
+    detail = (
+        f"{program} needs Apple Silicon macOS ({sys.platform}/{platform_module.machine()} "
+        "will not run it) — point [transcribe] transcriber_command in config.toml at a "
+        "transcriber that runs here"
+    )
+    return {"check": "platform", "status": "fail", "detail": detail, "executable": None}
 
 
-def diagnose(home: Path) -> list[dict]:
-    """Every check, always, in the order SPEC-cli-007 pins."""
-    settings, unreadable = config(home)
-    rows = [seam_row(settings, *seam, unreadable) for seam in SEAMS]
-    rows += [
-        ffmpeg_row(),
-        home_row(home),
-        fts5_row(),
-        platform_row(setting(settings, *TRANSCRIBER)),
-    ]
+def checks(home: Path) -> list[dict]:
+    config = _load_config(home)
+    rows = [_seam_row(name, section, key, kind, reason, config) for name, section, key, kind, reason in SEAMS]
+    rows.append(_ffmpeg_row())
+    rows.append(_home_row(home))
+    rows.append(_fts5_row())
+    rows.append(_platform_row(config))
     return rows
 
 
-def report(rows: list[dict]) -> str:
-    """One aligned line per check, so the statuses skim as a column."""
-    width = max(len(item["check"]) for item in rows)
-    status = max(len(item["status"]) for item in rows)
+def public(rows: list[dict]) -> list[dict]:
+    return [{"check": r["check"], "status": r["status"], "detail": r["detail"]} for r in rows]
+
+
+def render_report(rows: list[dict]) -> str:
+    name_width = max(len(r["check"]) for r in rows)
+    status_width = max(len(r["status"]) for r in rows)
     return "\n".join(
-        f"{item['check']:<{width}}  {item['status']:<{status}}  {item['detail']}"
-        for item in rows
+        f"{r['check'].ljust(name_width)}  {r['status'].ljust(status_width)}  {r['detail']}" for r in rows
     )
 
 
-def failed(rows: list[dict]) -> list[dict]:
-    """The required checks that did not pass — the only thing that decides an
-    exit code, here and in `setup`. Optional results never make it 1."""
-    return [item for item in rows if item["status"] == FAIL]
+def failures(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if r["status"] == "fail"]
 
 
-def run(home: Path, as_json: bool) -> int:
-    rows = diagnose(home)
-    # No escape sequences, ever: this output is read by pipes and by `--json`
-    # consumers as often as by people (SPEC-cli-005).
-    print(json.dumps(public(rows), ensure_ascii=False, indent=2) if as_json else report(rows))
-    broken = [item["check"] for item in failed(rows)]
-    if broken:
-        print(f"{len(broken)} check(s) failed: {', '.join(broken)}", file=sys.stderr)
-    return 1 if broken else 0
+def cmd_doctor(args, home: Path) -> int:
+    rows = checks(home)
+    if args.json:
+        print(json.dumps(public(rows), ensure_ascii=False, indent=2))
+    else:
+        print(render_report(rows))
+    return 1 if failures(rows) else 0

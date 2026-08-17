@@ -1,20 +1,5 @@
-"""`help` — teaching in tiers (SPEC-cli-005).
-
-`-h/--help` stays the terse argparse usage it has always been. `help` is the
-other thing: no argument gives a one-screen tour of what tapedeck is and the
-handful of verbs a person uses daily; `help <verb>` gives that verb's usage and a
-worked example, because usage alone has never taught anybody a command line; and
-`help manual` gives MANUAL.md, which is the manual's single source of truth and
-which the installed wheel carries so the tool teaches the same thing wherever it
-was installed.
-
-`help wiki` is that same mechanism and nothing new (SPEC-cli-009): the group's
-usage, then an example. The tour's everyday verbs are unchanged — the wiki is a
-layer a user grows into, not one of the six a stranger needs on the first screen.
-
-The TTY discipline is the whole of the output contract here: piped, the manual is
-byte-identical to the file and no pager is ever invoked, so `tapedeck help manual
-| grep` works and so does redirecting it to disk. At a terminal it is paged.
+"""`help` (SPEC-cli-005): a one-screen tour, per-verb usage plus a worked
+example, and the manual — byte-identical to MANUAL.md when stdout is piped.
 """
 
 from __future__ import annotations
@@ -24,135 +9,104 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import Failure, Usage
-from .home import DEFAULT_HOME
+from .home import DISPLAY_DEFAULT_HOME
 
-MANUAL_NAME = "MANUAL.md"
-MANUAL = "manual"
-FALLBACK_PAGER = "less -R"
+TOPICS = (
+    "add", "search", "ask", "list", "show", "reindex", "rm", "retranscribe",
+    "wiki", "adapt-parakeet", "doctor", "setup", "manual",
+)
 
 EXAMPLES = {
-    "add": 'tapedeck add "https://www.youtube.com/watch?v=dQw4w9WgXcQ"\n'
-    'tapedeck add "https://www.youtube.com/@channel/videos"   # sweep the channel\n'
-    "tapedeck add dQw4w9WgXcQ --force                        # fetch it again",
-    "search": 'tapedeck search "long-running agents" -k 5\n'
-    'tapedeck search sourdough --json | jq -r ".[].url"',
-    "ask": 'tapedeck ask "where do these two disagree?"\n'
-    'tapedeck ask "what is the 1% rule?" --fast -k 10\n'
-    'tapedeck ask "what is claimed here?" --video dQw4w9WgXcQ',
-    "list": "tapedeck list\ntapedeck list --json | jq length",
+    "add": "tapedeck add https://youtu.be/dQw4w9WgXcQ",
+    "search": 'tapedeck search "agents" -k 5',
+    "ask": 'tapedeck ask "what is the core idea?"',
+    "list": "tapedeck list --json",
     "show": "tapedeck show dQw4w9WgXcQ",
-    "reindex": "tapedeck reindex        # rebuilds tapedeck.db from archive/ alone",
-    "rm": "tapedeck rm dQw4w9WgXcQ\ntapedeck rm dQw4w9WgXcQ --media-only    # keep the knowledge",
-    "retranscribe": "tapedeck retranscribe --dry-run    # what a new model would redo\n"
-    "tapedeck retranscribe",
-    "wiki": "tapedeck wiki sync --dry-run       # the ids it would file, one per line\n"
-    "tapedeck wiki sync                # file every video the wiki does not know\n"
-    "tapedeck wiki file dQw4w9WgXcQ    # or just this one\n"
-    "tapedeck wiki lint --json         # diagnose the wiki you have\n"
-    "tapedeck wiki rebuild --yes       # clear it and file the library again\n"
-    "# the verbs and flags are the wiki's own: `tapedeck wiki --help` is its usage,\n"
-    "# and wiki/CLAUDE.md is the brief that decides what a page says",
-    "adapt-parakeet": "parakeet-mlx --output-format json video.mp4 && \\\n"
-    "  tapedeck adapt-parakeet < video.json > transcript.json\n"
-    "# you will normally only meet this inside [transcribe] transcriber_command",
-    "doctor": "tapedeck doctor\ntapedeck doctor --json",
-    "setup": "tapedeck setup          # what is missing, and the command that installs it\n"
-    "tapedeck setup --yes    # run exactly those commands, then check again",
-    "help": "tapedeck help\ntapedeck help add\ntapedeck help manual",
+    "reindex": "tapedeck reindex",
+    "rm": "tapedeck rm dQw4w9WgXcQ --media-only",
+    "retranscribe": "tapedeck retranscribe --dry-run",
+    "adapt-parakeet": "tapedeck adapt-parakeet < parakeet.json > whisper.json",
+    "doctor": "tapedeck doctor --json",
+    "setup": "tapedeck setup --yes",
 }
 
 
-def tour() -> str:
-    return f"""\
-tapedeck — a local video brain, on this machine.
+def manual_path() -> Path:
+    """The installed copy sits beside this module (pyproject's force-include,
+    SPEC-cli-005); a repo checkout falls back to the root the package is
+    generated under."""
+    here = Path(__file__).resolve().parent
+    local = here / "MANUAL.md"
+    if local.is_file():
+        return local
+    return here.parents[1] / "MANUAL.md"
 
-Give it a YouTube URL and the video is downloaded, transcribed here, archived
-as readable markdown, and indexed. Then you can find the moment something was
-said, and ask questions that cite it.
 
-    video  ->  transcript  ->  archive page  ->  search index
+def _tour() -> str:
+    return f"""tapedeck — a local video brain: download, transcribe, archive, ask.
 
-The video is the only source of truth; every later stage is derived from the
-one before it and can be rebuilt. It all lives in $TAPEDECK_HOME (default
-{DEFAULT_HOME}), a plain folder you can open.
+Everything lives in the library home (default {DISPLAY_DEFAULT_HOME}; override
+with $TAPEDECK_HOME). Every video moves through one chain:
 
-The everyday verbs:
+    video -> transcript -> archive page -> search index
 
-  add           download, transcribe, archive and index — one video, or a
-                whole playlist or channel
-                  tapedeck add "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-  search        ranked timestamped excerpts, each a deep link into the video
-                  tapedeck search "long-running agents" -k 5
-  ask           a prose answer whose every claim cites a moment
-                  tapedeck ask "what did they say about ambition?"
-  list          one line per video you have
-                  tapedeck list
-  show          metadata and the archive page for one video
-                  tapedeck show dQw4w9WgXcQ
-  retranscribe  redo every transcript a better model has superseded
-                  tapedeck retranscribe --dry-run
+Start here:
+  tapedeck add <url>              {EXAMPLES['add']}
+  tapedeck search <query>         {EXAMPLES['search']}
+  tapedeck ask <question>         {EXAMPLES['ask']}
+  tapedeck list                   {EXAMPLES['list']}
+  tapedeck show <id>              {EXAMPLES['show']}
+  tapedeck retranscribe           {EXAMPLES['retranscribe']}
 
-Also here: reindex, rm, wiki, doctor, setup.
-
-  tapedeck setup          on a new machine: what is missing and what installs it
-  tapedeck help <verb>    that verb's usage and a worked example
-  tapedeck help manual    the whole manual
-  tapedeck --version      what is installed
+More: tapedeck help <verb> | tapedeck help manual | tapedeck doctor
 """
 
 
-def manual_text() -> str:
-    """MANUAL.md, from the wheel that carries it or from the repo it lives in."""
-    for candidate in (Path(__file__).with_name(MANUAL_NAME), _repo_manual()):
+def cmd_help(args, home, subparsers: dict) -> int:
+    topic = args.topic
+    if topic is None:
+        print(_tour())
+        return 0
+    if topic == "manual":
+        return _show_manual()
+    if topic == "wiki":
+        return _wiki_help()
+    if topic in subparsers:
+        print(subparsers[topic].format_help())
+        example = EXAMPLES.get(topic)
+        if example:
+            print(f"Example:\n  {example}")
+        return 0
+    print(
+        f"error: unknown help topic {topic!r} — try: {', '.join(TOPICS)}",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _wiki_help() -> int:
+    result = subprocess.run([sys.executable, "-m", "wiki", "--help"], capture_output=True, text=True)
+    print(result.stdout, end="")
+    print("Example:\n  tapedeck wiki file dQw4w9WgXcQ")
+    return 0
+
+
+def _show_manual() -> int:
+    text = manual_path().read_text(encoding="utf-8")
+    stream = sys.stdout
+    if stream.isatty() and not os.environ.get("NO_COLOR"):
+        _page(text)
+    else:
+        stream.write(text)
+    return 0
+
+
+def _page(text: str) -> None:
+    for pager in filter(None, (os.environ.get("PAGER"), "less -R")):
         try:
-            return candidate.read_text(encoding="utf-8")
+            result = subprocess.run(pager, shell=True, input=text, text=True)
         except OSError:
             continue
-    raise Failure(
-        f"this build carries no {MANUAL_NAME} — `tapedeck help` still works, but "
-        "the manual it should have shipped with is missing"
-    )
-
-
-def _repo_manual() -> Path:
-    return Path(__file__).resolve().parents[2] / MANUAL_NAME
-
-
-def emit(text: str) -> int:
-    """Long output, paged only when a person is watching. Piped output is the
-    bytes and nothing else — no pager, no escape sequences."""
-    if sys.stdout.isatty():
-        for command in (os.environ.get("PAGER"), FALLBACK_PAGER):
-            if command and _page(command, text):
-                return 0
+        if result.returncode == 0:
+            return
     sys.stdout.write(text)
-    return 0
-
-
-def _page(command: str, text: str) -> bool:
-    try:
-        return subprocess.run(command, shell=True, input=text, text=True).returncode == 0
-    except OSError:
-        return False
-
-
-def teach(topic: str | None, verbs: dict) -> int:
-    if topic is None:
-        sys.stdout.write(tour())
-        return 0
-    if topic == MANUAL:
-        return emit(manual_text())
-    parser = verbs.get(topic)
-    if parser is None:
-        known = ", ".join([*sorted(verbs), MANUAL])
-        raise Usage(f"no help topic {topic!r} — try one of: {known}")
-    example = EXAMPLES.get(topic)
-    sys.stdout.write(parser.format_help())
-    if example:
-        sys.stdout.write(f"\nFor example:\n\n{_indent(example)}\n")
-    return 0
-
-
-def _indent(text: str) -> str:
-    return "\n".join(f"    {line}" for line in text.splitlines())
