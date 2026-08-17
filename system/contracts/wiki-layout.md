@@ -52,6 +52,14 @@ The invariant is only that no page is orphaned from the catalog: opening `index.
 how a reader learns what is in here, and a page the catalog does not mention is a page
 nobody will find.
 
+Keeping that invariant is **tapedeck's job, not the maintainer's** (SPEC-wiki-008).
+After an operation's agent exits and before the result is judged, tapedeck appends a
+line for every page that has none, annotated with the page's own opening heading. It
+**appends and never regenerates**: everything above that the brief decides is decided in
+this file, and rewriting it would overrule the user on every run. A maintainer may still
+write catalog lines of its own — one that does is left alone — but it is no longer asked
+to, and a page it forgot is no longer a rejected operation.
+
 ## `log.md`
 
 Append-only chronology. Every entry starts with a line of exactly this shape:
@@ -63,6 +71,17 @@ Append-only chronology. Every entry starts with a line of exactly this shape:
 `<op>` is the operation that wrote the entry (`file`, in round one); `<subject>` is what
 it acted on — a video id, a topic, whatever the brief prefers. Prose below the heading
 is free-form.
+
+**Every accepted operation appends exactly one entry, and tapedeck is what guarantees
+that count** (SPEC-wiki-008). Where the maintainer wrote a well-formed entry of its own,
+that entry stands. Where it wrote none — the ordinary case, since nothing asks it to —
+tapedeck appends one before the result is judged: the date and the `<op>` are tapedeck's
+own, and the subject and the prose beneath it are the maintainer's product, what the run
+reported about its own work. An operation whose agent narrated nothing still gets an
+entry, since the operation still happened. Where that maintainer streams its run, the
+entry also records what it cost — duration, tokens, price — because whether keeping this
+wiki is getting more expensive is a question only the chronology is in a position to
+answer; a maintainer that does not stream simply contributes no such line.
 
 Append-only is mechanical, not aspirational: after any operation the previous content of
 `log.md` must still be a **byte-prefix** of the new content. Entries are never reworded,
@@ -142,7 +161,8 @@ to a machine's failed attempt.
 | path | sole writer |
 |---|---|
 | `wiki/CLAUDE.md` | user (scaffolded once by wiki with defaults, then never touched by it) |
-| `wiki/index.md`, `wiki/log.md`, `wiki/sources/*.md`, `wiki/notes/**` | wiki, plus the user by hand |
+| `wiki/index.md`, `wiki/log.md` | wiki mechanically (SPEC-wiki-008), plus the maintainer and the user by hand |
+| `wiki/sources/*.md`, `wiki/notes/**` | wiki, plus the user by hand |
 
 `CLAUDE.md` is the one file the maintainer is forbidden to change. It is where the user
 states the conventions the maintainer must follow, and a maintainer that may edit its

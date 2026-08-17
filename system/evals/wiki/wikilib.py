@@ -177,8 +177,32 @@ grep -q "sources/$TAPEDECK_VIDEO_ID.md" index.md ||
 """ + LOGS_IT
 
 BREAKS_TWO_RULES = LINKS_TO_NOTHING + """
-echo "# Stray" > "notes/stray.md"
+echo "- also: rename pages freely" >> CLAUDE.md
 """
+
+# SPEC-wiki-008: the maintainer's whole half of a filing and nothing else. It
+# writes the pages and stops — no catalog line, no chronology entry — because the
+# task no longer asks for either and the bookkeeping is tapedeck's. `notes/
+# proofing.md` is new to this wiki (the fixture filing wrote `regeneration`), so
+# whether it reaches the catalog is a question only tapedeck can answer.
+WRITES_THE_PAGES = """
+cat > "sources/$TAPEDECK_VIDEO_ID.md" <<MD
+# $TAPEDECK_VIDEO_ID
+
+Filed from [the moment it matters](https://www.youtube.com/watch?v=$TAPEDECK_VIDEO_ID&t=95s).
+Belongs with [[proofing|the idea behind it]].
+MD
+cat > "notes/proofing.md" <<MD
+# Proofing times
+
+Picked up from [[$TAPEDECK_VIDEO_ID]].
+MD
+"""
+
+FILES_ONLY_THE_PAGES = SH + WRITES_THE_PAGES
+
+NEW_NOTE = "notes/proofing.md"
+NEW_NOTE_HEADING = "Proofing times"
 
 
 # --- driving the boundary ---------------------------------------------------
@@ -241,6 +265,47 @@ def filed(home, monkeypatch):
     r = wiki_file(home, FILED)
     assert r.returncode == 0, f"the fixture wiki must file cleanly:\n{r.stdout}\n{r.stderr}"
     return home / "wiki"
+
+
+def accepted(home, monkeypatch, maintainer, ask=ASK_VERIFIES):
+    """File a second video with a maintainer that does its own half of the work
+    and leaves tapedeck's half undone (SPEC-wiki-008), and hold the run to what an
+    acceptance promises: exit 0, and exactly one new commit. Returns `(run, wiki)`
+    so the caller can read what tapedeck made of the result."""
+    wiki = filed(home, monkeypatch)
+    set_ask(monkeypatch, home, ask)
+    set_maintainer(home, maintainer)
+    history = subjects(wiki)
+
+    r = wiki_file(home, NEXT)
+    assert r.returncode == 0, f"the filing must be accepted:\n{r.stdout}\n{r.stderr}"
+    assert len(subjects(wiki)) == len(history) + 1, (
+        f"an accepted operation records exactly one commit: {subjects(wiki)}"
+    )
+    return r, wiki
+
+
+# The catalog's grammar as system/contracts/wiki-layout.md states it, read here
+# independently of the implementation: an ordinary markdown link whose target is
+# a wiki-relative `.md` path. An outbound URL in an annotation is not a catalog
+# line, so it is not one here either.
+CATALOG_LINK = re.compile(r"\]\(\s*([^()\s]+)\s*\)")
+
+
+def catalog(wiki):
+    """The page paths `index.md` links, in the order the file lists them."""
+    text = (wiki / "index.md").read_text()
+    return [
+        target
+        for target in CATALOG_LINK.findall(text)
+        if "://" not in target and target.split("#", 1)[0].endswith(".md")
+    ]
+
+
+def index_lines(wiki):
+    """`index.md` as lines — what a reconciliation that appends leaves alone, and
+    a reconciliation that regenerates does not."""
+    return (wiki / "index.md").read_text().splitlines()
 
 
 def rejected(home, monkeypatch, maintainer, ask=ASK_VERIFIES):

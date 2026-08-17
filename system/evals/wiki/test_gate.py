@@ -20,10 +20,8 @@ from wikilib import (
     CITES_ANOTHER_VIDEO_ONLY,
     EDITS_THE_BRIEF,
     GOOD,
-    LEAVES_A_PAGE_OUT_OF_THE_INDEX,
     LINKS_IN_THE_WRONG_CASE,
     LINKS_TO_NOTHING,
-    LOGS_NOTHING_WELL_FORMED,
     NEXT,
     REWRITES_THE_LOG,
     rejected,
@@ -72,24 +70,12 @@ def test_a_citation_ask_cannot_verify_is_rejected(home, monkeypatch):
     )
 
 
-def test_a_page_missing_from_the_index_is_rejected(home, monkeypatch):
-    """The catalog is how a page is found at all; a page outside it is a page
-    that only the filesystem knows about."""
-    r = rejected(home, monkeypatch, LEAVES_A_PAGE_OUT_OF_THE_INDEX)
-    assert "stray" in r.stderr, f"the page missing from the catalog is named: {r.stderr!r}"
-
-
 def test_a_rewritten_log_is_rejected(home, monkeypatch):
     """Append-only is the whole value of the chronology: an entry that can be
-    edited later is not a record of what happened."""
+    edited later is not a record of what happened. tapedeck writing the entries
+    (SPEC-wiki-008) does not soften this — it is the *old* bytes that are
+    protected, and an agent may still reach them."""
     r = rejected(home, monkeypatch, REWRITES_THE_LOG)
-    assert "log.md" in r.stderr, r.stderr
-
-
-def test_an_operation_that_logs_nothing_well_formed_is_rejected(home, monkeypatch):
-    """Preserving the old log is not enough — each accepted operation owes the
-    chronology an entry in the pinned shape, or the history has silent gaps."""
-    r = rejected(home, monkeypatch, LOGS_NOTHING_WELL_FORMED)
     assert "log.md" in r.stderr, r.stderr
 
 
@@ -97,6 +83,6 @@ def test_every_violation_is_reported_not_just_the_first(home, monkeypatch):
     """The maintainer gets one run per operation and the user pays for each. A
     gate that reports one fault at a time turns one rejection into several."""
     r = rejected(home, monkeypatch, BREAKS_TWO_RULES)
-    assert "nonexistent-page" in r.stderr and "stray" in r.stderr, (
+    assert "nonexistent-page" in r.stderr and "CLAUDE.md" in r.stderr, (
         f"both independent checks failed and both belong on stderr: {r.stderr!r}"
     )

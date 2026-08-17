@@ -25,11 +25,17 @@ command = "just eval wiki"
 # LESSON-0004 and two eval suites measured ~38608.
 # Raised 42000 -> 48000 for the streaming round: SPEC-wiki-007 and its eval
 # suite land on an assembly already at ~38674 of 42000.
-context_tokens = 48000
+# Raised 48000 -> 56000 for the bookkeeping round: SPEC-wiki-008, the two
+# wiki-layout amendments and test_bookkeeping.py land on an assembly already at
+# ~41569 of 48000, which leaves too little for a generator to breathe in.
+context_tokens = 56000
 # Above the usual 8000/6000 default: the component carries its own git lifecycle
 # (scaffold, per-run commit, hard reset/clean on gate failure) plus a six-check
 # whole-wiki acceptance gate, on top of driving the maintainer subprocess itself.
 # Raised 10000 -> 16000: file's generation landed at ~7161 and the sweep round
 # adds three verbs (sync, the eight-check lint report with --json, rebuild).
 # Raised 16000 -> 20000: tend (two modes) plus the operation lock.
-src_tokens = 20000
+# Raised 20000 -> 23000: SPEC-wiki-008 adds the reconciliation step — catalog
+# lines from page headings, a chronology entry from the run's product, and the
+# result event's cost figures — to an implementation already at ~17464.
+src_tokens = 23000

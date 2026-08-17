@@ -245,6 +245,15 @@ behind. Accepted, it lands as one commit. Filing a video that already has
 a page changes nothing and exits 0, so you never have to remember what you
 filed.
 
+The maintainer is never asked to keep `index.md` or `log.md` — tapedeck
+does that itself, cataloguing whatever pages the run created and appending
+one chronology entry describing it. Both files were costing an agent
+thousands of tokens per filing to re-read and rewrite, and both grew with
+every video, so a wiki that got bigger got slower to add to. The entry
+also records what the run cost — how long it took, its tokens, its price —
+so the log answers "is this getting more expensive" without you having to
+work it out from commit timestamps.
+
 You can watch it work. Every run announces itself on stderr, and with the
 default maintainer (a streaming `claude -p`) each thing the agent does —
 the file it reads, the note it edits — prints as it happens, during
@@ -495,7 +504,7 @@ What's where (in the library home):
     config.toml, CLAUDE.md        the seams and the librarian's brief
     wiki/                         your notes — markdown, its own git repo
     wiki/CLAUDE.md                the maintainer's brief — yours to rewrite
-    wiki/index.md, wiki/log.md    the catalog and the chronology
+    wiki/index.md, wiki/log.md    the catalog and the chronology — tapedeck's
     wiki/sources/<id>.md          one page per filed video
     wiki/notes/                   free-form pages, arranged by your brief
 
