@@ -1,0 +1,44 @@
+{
+  "id": "gen-20260817T211357Z-archive-7054",
+  "component": "archive",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": []
+  },
+  "root_hash": "sha256:7054d8d82067010eca00d30a62ebb9222c111df4fbf3777740fb17f6ec84c916",
+  "inputs": {
+    "manifest": "sha256:2a360d3c08e11b9a64ddde22f60393c2dafc92d62e5cd6f76242581f67c7b112",
+    "clauses": {
+      "SPEC-archive-001": "sha256:e135208f05bc12c92de2e156c3b9ee688eb438f60221cd4c2030c67ca66fd3ed",
+      "SPEC-archive-002": "sha256:d003533529b190e7e7e96b58828c90fc16e1e4e6a37d2e78e380a3779b8a8fce",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:4e290db436ebeda51fa6eeca0460c8d7e9d76d83218f46fff9e87095e0f724f7",
+      "system/contracts/meta.schema.json": "sha256:98c560566ec2aea13d57aec61ed91cf6cb94a3aff698c909b640131e77f64bbd",
+      "system/contracts/transcript.schema.json": "sha256:5badcff15976c09aca2cd6ed396f815e4a7b27832fce287101d01d7b12358b5e"
+    },
+    "eval_sources": {
+      "system/evals/archive/test_paragraph_anchors.py": "sha256:ab0cb678ed540e753c97d93949531a2e31e9b33eeb77f830a6c350988373ca2d",
+      "system/evals/archive/test_render.py": "sha256:6b47627ee8ce18524ef09d97592b14226400d53e6a3eaeace1a8e17a94782dbf"
+    },
+    "lessons": []
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-sonnet-5",
+    "session_ref": "claude-code:71067f13-e904-451b-9a81-68e9d08df4a7"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "pass"
+  },
+  "escape_hatch": null,
+  "attempts": 1,
+  "duration_s": 196.4,
+  "transient_retries": 0,
+  "notes": "generated via: claude --model claude-sonnet-5 --permission-mode acceptEdits -p \"$(printf \"Execute this regeneration ticket now. There is no user to ask questions of - write the implementation into the owned paths.\\n\\nWhen you have written it, run \\`just eval $PHX_COMPONENT\\` and read the failures. You are permitted to run that command; it needs no approval. Fix what it reports and run it again, until it is green or you have run out of ideas. Do not hand back a red implementation without saying which evals fail and why you could not satisfy them.\\n\\nThe deleted $PHX_COMPONENT source tree and the running phx process are the burn of this very regeneration and its own parent process - not work belonging to some other session. Write the implementation.\\n\\n\"; cat \"$PHX_CONTEXT_FILE\")\""
+}

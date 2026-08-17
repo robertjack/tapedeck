@@ -10,7 +10,7 @@ import pytest
 
 import archive.__main__
 from archive.__main__ import Failure, load_meta, load_transcript, main, render_one
-from archive.render import BLOCK_S, deep_link, hms, page, sections, yaml_scalar
+from archive.render import BLOCK_S, _paragraphs, deep_link, hms, page, sections, yaml_scalar
 
 META = {
     "id": "abcdefghijk",
@@ -96,6 +96,31 @@ def test_every_segment_lands_somewhere():
     assert "after the start" in rendered
 
 
+# --- paragraph anchors (SPEC-archive-002) ------------------------------------
+
+
+def test_paragraphs_carry_their_own_first_segment_start():
+    segs = [seg(2, 4, "first half"), seg(5, 8, "second half"), seg(60, 62, "after a gap")]
+    assert _paragraphs(segs) == [(2, "first half second half"), (60, "after a gap")]
+
+
+def test_page_anchors_each_paragraph_with_its_own_start_not_the_section_start():
+    doc = transcript([seg(2, 4, "early words"), seg(310, 312, "late words")])
+    body = page(META, doc)
+    assert f"[0:00:02]({deep_link(META['id'], 2)}) early words" in body
+    assert f"[0:05:10]({deep_link(META['id'], 310)}) late words" in body
+    assert f"[0:00:00]({deep_link(META['id'], 0)}) early" not in body
+
+
+def test_exactly_one_anchor_per_paragraph_line():
+    doc = transcript([seg(0, 4, "one"), seg(60, 62, "two")])
+    body = page(META, doc)
+    paragraph_lines = [line for line in body.splitlines() if line.startswith("[")]
+    assert len(paragraph_lines) == 2
+    for line in paragraph_lines:
+        assert line.count("](https://") == 1
+
+
 # --- page shape -------------------------------------------------------------
 
 
@@ -129,7 +154,7 @@ def test_paragraphs_break_on_silence_not_on_speech():
 
 def test_segment_text_is_whitespace_normalised():
     doc = transcript([seg(0, 4, "  ragged\n  whisper   text ")])
-    assert "\nragged whisper text\n" in page(META, doc)
+    assert "ragged whisper text" in page(META, doc)
 
 
 def test_out_of_order_segments_are_sorted():

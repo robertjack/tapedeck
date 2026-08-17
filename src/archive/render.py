@@ -130,20 +130,27 @@ def _group(marks, segments):
 
 
 def _paragraphs(segments):
-    """Merge segments into prose, breaking on silence or on length."""
-    out, buf, size, prev_end = [], [], 0, 0.0
+    """Merge segments into prose, breaking on silence or on length.
+
+    Returns (start_seconds, text) pairs: the start is the paragraph's own
+    first segment (SPEC-archive-002), never the section's and never
+    interpolated, so two paragraphs in one section carry two addresses.
+    """
+    out, buf, size, prev_end, start = [], [], 0, 0.0, None
     for segment in segments:
         text = _one_line(segment.get("text", ""))
         if not text:
             continue
         if buf and (_seg_start(segment) - prev_end > PARAGRAPH_GAP_S or size >= PARAGRAPH_CHARS):
-            out.append(" ".join(buf))
-            buf, size = [], 0
+            out.append((start, " ".join(buf)))
+            buf, size, start = [], 0, None
+        if start is None:
+            start = _seg_start(segment)
         buf.append(text)
         size += len(text) + 1
         prev_end = _seg_end(segment)
     if buf:
-        out.append(" ".join(buf))
+        out.append((start, " ".join(buf)))
     return out
 
 
@@ -183,7 +190,8 @@ def page(meta, transcript) -> str:
         heading = f"## [{hms(start)}]({deep_link(video_id, start)})"
         lines.append(f"{heading} {title}" if title else heading)
         lines.append("")
-        for paragraph in _paragraphs(group):
-            lines += [paragraph, ""]
+        for p_start, paragraph in _paragraphs(group):
+            anchor = f"[{hms(p_start)}]({deep_link(video_id, p_start)})"
+            lines += [f"{anchor} {paragraph}", ""]
 
     return "\n".join(lines).rstrip("\n") + "\n"
