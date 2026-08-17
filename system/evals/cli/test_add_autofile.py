@@ -14,15 +14,22 @@ system/evals/cli on pytest's collection path.
 What Round 3 pins: after each video's ingest -> transcribe -> archive -> index
 chain succeeds inside `add`, the cli files that id into the wiki as a
 best-effort epilogue, gated by `[wiki].auto` (absent or true files it, false
-never touches the wiki at all). A filing that cannot happen — no maintainer
-configured, or a maintainer that fails — costs `add` nothing beyond one stderr
-note: not its exit code, not the library the pipeline already produced, and
+never touches the wiki at all). A filing that cannot happen costs `add`
+nothing: not its exit code, not the library the pipeline already produced, and
 not the collection summary's accounting of what the sweep did.
+
+Amended for SPEC-cli-011 (the detached epilogue): outcomes are settled by
+polling rather than read off `add`'s return, because the filings may finish
+after `add` does, and a failure after hand-off is asserted through what it
+durably leaves (an unfiled video) rather than through a stderr note on a
+terminal the spec says has moved on. The pre-hand-off notes — `auto = false`,
+an unconfigured maintainer seam — remain synchronous and stay pinned as such.
 """
 
 import json
+import time
 
-from conftest import run_cli
+from conftest import TIMEOUT, run_cli
 from test_add_collection import IDS, PLAYLIST, set_collection_pipeline
 
 # set_collection_pipeline's fetcher is id-parametric, so these two ids (drawn
@@ -63,6 +70,7 @@ exit 9
 
 ALWAYS_FAILS = """#!/bin/sh
 cat > /dev/null
+touch "$TAPEDECK_HOME/attempted-$TAPEDECK_VIDEO_ID"
 echo "the fixture maintainer refuses to file $TAPEDECK_VIDEO_ID" >&2
 exit 3
 """
@@ -70,14 +78,26 @@ exit 3
 
 def fails_for(video_id):
     """A maintainer that works honestly on every video except one, whose
-    filing it refuses outright — the collection sweep's one bad apple."""
+    filing it refuses outright — the collection sweep's one bad apple. The
+    refusal leaves a marker in the home, the only durable proof the filing was
+    reached: a rejected run makes no commit and no chronology entry."""
     return (
         "#!/bin/sh\ncat > /dev/null\n"
         f'if [ "$TAPEDECK_VIDEO_ID" = "{video_id}" ]; then\n'
+        f'  touch "$TAPEDECK_HOME/attempted-$TAPEDECK_VIDEO_ID"\n'
         f'  echo "the fixture maintainer refuses to file $TAPEDECK_VIDEO_ID" >&2\n'
         "  exit 3\n"
         "fi\n" + FILE_BODY
     )
+
+
+def settled(condition, message):
+    """Poll until `condition()` holds: the epilogue's worker is, by
+    specification, nobody's child to wait on (SPEC-cli-011)."""
+    deadline = time.monotonic() + TIMEOUT
+    while not condition():
+        assert time.monotonic() < deadline, message
+        time.sleep(0.2)
 
 
 def configure_wiki(home, *, auto=None, maintainer=None):
@@ -124,7 +144,7 @@ def test_auto_toggle_controls_whether_add_files_the_wiki(home):
     r_on = run_cli(["add", VIDEO_B], home)
     assert r_on.returncode == 0, r_on.stderr
     page = home / "wiki" / "sources" / f"{VIDEO_B}.md"
-    assert page.is_file(), "an absent `auto` key must read true and file the video"
+    settled(page.is_file, "an absent `auto` key must read true and file the video")
     assert VIDEO_B in page.read_text()
 
 
@@ -158,14 +178,17 @@ def test_a_failing_maintainer_leaves_add_at_exit_0_with_the_library_intact(home)
     assert library_artifacts_intact(home, VIDEO_A)
     results = json.loads(run_cli(["search", "fixture", "--json"], home).stdout)
     assert results and results[0]["video_id"] == VIDEO_A
+    settled(
+        lambda: (home / f"attempted-{VIDEO_A}").exists(),
+        "the filing was never even attempted",
+    )
     assert not (home / "wiki" / "sources" / f"{VIDEO_A}.md").exists(), (
         "a rejected filing must not leave the video looking filed"
     )
-    # "wiki" is the anchor, not just the id: today's `add` already prints the id
-    # in its ordinary progress lines, so a note that only repeats the id would
-    # pass by coincidence rather than by naming what actually failed.
-    assert "wiki" in r.stderr.lower() and VIDEO_A in r.stderr, (
-        f"the failed filing must be named as a wiki note:\n{r.stderr!r}"
+    # The one word add's stderr must still carry: the epilogue exists ("wiki" —
+    # today as the failure note, under SPEC-cli-011 as the hand-off line).
+    assert "wiki" in r.stderr.lower(), (
+        f"add's stderr must acknowledge the wiki epilogue:\n{r.stderr!r}"
     )
 
 
@@ -177,9 +200,12 @@ def test_collection_add_files_each_added_video(home):
     configure_wiki(home, maintainer=GOOD)
     r = run_cli(["add", PLAYLIST], home)
     assert r.returncode == 0, r.stderr
-    for vid in IDS:
-        page = home / "wiki" / "sources" / f"{vid}.md"
-        assert page.is_file(), f"{vid} was not filed"
+    pages = {vid: home / "wiki" / "sources" / f"{vid}.md" for vid in IDS}
+    settled(
+        lambda: all(p.is_file() for p in pages.values()),
+        f"unfiled: {[v for v, p in pages.items() if not p.is_file()]}",
+    )
+    for vid, page in pages.items():
         assert vid in page.read_text()
 
 
@@ -209,13 +235,16 @@ def test_one_videos_filing_failure_neither_stops_the_sweep_nor_marks_it_failed(h
         assert library_artifacts_intact(home, vid), (
             f"{vid}'s pipeline output must be untouched by the wiki failure"
         )
-    assert (home / "wiki" / "sources" / f"{IDS[0]}.md").is_file()
-    assert (home / "wiki" / "sources" / f"{IDS[2]}.md").is_file()
+    survivors = [home / "wiki" / "sources" / f"{IDS[0]}.md",
+                 home / "wiki" / "sources" / f"{IDS[2]}.md"]
+    settled(
+        lambda: all(p.is_file() for p in survivors)
+        and (home / f"attempted-{failing}").exists(),
+        "the sweep's other filings (or the failing attempt) never landed",
+    )
     assert not (home / "wiki" / "sources" / f"{failing}.md").exists()
-    # "wiki" anchors this as a filing note, not a coincidental match against the
-    # id's ordinary presence in add's own fetch/transcribe progress lines.
-    assert "wiki" in r.stderr.lower() and failing in r.stderr, (
-        f"the one filing failure is reported as a wiki note:\n{r.stderr!r}"
+    assert "wiki" in r.stderr.lower(), (
+        f"add's stderr must acknowledge the wiki epilogue:\n{r.stderr!r}"
     )
 
     assert r.stdout == control.stdout, (

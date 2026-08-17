@@ -22,8 +22,13 @@ command = "just eval cli"
 # against the wiki verbs it routes to.
 # Raised 34000 -> 40000 for the staging-note round: SPEC-cli-010, the two doctor
 # evals and test_staging_notes.py push the assembly to ~35084, over the old cap.
-context_tokens = 40000
+# Raised 40000 -> 47000 for the detach round: SPEC-cli-011, the SPEC-cli-009
+# amendments, test_add_detach.py and the amended test_add_autofile.py all read
+# together, and the clause only makes sense against SPEC-wiki-012's wait.
+context_tokens = 47000
 # Raised 17000 -> 22000: the module gains the pass-through router for the `wiki` group,
 # the per-video filing epilogue inside add, the [wiki] scaffold block and one more
 # doctor check, on top of a src that already measured ~14000.
-src_tokens = 22000
+# Raised 22000 -> 24000: the detached epilogue worker — spawn-and-release with
+# the streams closed, the sweep-order drain, the hand-off line.
+src_tokens = 24000

@@ -53,3 +53,11 @@ What this is deliberately not: a progress bar with a percentage. An agent run ha
 denominator — nothing knows how many steps a filing takes until it has taken them — so
 the honest display is a live feed of what the agent is doing, and the determinate counts
 stay where they already are: `sync`'s `[n/m]` prefix and `add`'s end-of-sweep summary.
+
+**Amended (SPEC-cli-011, SPEC-wiki-012):** `add`'s epilogue is no longer one of the
+watched terminals — the cli detaches it, its streamed progress goes unread, and its
+record is the log entry every run already writes. Everything above is unchanged
+everywhere a person is present: a foreground `wiki file`, every `[n/m]` of a sweep, a
+tend. And the announce discipline gains one line it did not need before: a `--wait`
+filing that finds the wiki held says it is waiting before it goes silent
+(SPEC-wiki-012), because that silence is otherwise indistinguishable from a hang.

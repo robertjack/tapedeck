@@ -256,11 +256,13 @@ work it out from commit timestamps.
 
 You can watch it work. Every run announces itself on stderr, and with the
 default maintainer (a streaming `claude -p`) each thing the agent does —
-the file it reads, the note it edits — prints as it happens, during
-`tapedeck add`'s filings too. There is no percentage, because nothing
-knows how long a filing is until it is done; what you get is the live feed
-instead of a silent minute. A maintainer of your own that prints plain
-text instead of a stream still works exactly as before.
+the file it reads, the note it edits — prints as it happens. There is no
+percentage, because nothing knows how long a filing is until it is done;
+what you get is the live feed instead of a silent minute. A maintainer of
+your own that prints plain text instead of a stream still works exactly as
+before. The one place you will not see the feed is `tapedeck add`: its
+filings run in the background after the video is indexed (§9), and the
+accepted ones turn up as log entries instead.
 
 File everything not yet filed:
 
@@ -369,12 +371,19 @@ keep. tapedeck never rewrites it, and the maintainer is forbidden to touch
 it — a filing that edited its own instructions is rejected on that alone.
 Rewriting it wholesale is the intended end state, not a fault.
 
-Filing happens automatically. Every `tapedeck add` that finishes files
-that video, each one as it completes, so a channel sweep files as it
-sweeps. It is an epilogue, not a stage: if the filing fails, or you never
-configured a maintainer, `add` says so on stderr and is otherwise exactly
-the command it always was — same exit code, same counts, same sweep. Turn
-it off with one line in `config.toml`:
+Filing happens automatically, in the background. Every `tapedeck add`
+that finishes hands its videos to a filing worker and returns — your
+terminal is back when the video is downloaded, transcribed and indexed,
+usually a minute or two, while the filings (ten-plus minutes of agent work
+each) continue on their own, in the order the sweep added them. `add`
+prints one line saying so; accepted filings appear as commits and log
+entries, and if two adds overlap, the second's filings wait their turn
+instead of being dropped. It is an epilogue, not a stage: a filing that
+fails changes nothing about `add` — same exit code, same counts, same
+sweep — and leaves its video unfiled, where `wiki sync --dry-run` will
+name it and `wiki sync` will file it. If you never configured a
+maintainer, `add` still says so on stderr right away. Turn it all off
+with one line in `config.toml`:
 
     [wiki]
     auto = false
@@ -525,10 +534,12 @@ Troubleshooting (start with `tapedeck doctor`):
         Filing needs an agent; `lint` does not. The default is scaffolded
         into config.toml with the other seams (§6); doctor reports it as
         optional, so nothing else in tapedeck is waiting on it.
-    add noted that the wiki filing failed
-        Only the filing failed, and it rolled itself back; the video is
-        added, indexed and searchable. Run `tapedeck wiki sync` later,
-        or set `[wiki] auto = false` (§9) to stop trying.
+    a video you added has no wiki page
+        Its background filing failed and rolled itself back; the video is
+        added, indexed and searchable. `tapedeck wiki sync --dry-run`
+        names everything unfiled and `tapedeck wiki sync` files it; run
+        `tapedeck wiki file <id>` in the foreground to watch why it
+        fails, or set `[wiki] auto = false` (§9) to stop trying.
     a leftover video.part
         An interrupted download; the entry counts as having no video, and
         the next add fetches it fresh.

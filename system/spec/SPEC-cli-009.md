@@ -20,15 +20,18 @@ surface in the component that merely launches it, and the copies would drift the
 hand-copied rule in this system has drifted: usage text describing a flag that moved,
 validation rejecting an id the component would have accepted, a `--json` added one layer
 up and invisible from the installed tool. Because the group passes through whole, the wiki's
-own specs (SPEC-wiki-001 through SPEC-wiki-005) govern every behavior behind it, and a verb
-or flag they add reaches the installed `tapedeck` with no clause and no code here.
+own specs — all of them, present and future, not a closed list — govern every behavior
+behind it, and a verb or flag they add reaches the installed `tapedeck` with no clause and
+no code here.
 SPEC-cli-001's exact verb list gains `wiki`; the surface contract gains one row for the
 group, not four.
 
 Auto-filing is the second half of the round, and it lives inside `add`. After **each**
 video's pipeline succeeds — ingest, transcribe, archive, index, the whole four-stage chain
-for that one id — the cli runs the wiki filing for that id, before it moves to the next
-video, in the same order the sweep of SPEC-cli-003 runs. The filing is `wiki file <id>`
+for that one id — the cli hands that id to the wiki filing, in the same order the sweep of
+SPEC-cli-003 runs (since SPEC-cli-011 the hand-off is to a detached worker that files in
+this same order; the timing of the filing relative to `add`'s own exit is that clause's
+business, the ordering remains this one's). The filing is `wiki file <id>`
 itself, invoked at the component's boundary the way every stage of the chain is invoked:
 the epilogue is a call, not a second filing path, so the maintainer, the acceptance gate,
 the rollback and the idempotent skip of an already-filed video are SPEC-wiki-002's and
@@ -38,14 +41,15 @@ behind a wiki that matches the part of the library it managed to build, and it i
 lets the maintainer read pages filed earlier in the same sweep, which is the accumulation
 SPEC-wiki-003's ordering exists to produce.
 
-The epilogue is **best-effort, and that is the specification**. A filing that fails — a
-rejected gate, a crashed maintainer, a `[wiki].maintainer_command` that is absent or
-resolves to nothing — is one note on stderr and nothing more. It never changes `add`'s exit
-code, never appears as a `failed` count in the collection summary, and never stops the
-sweep. The note names the video it was filing and says it was the wiki filing that
-failed, and where the seam is the reason it names `[wiki].maintainer_command`, because a
-line saying only that something went wrong sends the user searching a library that is in
-fact complete. Nothing about the epilogue reaches stdout at all, filed or not: `add`'s
+The epilogue is **best-effort, and that is the specification**. A filing that fails never
+changes `add`'s exit code, never appears as a `failed` count in the collection summary, and
+never stops the sweep. What `add` can know before the hand-off — `[wiki].auto` off, a
+`[wiki].maintainer_command` that is absent or resolves to nothing — is settled live: the
+unconfigured seam is one stderr note naming `[wiki].maintainer_command`, because a line
+saying only that something went wrong sends the user searching a library that is in fact
+complete. A failure after the hand-off — a rejected gate, a crashed maintainer — leaves
+what SPEC-cli-011 says it leaves: an unfiled video that `wiki sync --dry-run` names and
+`wiki sync` converges, with no note on a terminal that has already moved on. Nothing about the epilogue reaches stdout at all, filed or not: `add`'s
 stdout is the stdout it printed before there was a wiki, which is what lets the summary
 line go on meaning exactly what it meant. A knowledge layer must not make the archive
 pipeline fragile: the video is downloaded, transcribed, rendered and indexed, which is

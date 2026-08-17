@@ -34,7 +34,12 @@ command = "just eval wiki"
 # SPEC-wiki-011 and two eval suites land the assembly at ~57808 of 64000. The
 # component now carries eleven clauses; if the next round needs another raise, the
 # question to ask first is whether the vocabulary still wants to be one component.
-context_tokens = 72000
+# Raised 72000 -> 78000 for the wait round: SPEC-wiki-012, the SPEC-wiki-007
+# amendment and test_wait.py. The standing question was asked: --wait is a lock
+# behavior, the lock is repo.py's vocabulary, and a lock component of its own
+# would be a seam through the one invariant (one operation at a time) that must
+# never have two owners. The vocabulary stays whole.
+context_tokens = 78000
 # Above the usual 8000/6000 default: the component carries its own git lifecycle
 # (scaffold, per-run commit, hard reset/clean on gate failure) plus a six-check
 # whole-wiki acceptance gate, on top of driving the maintainer subprocess itself.
@@ -49,4 +54,6 @@ context_tokens = 72000
 # an implementation already at ~19236.
 # Raised 26000 -> 28000: code-span-aware wikilink parsing and printing a rejected
 # run's product, on an implementation already at ~21443.
-src_tokens = 28000
+# Raised 28000 -> 30000: `file --wait` — a blocking acquire beside the
+# refuse-fast one, its announce line, and the flag on file's parser.
+src_tokens = 30000
