@@ -27,6 +27,11 @@ be interleaved with a neighbour's half-written pages. Every maintainer run insid
 it announces itself and streams its progress on stderr before it lands or rolls
 back (SPEC-wiki-007) — the outcome semantics here are unchanged by that; only the
 silence while it runs is gone.
+
+A rejected run still owes the user its account (SPEC-wiki-011): `perform` prints
+the maintainer's product — what it said it was attempting — alongside the reasons
+it was refused, before discarding every byte it wrote. Losing the work is by
+design; losing the agent's own description of it as well was not.
 """
 
 from __future__ import annotations
@@ -42,15 +47,20 @@ from . import Failure, Usage, bookkeeping, gate, layout, library, repo, seams, w
 FILE_OP = "file"
 TEND_OP = "tend"
 REBUILD_OP = "rebuild"
+NO_SUBJECT = "the whole wiki"
 RESET_SUBJECT = "wiki rebuild: reset"
 TEND_SUBJECT = "wiki tend"
 
 # What the maintainer still has to satisfy — the catalog and the chronology are no
 # longer on this list, because tapedeck keeps both current itself (SPEC-wiki-008)
 # and a task that named them would be an instruction to go and maintain them.
+# Wikilink resolution is code-span-aware (SPEC-wiki-011), and this says so, since
+# nothing else told a maintainer writing *about* the wiki that it was safe to.
 GATE_RULES = """  - CLAUDE.md is byte-identical to how you found it. Never edit the brief.
-  - Every [[wikilink]] in every page resolves — case-sensitively, against page
-    filenames with .md stripped, anywhere under wiki/.
+  - Every [[wikilink]] in every page outside code resolves — case-sensitively,
+    against page filenames with .md stripped, anywhere under wiki/. Quoting the
+    syntax in backticks or a fenced block is not a link, so you may write about
+    it safely.
   - Every deep link in every page names a real video in this library at a
     timestamp inside it. Never cite a moment you have not read."""
 
@@ -68,7 +78,9 @@ The archive page is the video's metadata and its transcript, rendered. Read it,
 then write sources/{video_id}.md and whatever the brief says this material earns
 under notes/ — connecting it to what the wiki already holds is the point of the
 exercise. Link pages to each other with [[wikilinks]]. tapedeck keeps the catalog
-and the chronology current after you exit, so neither is your job.
+and the chronology current after you exit, so neither is your job — but whatever
+you print becomes this run's entry in that chronology, a record of what happened
+rather than a message to whoever is reading it live.
 {map}
 tapedeck checks the result mechanically after you exit, over the whole wiki, and
 rejects the operation — discarding everything you wrote — unless all of this holds:
@@ -112,7 +124,9 @@ belong linked, write the page a concept has earned by being mentioned everywhere
 and defined nowhere, and merge or delete notes that have gone redundant.
 Reshaping notes/ is exactly what this run is for: notes may be created,
 rewritten, split, merged and deleted freely. tapedeck keeps the catalog and the
-chronology current after you exit, so neither is your job.
+chronology current after you exit, so neither is your job — but whatever you
+print becomes this run's entry in that chronology, a record of what happened
+rather than a message to whoever is reading it live.
 
 tapedeck checks the result mechanically after you exit, over the whole wiki, and
 rejects the operation — discarding everything you did — unless all of this holds:
@@ -154,6 +168,15 @@ def file_task(wiki: Path, video_id: str, page: Path) -> str:
     )
 
 
+def _account_for(product: str) -> None:
+    """A rejected run still owes the user its account (SPEC-wiki-011): the
+    maintainer's own description of what it was attempting, printed alongside the
+    reasons the run was refused rather than dropped on the floor with the work."""
+    told = product.strip()
+    if told:
+        print(told, file=sys.stderr)
+
+
 def perform(
     home: Path,
     wiki: Path,
@@ -175,17 +198,22 @@ def perform(
     )
     if code != 0:
         repo.restore(wiki, pre_run)
+        _account_for(product)
         raise Failure(
             f"the maintainer exited {code} — whatever it left half-written has been "
             f"rolled back, and the wiki is where it was"
         )
     # Reconciled before the gate judges anything, so a rejection rolls this back
-    # with everything else and the gate sees exactly what is about to land.
+    # with everything else and the gate sees exactly what is about to land. The
+    # chronology's subject is tapedeck's own, never the product (SPEC-wiki-008,
+    # amended) — a video id for a filing, a fixed label for a run about no one
+    # video.
     bookkeeping.reconcile_catalog(wiki)
-    bookkeeping.reconcile_log(wiki, before.log, op, product, cost, video_id or "the whole wiki")
+    bookkeeping.reconcile_log(wiki, before.log, op, video_id or NO_SUBJECT, product, cost)
     problems = gate.verdict(home, wiki, before, video_id=video_id, keep_sources=keep_sources)
     if problems:
         repo.restore(wiki, pre_run)
+        _account_for(product)
         raise Failure(*problems)
     repo.commit(wiki, subject)
 
@@ -420,14 +448,21 @@ def read_only(home: Path, wiki: Path, command: str) -> int:
 
     There is no commit and no log entry: the chronology records accepted
     operations, and a run that accepted nothing is not an event in the wiki's
-    history, however much the user learned from it.
+    history, however much the user learned from it. A run that changes nothing
+    still costs something, so its price — when the maintainer streamed one — is
+    printed on stderr as it finishes, in the same words a chronology entry would
+    have used, and nowhere persisted: a file to hold it would be a sixth entry in
+    a tree the layout contract pins at five.
     """
     pre_run = repo.commit_pending(wiki)
     task = TEND_REPORT_TASK.format(wiki=wiki, map=_knowledge(wiki))
-    code, said, _ = seams.run_maintainer(command, home, wiki, task, "tending (report)")
+    code, said, cost = seams.run_maintainer(command, home, wiki, task, "tending (report)")
     repo.restore(wiki, pre_run)
     if said.strip():
         print(said if said.endswith("\n") else said + "\n", end="")
+    sentence = bookkeeping.cost_sentence(cost)
+    if sentence:
+        print(sentence, file=sys.stderr)
     if code != 0:
         raise Failure(
             f"the tender exited {code} — a crashed reader has not read the wiki, "

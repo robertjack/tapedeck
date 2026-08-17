@@ -21,7 +21,9 @@ just wrote (SPEC-wiki-004), and because the two must never disagree — a linter
 that sent the user to fix a page the gate is perfectly happy with would be worse
 than no linter. The one thing neither of them re-derives is citation grammar:
 pages go to ask's published `verify`, one page's text per invocation, and what ask
-says about a bad link is what reaches the user (LESSON-0003).
+says about a bad link is what reaches the user (LESSON-0003). Wikilink resolution
+reads code spans the way `layout.targets` does (SPEC-wiki-011), so a page that
+quotes the `[[syntax]]` in backticks is never mistaken for a page that broke it.
 
 The catalog and the chronology are checked here exactly as they always were
 (SPEC-wiki-008): every page linked from `index.md`, `log.md` grown by a
@@ -119,7 +121,8 @@ def unresolved(wiki: Path, pages: list[Path]) -> list[str]:
 
     The layout contract's rule and no other: the text before the first `|`,
     matched case-sensitively against page basenames with `.md` stripped, satisfied
-    by a page anywhere under `wiki/`. A dangling link is a page the writer
+    by a page anywhere under `wiki/`, and never a link at all inside a code span
+    or a fenced block (SPEC-wiki-011). A dangling link is a page the writer
     believed existed, and it is the one defect nothing reading the wiki afterwards
     can route around.
     """

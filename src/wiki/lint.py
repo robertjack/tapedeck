@@ -24,6 +24,10 @@ morning, and a note nothing points at yet is an ordinary moment in writing.
 note callback (SPEC-wiki-010) — a diagnosis that only reads reports its findings
 as check rows and says nothing about what it stepped over, so it never described a
 staging directory in the first place and has nothing here to correct.
+
+`wikilinks` and `orphans` both read wikilinks through `layout.targets`, which
+skips code spans and fenced blocks (SPEC-wiki-011) — the same reading the gate
+uses, so a page the gate accepted is never a page this check disagrees about.
 """
 
 from __future__ import annotations

@@ -13,6 +13,12 @@ form of a given video at all — the library layout's own format, not a second
 reading of it. There is no page template, no taxonomy and no naming rule either:
 those live in `CLAUDE.md`, which is the user's, and a clause about them here would
 be specifying how someone else is allowed to think.
+
+`targets` reads wikilinks the way any markdown reader does (SPEC-wiki-011):
+backticks and fenced blocks mean the literal characters, so a page may quote the
+`[[syntax]]` while writing about it without the quote being read as a claim. The
+stripping happens once, here, so the gate and `lint` can never read a page's links
+differently from each other.
 """
 
 from __future__ import annotations
@@ -36,6 +42,12 @@ GIT = ".git"
 # `[[target]]` or `[[target|alias]]`: the target is the text before the first `|`,
 # matched case-sensitively against page basenames with `.md` stripped.
 WIKILINK = re.compile(r"\[\[([^\[\]]+)\]\]")
+# A fenced block (```…```, DOTALL so it spans lines) or an inline code span
+# (`…`, confined to one line — markdown does not let a backtick span a
+# paragraph break) — neither is prose, and a wikilink written inside either is
+# not a link (SPEC-wiki-011).
+_FENCED = re.compile(r"```.*?```", re.DOTALL)
+_INLINE_CODE = re.compile(r"`[^`\n]+`")
 # The catalog's line: an ordinary markdown link whose target is a page's path
 # relative to the wiki root.
 MARKDOWN_LINK = re.compile(r"\]\(\s*([^()\s]+)\s*\)")
@@ -96,9 +108,19 @@ def read(page: Path) -> str:
         return ""
 
 
+def _without_code(text: str) -> str:
+    """`text` with every fenced block and inline code span blanked out — same
+    length, so nothing downstream has to re-learn an offset, but none of the
+    characters inside can be read as a wikilink any more."""
+    text = _FENCED.sub(lambda m: " " * len(m.group()), text)
+    return _INLINE_CODE.sub(lambda m: " " * len(m.group()), text)
+
+
 def targets(text: str) -> list[str]:
-    """The wikilink targets in a page, in order, aliases stripped."""
-    return [link.split("|", 1)[0].strip() for link in WIKILINK.findall(text)]
+    """The wikilink targets in a page, in order, aliases stripped — reading only
+    what is prose. A link quoted in backticks or a fenced block is markdown code,
+    not a claim (SPEC-wiki-011)."""
+    return [link.split("|", 1)[0].strip() for link in WIKILINK.findall(_without_code(text))]
 
 
 def resolvable(pages: list[Path]) -> set[str]:
@@ -204,8 +226,10 @@ state, not a fault.
 Everything is plain markdown, so the directory opens as an Obsidian vault with no
 conversion and reads fine in `grep`. Pages point at each other with a wiki link:
 a page's filename without `.md`, wrapped in doubled square brackets, with a
-display alias after a `|` if you want one. Every accepted operation is a git
-commit, so a filing you dislike is one `git revert` away.
+display alias after a `|` if you want one. Wrapping that syntax in backticks or a
+fenced code block quotes it rather than using it, so a page may explain the
+convention without the example being read as a broken link. Every accepted
+operation is a git commit, so a filing you dislike is one `git revert` away.
 
 A moment in a video is addressed by its ordinary YouTube watch URL, carrying the
 video id and a `t=` offset in seconds. The archive page you file from already
@@ -219,14 +243,16 @@ An operation that breaks any of these is rejected whole and its work is discarde
 - This file is byte-identical to how the operation found it.
 - `sources/<id>.md` exists for the video being filed and carries at least one deep
   link into that video.
-- Every wiki link resolves — case-sensitively, against page filenames with `.md`
-  stripped, satisfied by a page anywhere under `wiki/`.
+- Every wiki link outside code resolves — case-sensitively, against page
+  filenames with .md stripped, anywhere under wiki/.
 - Every deep link anywhere in the wiki names a real video in this library at a
   moment inside it. In this file too: a URL written out here in full would be read
   as a claim and checked as one, which is why there is not one on this page.
 - `index.md` and `log.md`: tapedeck keeps both current by construction after every
   run — appending a catalog line for any page you left out of it, and one
-  chronology entry for a run that added none of its own. Neither is your job.
+  chronology entry for a run that added none of its own. Neither is your job, but
+  whatever you print becomes that run's entry — a record of what happened, not a
+  message to whoever is watching live.
 
 Nothing above says what a page should contain. That is what the rest of this file
 is for.

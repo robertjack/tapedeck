@@ -16,7 +16,10 @@ tapedeck's own bookkeeping, reconciled after the run and before the result is
 judged (SPEC-wiki-008) — an agent that stays silent about either has left nothing
 undone. Every run that writes is also handed a map of what the wiki already
 holds, and a filing gets a ranked shortlist beside it (SPEC-wiki-009), so the
-agent is told what is here instead of paying to discover it by reading.
+agent is told what is here instead of paying to discover it by reading. A page
+may quote the wikilink syntax in code without it being read as a claim
+(SPEC-wiki-011), and a rejected run still prints what the maintainer said it was
+attempting, alongside the reasons it was refused.
 
 Two vocabularies are consumed rather than re-derived (LESSON-0003): ingest's id
 grammar, its rule for what counts as a downloaded video, and its answer for

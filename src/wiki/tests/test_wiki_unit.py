@@ -3,11 +3,11 @@
 Disposable by design (phx): the durable acceptance criteria are
 system/evals/wiki/, which drive `python -m wiki` and never import this package.
 What is worth testing here is the part those evals can only reach through a
-subprocess and a fake agent — the layout grammars, the gate's individual checks,
-the sweep's ordering rule, the streaming seam's cost parsing (amended this round
-to sum the whole of `usage` rather than report its uncached remainder alone), the
-SPEC-wiki-008 bookkeeping reconciliation, the SPEC-wiki-009 map/shortlist, and the
-SPEC-wiki-010 staging-directory wording.
+subprocess and a fake agent — the layout grammars (including the SPEC-wiki-011
+code-span exemption), the gate's individual checks, the sweep's ordering rule,
+the streaming seam's cost parsing, the SPEC-wiki-008 bookkeeping reconciliation
+(subject decoupled from product, cost as prose), the SPEC-wiki-009 map/shortlist,
+and the SPEC-wiki-010 staging-directory wording.
 
 Run with: uv run --with pytest pytest src/wiki/tests -q
 """
@@ -88,6 +88,21 @@ def test_wikilink_targets_are_the_text_before_the_first_pipe(text, expected):
     assert layout.targets(text) == expected
 
 
+def test_a_wikilink_in_an_inline_code_span_is_not_a_link():
+    text = "Pages point at each other with `[[nowhere]]`, which is just an example."
+    assert layout.targets(text) == []
+
+
+def test_a_wikilink_in_a_fenced_block_is_not_a_link():
+    text = "See:\n\n```\n[[nowhere]]\n```\n\nabove is not a real link."
+    assert layout.targets(text) == []
+
+
+def test_a_wikilink_outside_code_still_resolves_normally():
+    text = "`[[quoted]]` is code, but [[real]] is a claim."
+    assert layout.targets(text) == ["real"]
+
+
 def test_wikilink_resolution_is_case_sensitive_and_path_free(tmp_path):
     wiki = wiki_with(tmp_path, sources__dQw4w9WgXcQ="x", notes__regeneration="y")
     known = layout.resolvable(layout.pages(wiki))
@@ -162,16 +177,20 @@ def test_reconcile_catalog_is_a_no_op_once_everything_is_listed(tmp_path):
     assert (wiki / layout.INDEX).read_text() == before
 
 
-def test_reconcile_log_appends_a_fallback_entry_when_the_agent_wrote_nothing(tmp_path):
+def test_reconcile_log_uses_a_fixed_subject_never_the_product(tmp_path):
+    """The bug this amendment removes: the subject used to be the product,
+    squashed to one line, and a chatty run swallowed a whole paragraph into the
+    heading. The subject is tapedeck's own regardless of what the agent said."""
     wiki = wiki_with(tmp_path)
     before = (wiki / layout.LOG).read_bytes()
-    bookkeeping.reconcile_log(wiki, before, "file", "", {}, FILED)
+    bookkeeping.reconcile_log(wiki, before, "file", FILED, "Filed. Here's what landed.", {})
     op, subject = layout.entries(layout.read(wiki / layout.LOG))[0]
     assert op == "file"
     assert subject == FILED
+    assert "Filed. Here's what landed." in layout.read(wiki / layout.LOG)
 
 
-def test_reconcile_log_uses_the_product_as_the_subject_and_records_cost(tmp_path):
+def test_reconcile_log_records_cost_as_a_prose_sentence(tmp_path):
     wiki = wiki_with(tmp_path)
     before = (wiki / layout.LOG).read_bytes()
     cost = {
@@ -182,22 +201,23 @@ def test_reconcile_log_uses_the_product_as_the_subject_and_records_cost(tmp_path
         "output_tokens": 4200,
         "model": "fixture-model-9",
     }
-    bookkeeping.reconcile_log(wiki, before, "file", "filed the video", cost, FILED)
+    bookkeeping.reconcile_log(wiki, before, "file", FILED, "filed the video", cost)
     text = layout.read(wiki / layout.LOG)
-    assert layout.entries(text) == [("file", "filed the video")]
+    assert layout.entries(text) == [("file", FILED)]
     for figure in ("90", "0.42", "931118", "900000", "4200", "fixture-model-9"):
         assert figure in text
     assert "118 in" not in text, (
         "the uncached remainder alone must never be reported as the run's input "
         "(SPEC-wiki-008, amended) — only the summed total"
     )
+    assert "·" not in text, "the cost figures read as a sentence, not a status line"
 
 
 def test_reconcile_log_leaves_an_agents_own_entry_alone(tmp_path):
     wiki = wiki_with(tmp_path)
     before = (wiki / layout.LOG).read_bytes()
     (wiki / layout.LOG).write_text(before.decode() + "## [2026-01-01] file | mine\n")
-    bookkeeping.reconcile_log(wiki, before, "file", "tapedeck's own text", {}, FILED)
+    bookkeeping.reconcile_log(wiki, before, "file", FILED, "tapedeck's own text", {})
     assert layout.entries(layout.read(wiki / layout.LOG)) == [("file", "mine")]
 
 
@@ -205,16 +225,29 @@ def test_reconcile_log_never_writes_onto_a_broken_append_only_log(tmp_path):
     wiki = wiki_with(tmp_path)
     before = (wiki / layout.LOG).read_bytes() + b"## [2026-01-01] file | x\n"
     (wiki / layout.LOG).write_text("# rewritten from scratch\n")
-    bookkeeping.reconcile_log(wiki, before, "file", "product", {}, FILED)
+    bookkeeping.reconcile_log(wiki, before, "file", FILED, "product", {})
     assert (wiki / layout.LOG).read_text() == "# rewritten from scratch\n"
 
 
-def test_no_cost_figures_means_no_cost_line_at_all(tmp_path):
+def test_no_cost_figures_means_no_cost_sentence_at_all(tmp_path):
     wiki = wiki_with(tmp_path)
     before = (wiki / layout.LOG).read_bytes()
-    bookkeeping.reconcile_log(wiki, before, "file", "quiet run", {}, FILED)
+    bookkeeping.reconcile_log(wiki, before, "file", FILED, "quiet run", {})
     text = layout.read(wiki / layout.LOG)
     assert "0.0" not in text and "$0" not in text
+
+
+def test_a_silent_product_still_gets_a_well_formed_entry(tmp_path):
+    wiki = wiki_with(tmp_path)
+    before = (wiki / layout.LOG).read_bytes()
+    bookkeeping.reconcile_log(wiki, before, "file", FILED, "", {})
+    op, subject = layout.entries(layout.read(wiki / layout.LOG))[0]
+    assert (op, subject) == ("file", FILED)
+
+
+def test_cost_sentence_omits_missing_figures_and_invents_nothing():
+    assert bookkeeping.cost_sentence({}) is None
+    assert bookkeeping.cost_sentence({"output_tokens": 5}) == "This run wrote 5 tokens."
 
 
 # --- gate: the individual checks -----------------------------------------------
@@ -248,6 +281,11 @@ def test_unresolved_names_the_dangling_target(tmp_path):
     wiki = wiki_with(tmp_path, notes__a="[[nowhere]]")
     problems = gate.unresolved(wiki, layout.pages(wiki))
     assert any("nowhere" in problem for problem in problems)
+
+
+def test_unresolved_ignores_a_quoted_example(tmp_path):
+    wiki = wiki_with(tmp_path, notes__a="see `[[nowhere]]` for the syntax")
+    assert gate.unresolved(wiki, layout.pages(wiki)) == []
 
 
 # --- library: selection and order ----------------------------------------------
@@ -398,22 +436,3 @@ def test_render_bounds_a_line_and_never_inlines_the_body(tmp_path):
     assert tell not in rendered
     lines = [line for line in rendered.splitlines() if "notes/long.md" in line]
     assert len(lines) == 1 and len(lines[0]) <= wikimap.LINE_BUDGET
-
-
-def test_shortlist_ranks_by_shared_vocabulary_and_excludes_zero_scores(tmp_path):
-    wiki = wiki_with(
-        tmp_path,
-        notes__kin="# Kin\n\nSourdough starters and proofing times decide the crumb.",
-        notes__stranger="# Stranger\n\nOrbital mechanics and delta-v budgets only.",
-    )
-    guess = wikimap.shortlist(wiki, "A video about sourdough starters and proofing times.")
-    assert "notes/kin.md" in guess
-    assert "notes/stranger.md" not in guess
-
-
-def test_shortlist_is_empty_with_nothing_to_rank(tmp_path):
-    empty_wiki = wiki_with(tmp_path / "empty")
-    assert wikimap.shortlist(empty_wiki, "sourdough starters proofing") == ""
-
-    stocked = wiki_with(tmp_path / "stocked", notes__a="# A\n\nunrelated prose entirely")
-    assert wikimap.shortlist(stocked, "") == ""
