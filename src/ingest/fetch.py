@@ -12,10 +12,12 @@ fetcher default is LESSON-0001 verbatim: YouTube serves 403s for AV1 in this
 setup, so avc1 at <=1080p is preferred with plain fallbacks. A solved incident
 stays solved only if the fix ships as the default.
 
-Also here: what counts as a downloaded video (SPEC-ingest-001). `video.<ext>` is
-the download only when `<ext>` names a container — the suffixes a fetcher leaves
-mid-flight or beside the video never are. Every component asks this question, and
-they all ask it here.
+Also here: what counts as a downloaded video (SPEC-ingest-001), and what counts
+as one of our own staging directories (SPEC-ingest-003). `video.<ext>` is the
+download only when `<ext>` names a container — the suffixes a fetcher leaves
+mid-flight or beside the video never are. `.fetching-<id>-<random>` is ours the
+moment its name says so, whether or not a fetch is still running inside it — every
+component asks both questions here rather than re-deriving either.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ import tempfile
 import tomllib
 from pathlib import Path
 
+from .sources import VIDEO_ID
+
 CONFIG_NAME = "config.toml"
 SECTION = "ingest"
 FETCHER_KEY = "fetcher_command"
@@ -37,6 +41,11 @@ INFO_SUFFIX = "info.json"
 # in flight, and the sidecars it keeps beside the finished one.
 NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp", ".description", ".webp", ".jpg", ".png")
 STDERR_FD = 2  # a fetcher's chatter is progress, not output: never our stdout
+
+# The staging directory's name grammar (SPEC-ingest-003, library-layout.md): a
+# fetch in progress or abandoned, never a stranger. Pinned here because three
+# components have to agree on it and none of them see each other's source.
+STAGING_PREFIX = ".fetching-"
 
 DEFAULT_FETCHER_COMMAND = (
     "yt-dlp --no-playlist --write-info-json "
@@ -90,10 +99,29 @@ def stage(library: Path, video_id: str) -> Path:
     A staging area anywhere else turns installing the result into a copy across
     devices, and a copy can stop halfway — leaving a truncated video that every
     later run believes. Here the install is a rename. The dot prefix keeps the
-    directory out of the library's readers while the download runs.
+    directory out of the library's readers while the download runs, in the shape
+    `staging()` below can recognize from the name alone.
     """
     library.mkdir(parents=True, exist_ok=True)
-    return Path(tempfile.mkdtemp(prefix=f".fetching-{video_id}-", dir=library))
+    return Path(tempfile.mkdtemp(prefix=f"{STAGING_PREFIX}{video_id}-", dir=library))
+
+
+def staging(name: str) -> str | None:
+    """Given a bare entry name from `library/`, the video id a staging directory
+    of ours is fetching — or None if `name` is not one of ours (SPEC-ingest-003).
+
+    Answers from the name alone, no filesystem access: a caller can ask about a
+    directory entry it is only iterating, not one it has decided to open. The
+    random suffix `tempfile.mkdtemp` appends is always dash-free, so splitting on
+    the last '-' recovers the video id cleanly even though ids may themselves
+    contain dashes.
+    """
+    if not name.startswith(STAGING_PREFIX):
+        return None
+    candidate, sep, suffix = name[len(STAGING_PREFIX) :].rpartition("-")
+    if not sep or not suffix:
+        return None
+    return candidate if VIDEO_ID.fullmatch(candidate) else None
 
 
 def run(command: str, home: Path, video_id: str, url: str, dest: Path) -> None:

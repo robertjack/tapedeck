@@ -166,6 +166,49 @@ def test_staging_is_dotted_and_inside_the_library(tmp_path):
     assert VID in dest.name
 
 
+# --- the staging-directory predicate (SPEC-ingest-003) --------------------
+
+
+def test_staging_recognizes_a_real_directory_it_made(tmp_path):
+    dest = fetch.stage(tmp_path / "library", VID)
+    assert fetch.staging(dest.name) == VID
+
+
+def test_staging_recognizes_the_name_alone_no_filesystem_touched():
+    # no directory created at all — the answer comes from the string
+    assert fetch.staging(f".fetching-{VID}-ab12cd34") == VID
+
+
+def test_staging_handles_a_video_id_that_itself_contains_a_dash():
+    dashed = "abc-defghij"
+    assert sources.VIDEO_ID.fullmatch(dashed)
+    assert fetch.staging(f".fetching-{dashed}-ab12cd34") == dashed
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "dQw4w9WgXcQ",  # a video id itself, not a staging directory
+        ".fetching-",
+        ".fetching-tooshort-ab12cd34",
+        ".fetching-not_eleven_chars_long-ab12cd34",
+        "not-ours-at-all",
+        "",
+        ".hidden-but-not-ours",
+    ],
+)
+def test_staging_says_none_for_anything_not_ours(name):
+    assert fetch.staging(name) is None
+
+
+def test_staging_is_exported_from_the_package_alongside_video_id_and_has_video():
+    import ingest
+
+    assert ingest.staging is fetch.staging
+    assert ingest.VIDEO_ID is sources.VIDEO_ID
+    assert ingest.has_video is fetch.has_video
+
+
 # --- the config seams ----------------------------------------------------
 
 
