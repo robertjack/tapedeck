@@ -19,6 +19,12 @@ VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
 HEADING = re.compile(r"^##[ \t]+\[(?P<stamp>[^\]]*)\]\((?P<link>[^)]*)\)[ \t]*(?P<title>.*)$")
 LINK_SECONDS = re.compile(r"[?&]t=(\d+)s?(?:&|$)")
 STAMP = re.compile(r"(?:(\d+):)?(\d{1,2}):(\d{2})$")
+# The exact leading construct SPEC-archive-002 writes at the head of a paragraph —
+# `[h:mm:ss](deep-link) ` in the layout contract's own URL shape — and nothing
+# looser (SPEC-index-005): prose that merely mentions a link stays prose.
+PARA_ANCHOR = re.compile(
+    r"^\[[^\]]*\]\(https://www\.youtube\.com/watch\?v=[A-Za-z0-9_-]{11}&t=\d+s\)[ \t]*"
+)
 
 FENCE = "---"
 # The escapes the renderer emits inside a double-quoted frontmatter scalar.
@@ -104,8 +110,16 @@ def _seconds(heading: re.Match) -> int | None:
     return int(hours or 0) * 3600 + int(minutes) * 60 + int(secs)
 
 
+def _strip_anchor(paragraph: str) -> str:
+    """Drop one paragraph's own leading deep-link anchor (SPEC-index-005)."""
+    lines = paragraph.split("\n")
+    lines[0] = PARA_ANCHOR.sub("", lines[0], count=1)
+    return "\n".join(lines)
+
+
 def _prose(lines: list[str]) -> str:
-    """A section's body: paragraphs kept, blank runs and trailing space dropped."""
+    """A section's body: paragraphs kept, blank runs and trailing space dropped,
+    each paragraph stripped of its own leading anchor (SPEC-index-005)."""
     out: list[str] = []
     for line in lines:
         line = line.rstrip()
@@ -113,7 +127,11 @@ def _prose(lines: list[str]) -> str:
             out.append(line)
     while out and not out[-1]:
         out.pop()
-    return "\n".join(out)
+    text = "\n".join(out)
+    if not text:
+        return text
+    paragraphs = re.split(r"\n{2,}", text)
+    return "\n\n".join(_strip_anchor(p) for p in paragraphs)
 
 
 def _duration(raw) -> int | None:
