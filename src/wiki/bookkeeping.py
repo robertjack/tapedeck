@@ -18,6 +18,13 @@ ordering and annotation stay the brief's business (system/contracts/wiki-layout.
 run did not already leave a well-formed one: a maintainer already writing its own
 entries is not doing anything wrong, and two entries for one operation would be a
 worse record than the one this module exists to guarantee.
+
+The entry tapedeck writes also carries what the run cost, when the maintainer
+streamed one (SPEC-wiki-008, amended 2026-08-16): the model, the duration, the
+total input tokens — uncached remainder plus cache-creation plus cache-read,
+already summed by `seams._cost` — how many of those came from cache, the output
+tokens, and the price. A maintainer that reported none of it contributes no line
+at all, never a row of zeroes standing in for a figure nobody measured.
 """
 
 from __future__ import annotations
@@ -53,16 +60,27 @@ def _catalog_line(wiki: Path, page: Path) -> str:
 def _cost_line(cost: dict) -> str | None:
     """What the run cost, in the figures the result event reported — nothing more
     than that, so a maintainer that streamed no cost contributes no line at all
-    rather than a row of zeroes standing in for one."""
+    rather than a row of zeroes standing in for one.
+
+    `cost["total_input_tokens"]` is already the run's whole input, summed by the
+    seam that read the stream — it is written here as that one total, never as
+    the raw `usage.input_tokens` remainder that the pre-amendment entry reported
+    and that understated a real run's cost by four orders of magnitude.
+    """
     parts = []
     if "duration_s" in cost:
         parts.append(f"{cost['duration_s']}s")
-    if "input_tokens" in cost or "output_tokens" in cost:
-        parts.append(
-            f"{cost.get('input_tokens', '?')} in / {cost.get('output_tokens', '?')} out tokens"
+    if "total_input_tokens" in cost or "output_tokens" in cost:
+        cached = (
+            f" ({cost['cache_read_tokens']} cached)" if "cache_read_tokens" in cost else ""
         )
+        total = cost.get("total_input_tokens", "?")
+        out = cost.get("output_tokens", "?")
+        parts.append(f"in {total}{cached} / out {out} tokens")
     if "cost_usd" in cost:
         parts.append(f"${cost['cost_usd']:.2f}")
+    if "model" in cost:
+        parts.append(cost["model"])
     return " · ".join(parts) if parts else None
 
 

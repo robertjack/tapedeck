@@ -16,6 +16,11 @@ whole result thrown away. That discard is unconditional and is the whole
 guarantee: an agent told to be read-only is a hope, and a reset afterwards is a
 fact.
 
+Every task built here is handed a map of what the wiki already holds, and a
+filing's task carries a ranked shortlist beside it (SPEC-wiki-009) — the point is
+to tell the maintainer what is here rather than let it pay to discover that by
+reading everything, so the map is assembled before the agent ever runs.
+
 One operation holds the wiki at a time (LESSON-0004). The lock is taken once, by
 the verb, and held across every filing it performs, so a sweep's commits can never
 be interleaved with a neighbour's half-written pages. Every maintainer run inside
@@ -32,7 +37,7 @@ from pathlib import Path
 
 import ingest
 
-from . import Failure, Usage, bookkeeping, gate, layout, library, repo, seams
+from . import Failure, Usage, bookkeeping, gate, layout, library, repo, seams, wikimap
 
 FILE_OP = "file"
 TEND_OP = "tend"
@@ -62,10 +67,9 @@ File one video into the wiki:
 The archive page is the video's metadata and its transcript, rendered. Read it,
 then write sources/{video_id}.md and whatever the brief says this material earns
 under notes/ — connecting it to what the wiki already holds is the point of the
-exercise, so read the pages it touches before you add another. Link pages to each
-other with [[wikilinks]]. tapedeck keeps the catalog and the chronology current
-after you exit, so neither is your job.
-
+exercise. Link pages to each other with [[wikilinks]]. tapedeck keeps the catalog
+and the chronology current after you exit, so neither is your job.
+{map}
 tapedeck checks the result mechanically after you exit, over the whole wiki, and
 rejects the operation — discarding everything you wrote — unless all of this holds:
 
@@ -80,7 +84,7 @@ TEND_REPORT_TASK = """You are the maintainer of this wiki. Read CLAUDE.md in thi
 is the brief, and it is what the pages you are about to read were written under.
 
     wiki root     {wiki}   (your working directory)
-
+{map}
 Read the whole wiki and report what you found. This run is read-only and the
 guarantee is mechanical rather than a request: tapedeck resets and cleans the
 working tree after you exit, so nothing you write to a file will survive. Print
@@ -102,7 +106,7 @@ TEND_APPLY_TASK = """You are the maintainer of this wiki. Read CLAUDE.md in this
 is the brief, it is the user's, and it governs what a page should say.
 
     wiki root     {wiki}   (your working directory)
-
+{map}
 Read the whole wiki and improve it. Resolve contradictions, connect pages that
 belong linked, write the page a concept has earned by being mentioned everywhere
 and defined nowhere, and merge or delete notes that have gone redundant.
@@ -123,6 +127,22 @@ File no video: a video with no page yet is `tapedeck wiki sync`'s work, not
 yours."""
 
 
+def _knowledge(wiki: Path, subject_text: str | None = None) -> str:
+    """The map (SPEC-wiki-009), and for a filing the shortlist beside it — both
+    assembled before the maintainer ever runs, and empty together when the wiki
+    holds no linkable page yet. Never a file: it lives in the task and nowhere
+    else, so a run leaves behind exactly the pages it wrote."""
+    rendered = wikimap.render(wiki)
+    if not rendered:
+        return ""
+    block = "\n" + rendered + "\n"
+    if subject_text is not None:
+        guess = wikimap.shortlist(wiki, subject_text)
+        if guess:
+            block += "\n" + guess + "\n"
+    return block
+
+
 def file_task(wiki: Path, video_id: str, page: Path) -> str:
     return FILE_TASK.format(
         video_id=video_id,
@@ -130,6 +150,7 @@ def file_task(wiki: Path, video_id: str, page: Path) -> str:
         wiki=wiki,
         link=layout.deep_link_form(video_id),
         rules=GATE_RULES,
+        map=_knowledge(wiki, layout.read(page)),
     )
 
 
@@ -381,7 +402,7 @@ def tend(home: Path, yes: bool) -> int:
                 home,
                 wiki,
                 command,
-                TEND_APPLY_TASK.format(wiki=wiki, rules=GATE_RULES),
+                TEND_APPLY_TASK.format(wiki=wiki, rules=GATE_RULES, map=_knowledge(wiki)),
                 TEND_SUBJECT,
                 "tending (apply)",
                 TEND_OP,
@@ -402,9 +423,8 @@ def read_only(home: Path, wiki: Path, command: str) -> int:
     history, however much the user learned from it.
     """
     pre_run = repo.commit_pending(wiki)
-    code, said, _ = seams.run_maintainer(
-        command, home, wiki, TEND_REPORT_TASK.format(wiki=wiki), "tending (report)"
-    )
+    task = TEND_REPORT_TASK.format(wiki=wiki, map=_knowledge(wiki))
+    code, said, _ = seams.run_maintainer(command, home, wiki, task, "tending (report)")
     repo.restore(wiki, pre_run)
     if said.strip():
         print(said if said.endswith("\n") else said + "\n", end="")

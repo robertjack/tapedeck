@@ -14,7 +14,9 @@ to where the run began. A maintainer run is watched rather than awaited
 become progress on stderr as they arrive. The catalog and the chronology are
 tapedeck's own bookkeeping, reconciled after the run and before the result is
 judged (SPEC-wiki-008) — an agent that stays silent about either has left nothing
-undone.
+undone. Every run that writes is also handed a map of what the wiki already
+holds, and a filing gets a ranked shortlist beside it (SPEC-wiki-009), so the
+agent is told what is here instead of paying to discover it by reading.
 
 Two vocabularies are consumed rather than re-derived (LESSON-0003): ingest's id
 grammar and rule for what counts as a downloaded video, and ask's published

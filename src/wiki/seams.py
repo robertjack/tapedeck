@@ -26,10 +26,14 @@ one compact progress line the moment it lands, never batched until exit. The run
 product — what a caller like `tend` relays to the user — is the result event's
 text when the whole stdout parsed as such a stream, and the raw stdout byte for
 byte otherwise, so a maintainer that narrates nothing loses nothing. The same
-result event, when it carries them, is where the run's cost figures come from
-(SPEC-wiki-008): duration, tokens, price — the only numbers that say whether
-keeping this wiki is getting more expensive, handed back beside the product so a
-caller can fold them into the chronology without re-parsing anything.
+stream, when it carries them, is also where the run's cost figures come from
+(SPEC-wiki-008, amended): duration, tokens, price, model — the only numbers that
+say whether keeping this wiki is getting more expensive — handed back beside the
+product so a caller can fold them into the chronology without re-parsing anything.
+The run's *input* is the whole of `usage`: the uncached remainder plus whatever
+was written to and read from the prompt cache, summed here rather than reported as
+the uncached figure alone, which understates a real run's cost by orders of
+magnitude.
 """
 
 from __future__ import annotations
@@ -69,6 +73,9 @@ _ASSISTANT = "assistant"
 _RESULT = "result"
 # Recognisable things a tool call's input might carry, tried in this order.
 _TOUCHED_KEYS = ("file_path", "path", "pattern", "command", "query", "url", "glob")
+# What the run's whole input is made of (SPEC-wiki-008, amended): the uncached
+# remainder plus whatever the cache absorbed on the way in.
+_INPUT_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 
 
 def maintainer_command(home: Path) -> str:
@@ -114,15 +121,22 @@ def _touched(tool_input: dict) -> str:
     return ""
 
 
+def _init_model(event: dict) -> str | None:
+    if event.get("type") == _INIT and event.get("subtype") == "init":
+        model = event.get("model")
+        if isinstance(model, str) and model:
+            return model
+    return None
+
+
 def _announce_event(event: dict) -> None:
     """One line for the three kinds of event that earn one, printed the moment it
     arrives so progress and the run stay in step. flush=True because stderr here
     is what a caller watches live, not a log written after the fact."""
     kind = event.get("type")
-    if kind == _INIT and event.get("subtype") == "init":
-        model = event.get("model")
-        if model:
-            print(f"  · model {model}", file=sys.stderr, flush=True)
+    model = _init_model(event)
+    if model:
+        print(f"  · model {model}", file=sys.stderr, flush=True)
     elif kind == _ASSISTANT:
         for tool in _tool_uses(event):
             touched = _touched(tool.get("input") or {})
@@ -135,7 +149,13 @@ def _announce_event(event: dict) -> None:
 def _cost(event: dict | None) -> dict:
     """What the result event says this run cost, read defensively: any field can
     be absent, and a maintainer that does not stream hands back nothing at all —
-    never a malformed figure and never a row of zeroes standing in for one."""
+    never a malformed figure and never a row of zeroes standing in for one.
+
+    `total_input_tokens` is the sum of all three `usage` fields, never
+    `usage.input_tokens` alone: that field is only the uncached remainder, and
+    reporting it by itself understates the run's real input by orders of
+    magnitude — the defect the amendment to SPEC-wiki-008 exists to remove.
+    """
     found: dict = {}
     if not isinstance(event, dict):
         return found
@@ -147,10 +167,15 @@ def _cost(event: dict | None) -> dict:
         found["cost_usd"] = float(cost_usd)
     usage = event.get("usage")
     if isinstance(usage, dict):
-        for key in ("input_tokens", "output_tokens"):
-            value = usage.get(key)
-            if isinstance(value, int):
-                found[key] = value
+        present = [usage.get(key) for key in _INPUT_KEYS]
+        if any(isinstance(value, int) for value in present):
+            found["total_input_tokens"] = sum(value for value in present if isinstance(value, int))
+        cache_read = usage.get("cache_read_input_tokens")
+        if isinstance(cache_read, int):
+            found["cache_read_tokens"] = cache_read
+        output = usage.get("output_tokens")
+        if isinstance(output, int):
+            found["output_tokens"] = output
     return found
 
 
@@ -219,6 +244,7 @@ def run_maintainer(
     events = others = 0
     result_text: str | None = None
     result_event: dict | None = None
+    model: str | None = None
     for line in iter(process.stdout.readline, ""):
         raw.append(line)
         event = _event(line.strip())
@@ -228,6 +254,7 @@ def run_maintainer(
             continue
         events += 1
         _announce_event(event)
+        model = _init_model(event) or model
         if event.get("type") == _RESULT:
             result_text = str(event.get("result", ""))
             result_event = event
@@ -239,6 +266,8 @@ def run_maintainer(
     streamed = events > 0 and others == 0
     product = result_text if streamed and result_text is not None else stdout
     cost = _cost(result_event) if streamed else {}
+    if streamed and model:
+        cost["model"] = model
     return code, product, cost
 
 
