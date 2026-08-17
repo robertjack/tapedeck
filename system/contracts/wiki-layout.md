@@ -75,9 +75,11 @@ is free-form.
 **Every accepted operation appends exactly one entry, and tapedeck is what guarantees
 that count** (SPEC-wiki-008). Where the maintainer wrote a well-formed entry of its own,
 that entry stands. Where it wrote none — the ordinary case, since nothing asks it to —
-tapedeck appends one before the result is judged: the date and the `<op>` are tapedeck's
-own, and the subject and the prose beneath it are the maintainer's product, what the run
-reported about its own work. An operation whose agent narrated nothing still gets an
+tapedeck appends one before the result is judged: the date, the `<op>` and the subject are
+tapedeck's own — the subject being what this file already documents, a video id for a
+filing and a short label for an operation with no single subject, on one line and free of
+markdown so `grep "^## \["` keeps working — and the maintainer's product is the prose
+beneath it. An operation whose agent narrated nothing still gets an
 entry, since the operation still happened. Where that maintainer streams its run, the
 entry also records what it cost — the model that answered, the duration, the total input
 tokens and how many of them came from cache, the output tokens, and the price — because

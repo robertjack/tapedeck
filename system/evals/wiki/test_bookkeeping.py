@@ -24,6 +24,8 @@ nothing at all.
 
 import re
 
+from conftest import run_component
+
 from wikilib import (
     FILED,
     FILES_ONLY_THE_PAGES,
@@ -37,6 +39,7 @@ from wikilib import (
     WRITES_THE_PAGES,
     accepted,
     catalog,
+    filed,
     index_lines,
     log_entries,
     rejected,
@@ -78,6 +81,21 @@ STREAMS_ITS_COST = (
 # The maintainer a user configured before any of this: prose on stdout, no stream,
 # no figures to record.
 SPEAKS_PLAINLY = SH + WRITES_THE_PAGES + f"echo '{PRODUCT}'\n"
+
+# The shape that broke the heading: a product opening with several sentences and a
+# markdown span, exactly like the one that reached the user's log on 2026-08-16.
+FIRST_SENTENCE = "Filed. Here is what landed."
+CHATTY = (
+    f"{FIRST_SENTENCE} **sources/{NEXT}.md** carries the deep links, and "
+    "notes/proofing.md is new. Nothing else moved."
+)
+NARRATES_AT_LENGTH = (
+    SH
+    + WRITES_THE_PAGES
+    + "echo '"
+    + '{"type":"result","subtype":"success","result":"' + CHATTY + '"}'
+    + "'\n"
+)
 
 # A heading that opens like a chronology entry and is not one — what the log must
 # never gain, whatever the maintainer did or did not report.
@@ -164,6 +182,69 @@ def test_the_operation_reaches_the_chronology_without_the_maintainer(home, monke
     )
 
 
+def test_the_subject_is_what_the_brief_documents_not_the_product(home, monkeypatch):
+    """The brief documents the heading as `## [YYYY-MM-DD] file | <video-id>`, and the
+    first version of this clause put the product there instead — producing
+    `file | Filed. Here's what landed. **sources/...**` in the user's real log. The
+    subject is tapedeck's and it is the video id; the product belongs in the body."""
+    _, wiki = accepted(home, monkeypatch, STREAMS_ITS_COST)
+    op, subject = log_entries(wiki)[-1]
+    assert (op, subject) == ("file", NEXT), (
+        f"the heading must name the operation and the video, not narrate: {(op, subject)}"
+    )
+    assert PRODUCT in last_entry(wiki), (
+        "the product still belongs in the body, entire — moving the subject must not "
+        "lose what the run reported"
+    )
+
+
+def test_a_talkative_product_cannot_swallow_the_heading(home, monkeypatch):
+    """The defect that shipped, pinned by its shape rather than its wording. A product
+    of several sentences and a markdown span must leave the heading a heading: one
+    line, no markdown, greppable by `^## \\[`."""
+    _, wiki = accepted(home, monkeypatch, NARRATES_AT_LENGTH)
+    op, subject = log_entries(wiki)[-1]
+    assert op == "file" and subject == NEXT, (
+        f"a chatty maintainer moved the subject: {(op, subject)}"
+    )
+    heading = last_entry(wiki).splitlines()[0]
+    assert "**" not in heading and "`" not in heading, (
+        f"the heading carries markdown, so it is prose and not an index entry: {heading!r}"
+    )
+    assert len(heading) < 120, (
+        f"the heading swallowed body text — {len(heading)} characters: {heading!r}"
+    )
+    assert FIRST_SENTENCE in last_entry(wiki), (
+        "the narration is not discarded, only moved out of the heading"
+    )
+
+
+def test_the_task_tells_the_maintainer_its_report_becomes_the_record(home, monkeypatch):
+    """An entry produced by this clause claimed "log.md is untouched" — true when the
+    agent wrote it, false once tapedeck appended it to the chronology. The agent could
+    not have known where its words were going, so the task now says.
+
+    Pinned without naming the file, deliberately: the guarantee that the task does not
+    send the maintainer to maintain the chronology
+    (test_the_task_no_longer_asks_the_maintainer_for_bookkeeping) still holds, and
+    knowing your words become the record is a different instruction from that one."""
+    stocked(home)
+    set_ask(monkeypatch, home)
+    set_maintainer(home, RECORDS_THE_TASK)
+    assert wiki_file(home, NEXT).returncode == 0
+    task = task_given(home).lower()
+    said = [line for line in task.splitlines() if "chronology" in line or "entry" in line]
+    assert said, f"the task does not mention the chronology at all:\n{task}"
+    # "chronology" alone is not enough: the task already named it while saying it is
+    # *not* the agent's job, and that sentence is what left the agent free to claim
+    # the record was untouched. What has to be new is that its report becomes an entry.
+    assert any("entry" in line for line in said), (
+        f"the task mentions the chronology but never tells the maintainer its report "
+        f"becomes an entry in it, so it still cannot know not to claim the record is "
+        f"untouched:\n" + "\n".join(said)
+    )
+
+
 def test_a_silent_maintainer_still_gets_a_well_formed_entry(home, monkeypatch):
     """FILES_ONLY_THE_PAGES prints nothing at all. The operation still happened,
     so the chronology still records it — with a subject, not an empty one."""
@@ -241,6 +322,30 @@ def test_the_input_figure_is_the_whole_input_not_the_uncached_remainder(home, mo
     assert f"{UNCACHED_ALONE} in" not in entry, (
         f"the entry reports the uncached remainder as the run's input — the exact "
         f"reading the amendment exists to remove:\n{entry}"
+    )
+
+
+def test_a_discarded_run_still_reports_what_it_cost(home, monkeypatch):
+    """`tend`'s report mode spends a full agent run and writes no entry by design —
+    the chronology records accepted operations, and a reading is not one. The first
+    such run under this clause took ten minutes on the user's real wiki and left no
+    trace of its price in the one record built to answer whether this is getting
+    more expensive. So a discarded run says on stderr what an accepted one records,
+    and still writes nothing: a file to hold it would be a sixth entry in a tree the
+    layout contract pins at five."""
+    filed(home, monkeypatch)
+    set_maintainer(home, STREAMS_ITS_COST)
+    before = (home / "wiki" / "log.md").read_text()
+
+    r = run_component("wiki", ["tend"], home)
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    for figure, what in ((COST, "its price"), (TOTAL_INPUT, "what it read"), (MODEL, "the model")):
+        assert figure in r.stderr, (
+            f"a run the user paid for did not report {what} ({figure}):\n{r.stderr}"
+        )
+    assert (home / "wiki" / "log.md").read_text() == before, (
+        "a reading is not an event in the wiki's history — report mode must still "
+        "write no entry, whatever it printed on the way past"
     )
 
 
