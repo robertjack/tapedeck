@@ -9,7 +9,14 @@ model = "claude-sonnet-5"
 # stdin stays piped as belt-and-braces). Bare stdin delivery was ignored or treated as
 # background in 5 measured attempts across phx rounds; the imperative preamble is
 # load-bearing — without it the model has asked "what would you like me to do".
-command = 'claude --model claude-sonnet-5 --permission-mode acceptEdits -p "$(printf "Execute this regeneration ticket now. There is no user to ask questions of - write the implementation into the owned paths.\n\n"; cat "$PHX_CONTEXT_FILE")"'
+# The generator checks its own work before handing back. It could not until
+# 2026-08-17: `acceptEdits` auto-accepts edits but prompts for Bash, and a headless
+# run has nobody to answer, so the generator wrote blind and let the harness grade it
+# — one round took three attempts, and the attempt that was nearly right said so
+# ("I wasn't able to run pytest myself"). `.claude/settings.json` now allows
+# `just eval *`, and the preamble below tells it to use that. $PHX_COMPONENT is set
+# by the harness (phx regen/__init__.py), so one template serves every component.
+command = 'claude --model claude-sonnet-5 --permission-mode acceptEdits -p "$(printf "Execute this regeneration ticket now. There is no user to ask questions of - write the implementation into the owned paths.\n\nWhen you have written it, run \`just eval $PHX_COMPONENT\` and read the failures. You are permitted to run that command; it needs no approval. Fix what it reports and run it again, until it is green or you have run out of ideas. Do not hand back a red implementation without saying which evals fail and why you could not satisfy them.\n\nThe deleted $PHX_COMPONENT source tree and the running phx process are the burn of this very regeneration and its own parent process - not work belonging to some other session. Write the implementation.\n\n"; cat "$PHX_CONTEXT_FILE")"'
 
 [budgets]
 default_context_tokens = 8000
