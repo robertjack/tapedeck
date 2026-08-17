@@ -28,7 +28,9 @@ command = "just eval wiki"
 # Raised 48000 -> 56000 for the bookkeeping round: SPEC-wiki-008, the two
 # wiki-layout amendments and test_bookkeeping.py land on an assembly already at
 # ~41569 of 48000, which leaves too little for a generator to breathe in.
-context_tokens = 56000
+# Raised 56000 -> 64000 for the map round: SPEC-wiki-009 and test_map.py land on
+# an assembly already at ~50616 of 56000.
+context_tokens = 64000
 # Above the usual 8000/6000 default: the component carries its own git lifecycle
 # (scaffold, per-run commit, hard reset/clean on gate failure) plus a six-check
 # whole-wiki acceptance gate, on top of driving the maintainer subprocess itself.
@@ -38,4 +40,7 @@ context_tokens = 56000
 # Raised 20000 -> 23000: SPEC-wiki-008 adds the reconciliation step — catalog
 # lines from page headings, a chronology entry from the run's product, and the
 # result event's cost figures — to an implementation already at ~17464.
-src_tokens = 23000
+# Raised 23000 -> 26000: SPEC-wiki-009 adds the map — a line per page, the
+# relevance ranking behind the shortlist, and its assembly into three tasks — to
+# an implementation already at ~19236.
+src_tokens = 26000

@@ -79,9 +79,12 @@ tapedeck appends one before the result is judged: the date and the `<op>` are ta
 own, and the subject and the prose beneath it are the maintainer's product, what the run
 reported about its own work. An operation whose agent narrated nothing still gets an
 entry, since the operation still happened. Where that maintainer streams its run, the
-entry also records what it cost — duration, tokens, price — because whether keeping this
-wiki is getting more expensive is a question only the chronology is in a position to
-answer; a maintainer that does not stream simply contributes no such line.
+entry also records what it cost — the model that answered, the duration, the total input
+tokens and how many of them came from cache, the output tokens, and the price — because
+whether keeping this wiki is getting more expensive is a question only the chronology is
+in a position to answer. Counts are plain integers with no thousands separators, so the
+log stays summable with `awk` for the same reason the heading shape keeps it greppable. A
+maintainer that does not stream simply contributes no such line.
 
 Append-only is mechanical, not aspirational: after any operation the previous content of
 `log.md` must still be a **byte-prefix** of the new content. Entries are never reworded,

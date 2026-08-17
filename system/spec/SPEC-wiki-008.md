@@ -46,15 +46,32 @@ it are the maintainer's product, the text SPEC-wiki-007 already extracts from th
 agent that narrated nothing at all still gets an entry, because the operation still
 happened; a silent run is not a gap in the history.
 
-The entry tapedeck writes also carries what the run cost: **its duration in whole
-seconds, its input and output token counts, and its price in USD**, as the result event
-reports them. These are the only numbers that say whether the wiki is getting more
-expensive to keep — the question this clause exists to answer, and one that until now
-could only be reconstructed from commit timestamps after the fact. tapedeck records them
-when the stream carries them and omits them silently when it does not: a maintainer
-configured without `--output-format stream-json` is a supported maintainer
-(SPEC-core-004), and its entry is the same well-formed entry minus those figures, never
-a malformed one and never a row of zeroes.
+The entry tapedeck writes also carries what the run cost. These are the only numbers
+that say whether the wiki is getting more expensive to keep — the question this clause
+exists to answer, and one that until now could only be reconstructed from commit
+timestamps after the fact. tapedeck records them when the stream carries them and omits
+them silently when it does not: a maintainer configured without `--output-format
+stream-json` is a supported maintainer (SPEC-core-004), and its entry is the same
+well-formed entry minus those figures, never a malformed one and never a row of zeroes.
+
+**Amended 2026-08-16, after the first two filings measured with it.** The first version
+of this clause recorded the result event's `input_tokens` as the run's input, and the
+entries it wrote read `118 in / 69311 out tokens · $9.16` and `100 in / 67117 out tokens
+· $8.33`. A hundred input tokens for a run that read a transcript is obvious nonsense:
+`input_tokens` is only the *uncached remainder*, and the run's actual input is
+`input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. The figure was
+wrong by four orders of magnitude, in the one direction that mattered — those two runs
+cost $9.16 and $8.33, of which roughly four fifths was input processing, and the entry
+attributed almost none of it. A measurement that cannot see the dominant cost cannot
+answer the question it was added for.
+
+So the entry records, from the result event and the run's `init` event: the **total input
+tokens** (that sum), **how many of them were served from cache** — because a filing's
+cost is context size multiplied by turn count, and the cache-read share is what makes
+that visible — the **output tokens**, the **duration in whole seconds**, the **price in
+USD**, and the **model that answered**. Every count is a plain integer with no thousands
+separators, for the same reason the chronology's heading shape is fixed: the log is meant
+to be read with `grep` and summed with `awk`, by someone who has not installed anything.
 
 The scaffolded brief changes with the task, and for the same reason. `CLAUDE.md` is
 written once and is the user's thereafter (SPEC-wiki-001), but the default tapedeck ships

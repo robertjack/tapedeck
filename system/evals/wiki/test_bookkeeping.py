@@ -32,6 +32,7 @@ from wikilib import (
     NEW_NOTE,
     NEW_NOTE_HEADING,
     NEXT,
+    RECORDS_THE_TASK,
     SH,
     WRITES_THE_PAGES,
     accepted,
@@ -42,6 +43,7 @@ from wikilib import (
     set_ask,
     set_maintainer,
     stocked,
+    task_given,
     wiki_file,
 )
 
@@ -50,21 +52,32 @@ SOURCE_PAGE = f"sources/{NEXT}.md"
 # What a streaming maintainer reports about its own run. The product is the prose
 # tapedeck has to carry into the entry; the figures beside it are what let the
 # chronology answer "is this getting more expensive" without archaeology.
+#
+# The usage numbers are shaped like the ones that exposed the defect this clause was
+# amended for: `input_tokens` is a rounding error next to the cached prefix the run
+# actually read, so an entry that reports it as the run's input understates the
+# dominant cost by four orders of magnitude.
 PRODUCT = "filed the sourdough video and opened a note on proofing"
+MODEL = "fixture-model-9"
+INIT_EVENT = f'{{"type":"system","subtype":"init","model":"{MODEL}"}}'
 RESULT_WITH_COST = (
     '{"type":"result","subtype":"success","result":"' + PRODUCT + '",'
     '"duration_ms":90000,"total_cost_usd":0.42,'
-    '"usage":{"input_tokens":31000,"output_tokens":4200}}'
+    '"usage":{"input_tokens":118,"output_tokens":4200,'
+    '"cache_creation_input_tokens":31000,"cache_read_input_tokens":900000}}'
 )
-DURATION_S, COST, INPUT_TOKENS, OUTPUT_TOKENS = "90", "0.42", "31000", "4200"
+DURATION_S, COST, OUTPUT_TOKENS = "90", "0.42", "4200"
+CACHE_READ = "900000"
+TOTAL_INPUT = "931118"  # 118 uncached + 31000 written to cache + 900000 read from it
+UNCACHED_ALONE = "118"
 
-STREAMS_ITS_COST = SH + WRITES_THE_PAGES + f"echo '{RESULT_WITH_COST}'\n"
+STREAMS_ITS_COST = (
+    SH + f"echo '{INIT_EVENT}'\n" + WRITES_THE_PAGES + f"echo '{RESULT_WITH_COST}'\n"
+)
 
 # The maintainer a user configured before any of this: prose on stdout, no stream,
 # no figures to record.
 SPEAKS_PLAINLY = SH + WRITES_THE_PAGES + f"echo '{PRODUCT}'\n"
-
-RECORDS_THE_TASK = '#!/bin/sh\ncat > "$TAPEDECK_HOME/task"\n' + WRITES_THE_PAGES
 
 # A heading that opens like a chronology entry and is not one — what the log must
 # never gain, whatever the maintainer did or did not report.
@@ -198,12 +211,37 @@ def test_a_streaming_run_records_what_it_cost(home, monkeypatch):
     _, wiki = accepted(home, monkeypatch, STREAMS_ITS_COST)
     entry = last_entry(wiki)
     for figure, what in (
+        (MODEL, "which model answered"),
         (DURATION_S, "how long the run took, in whole seconds"),
         (COST, "what it cost"),
-        (INPUT_TOKENS, "how many tokens went in"),
+        (TOTAL_INPUT, "how many tokens went in, all three usage fields summed"),
+        (CACHE_READ, "how many of those came from cache"),
         (OUTPUT_TOKENS, "how many came out"),
     ):
         assert figure in entry, f"the entry does not record {what} ({figure}):\n{entry}"
+
+
+def test_the_input_figure_is_the_whole_input_not_the_uncached_remainder(home, monkeypatch):
+    """The defect this clause was amended for, pinned so it cannot come back.
+
+    `usage.input_tokens` counts only what was not served from cache. On a real
+    filing it read 118 against a cached prefix of nearly a million, and an entry
+    reporting it as the run's input said a transcript-reading agent had consumed a
+    hundred tokens. Reporting the sum is the whole fix; reporting the remainder
+    beside it would be reporting the same wrong number in better company."""
+    _, wiki = accepted(home, monkeypatch, STREAMS_ITS_COST)
+    entry = last_entry(wiki)
+    assert TOTAL_INPUT in entry, (
+        f"the run's input is uncached + cache-creation + cache-read, and the entry "
+        f"does not carry that sum ({TOTAL_INPUT}):\n{entry}"
+    )
+    # The exact shape the first version of the clause produced. Pinned as a string
+    # rather than as "the digits 118 appear somewhere", because 118 is a substring
+    # of the correct total and an eval that forbade it would forbid the fix.
+    assert f"{UNCACHED_ALONE} in" not in entry, (
+        f"the entry reports the uncached remainder as the run's input — the exact "
+        f"reading the amendment exists to remove:\n{entry}"
+    )
 
 
 def test_a_maintainer_that_does_not_stream_still_logs_cleanly(home, monkeypatch):
@@ -234,7 +272,7 @@ def test_the_task_no_longer_asks_the_maintainer_for_bookkeeping(home, monkeypatc
     r = wiki_file(home, NEXT)
     assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
 
-    task = (home / "task").read_text()
+    task = task_given(home)
     for name in ("log.md", "index.md"):
         assert name not in task, f"the task still sends the maintainer to {name}:\n{task}"
 

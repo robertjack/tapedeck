@@ -204,6 +204,17 @@ FILES_ONLY_THE_PAGES = SH + WRITES_THE_PAGES
 NEW_NOTE = "notes/proofing.md"
 NEW_NOTE_HEADING = "Proofing times"
 
+# The same honest work, with the task it was handed kept for inspection. What
+# tapedeck says to the maintainer is as much a pinned surface as what it does to
+# the wiki afterwards — SPEC-wiki-008 removed instructions from it and
+# SPEC-wiki-009 adds knowledge to it, and both are only observable here.
+RECORDS_THE_TASK = '#!/bin/sh\ncat > "$TAPEDECK_HOME/task"\n' + WRITES_THE_PAGES
+
+
+def task_given(home):
+    """The task text the maintainer was handed on stdin."""
+    return (home / "task").read_text()
+
 
 # --- driving the boundary ---------------------------------------------------
 
