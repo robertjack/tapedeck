@@ -6,7 +6,8 @@ What is worth testing here is the part those evals can only reach through a
 subprocess and a fake agent — the layout grammars, the gate's individual checks,
 the sweep's ordering rule, the streaming seam's cost parsing (amended this round
 to sum the whole of `usage` rather than report its uncached remainder alone), the
-SPEC-wiki-008 bookkeeping reconciliation, and the SPEC-wiki-009 map/shortlist.
+SPEC-wiki-008 bookkeeping reconciliation, the SPEC-wiki-009 map/shortlist, and the
+SPEC-wiki-010 staging-directory wording.
 
 Run with: uv run --with pytest pytest src/wiki/tests -q
 """
@@ -124,6 +125,15 @@ def test_catalog_reads_only_markdown_dot_md_links():
         "- [Anchor](notes/y.md#section)\n"
     )
     assert layout.catalog(text) == ["sources/x.md", "notes/y.md"]
+
+
+def test_the_default_brief_never_names_index_or_log_without_saying_tapedeck_keeps_them():
+    """SPEC-wiki-008: the scaffolded brief must not read as an instruction to the
+    maintainer to go and maintain either file."""
+    for line in layout.DEFAULT_BRIEF.splitlines():
+        for name in ("index.md", "log.md"):
+            if name in line:
+                assert "tapedeck" in line.lower(), line
 
 
 # --- bookkeeping: SPEC-wiki-008 reconciliation ---------------------------------
@@ -258,6 +268,28 @@ def test_eligible_skips_and_explains_what_it_cannot_file(home):
     found = library.eligible(home, note=notes.append)
     assert found == []
     assert len(notes) == 3
+
+
+def test_eligible_calls_a_staging_directory_ours_and_names_the_video(home):
+    """SPEC-wiki-010: a `.fetching-<id>-<random>` entry belongs to a download in
+    progress, and the note must say so — never that it is foreign, a stray, or
+    not tapedeck's — and must name the video being fetched."""
+    (home / "library" / ".fetching-aaaaaaaaaaa-xyz123").mkdir()
+    notes = []
+    found = library.eligible(home, note=notes.append)
+    assert found == []
+    assert len(notes) == 1
+    said = notes[0].lower()
+    assert "aaaaaaaaaaa" in notes[0]
+    for claim in ("not tapedeck's", "not tapedeck", "foreign", "stray", "someone else"):
+        assert claim not in said, notes[0]
+
+
+def test_eligible_still_calls_a_genuine_stranger_not_a_video_id(home):
+    (home / "library" / "my-own-notes").mkdir()
+    notes = []
+    library.eligible(home, note=notes.append)
+    assert any("my-own-notes" in note for note in notes)
 
 
 # --- seams: cost parsing and the config seam ------------------------------------

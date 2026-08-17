@@ -19,7 +19,8 @@ holds, and a filing gets a ranked shortlist beside it (SPEC-wiki-009), so the
 agent is told what is here instead of paying to discover it by reading.
 
 Two vocabularies are consumed rather than re-derived (LESSON-0003): ingest's id
-grammar and rule for what counts as a downloaded video, and ask's published
+grammar, its rule for what counts as a downloaded video, and its answer for
+whether a name is one of its own staging directories; and ask's published
 `verify` boundary, which is the only reader of citation grammar in this system.
 The names this component publishes to the rest of tapedeck live in
 `wiki.seams` (the maintainer seam and its default) and `wiki.layout` (the pinned

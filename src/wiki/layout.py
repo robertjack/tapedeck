@@ -194,8 +194,10 @@ state, not a fault.
 ## The layout
 
     CLAUDE.md           this brief — never edited by the maintainer
-    index.md            the catalog — tapedeck appends a line per page after every run
-    log.md              the chronology — tapedeck appends an entry per run, append-only
+    index.md            the catalog — tapedeck keeps it current, appending a line
+                         per page after every run; not your job
+    log.md               the chronology — tapedeck keeps it current, appending an
+                         entry per run, append-only; not your job
     sources/<id>.md     one page per filed video; its existence is the filed marker
     notes/              free-form pages; how they are organized is this file's business
 

@@ -19,6 +19,11 @@ Every check is printed, the passes included, because a report that lists only
 complaints cannot tell "checked and fine" from "never looked". Two of them only
 ever report: a library that grew this morning is not a wiki that broke this
 morning, and a note nothing points at yet is an ordinary moment in writing.
+
+`unfiled` shares `library.eligible`'s selection walk with `sync` but passes it no
+note callback (SPEC-wiki-010) — a diagnosis that only reads reports its findings
+as check rows and says nothing about what it stepped over, so it never described a
+staging directory in the first place and has nothing here to correct.
 """
 
 from __future__ import annotations
