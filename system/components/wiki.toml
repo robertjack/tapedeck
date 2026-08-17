@@ -30,7 +30,11 @@ command = "just eval wiki"
 # ~41569 of 48000, which leaves too little for a generator to breathe in.
 # Raised 56000 -> 64000 for the map round: SPEC-wiki-009 and test_map.py land on
 # an assembly already at ~50616 of 56000.
-context_tokens = 64000
+# Raised 64000 -> 72000 for the correction round: SPEC-wiki-008's second amendment,
+# SPEC-wiki-011 and two eval suites land the assembly at ~57808 of 64000. The
+# component now carries eleven clauses; if the next round needs another raise, the
+# question to ask first is whether the vocabulary still wants to be one component.
+context_tokens = 72000
 # Above the usual 8000/6000 default: the component carries its own git lifecycle
 # (scaffold, per-run commit, hard reset/clean on gate failure) plus a six-check
 # whole-wiki acceptance gate, on top of driving the maintainer subprocess itself.
@@ -43,4 +47,6 @@ context_tokens = 64000
 # Raised 23000 -> 26000: SPEC-wiki-009 adds the map — a line per page, the
 # relevance ranking behind the shortlist, and its assembly into three tasks — to
 # an implementation already at ~19236.
-src_tokens = 26000
+# Raised 26000 -> 28000: code-span-aware wikilink parsing and printing a rejected
+# run's product, on an implementation already at ~21443.
+src_tokens = 28000

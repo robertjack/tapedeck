@@ -130,7 +130,11 @@ simplest rule that works, and it is the whole rule:
 - the target is the text before the first `|`;
 - it is matched **case-sensitively** against page basenames with `.md` stripped;
 - any page anywhere under `wiki/` may satisfy it — no paths, no extensions, no fuzzy or
-  nearest-match behaviour.
+  nearest-match behaviour;
+- **it is not a link at all inside an inline code span or a fenced code block**
+  (SPEC-wiki-011). Backticks mean the literal characters, here as everywhere else in
+  markdown, and Obsidian renders them that way too — so a page may quote the syntax while
+  writing about the wiki, and only prose outside code makes a claim that has to resolve.
 
 So `[[dQw4w9WgXcQ]]` resolves to `sources/dQw4w9WgXcQ.md` from any depth. Every wikilink
 in every page must resolve; a dangling link is a page the writer believed existed, and
