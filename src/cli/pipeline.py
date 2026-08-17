@@ -1,5 +1,6 @@
 """The verbs that mutate the library: `add`, `retranscribe`, `rm`
-(SPEC-cli-002, SPEC-cli-003, SPEC-cli-004, SPEC-cli-009's auto-filing).
+(SPEC-cli-002, SPEC-cli-003, SPEC-cli-004, SPEC-cli-009's auto-filing,
+SPEC-cli-011's detached hand-off).
 """
 
 from __future__ import annotations
@@ -16,6 +17,13 @@ from transcribe import transcriber as transcribe_transcriber
 from . import components
 
 CONFIG_NAME = "config.toml"
+
+# The internal verb `add` re-invokes itself under, to spawn the detached
+# filing worker (SPEC-cli-011). It is dispatched directly in main.py before
+# argparse ever sees it, so it appears in no `--help`, no subparser and no
+# usage line — the surface tapedeck exposes is still exactly SPEC-cli-001's
+# list. An id or URL a user could type will never collide with it.
+FILING_WORKER_VERB = "__wiki-filing-worker__"
 
 # --- add (SPEC-cli-003) --------------------------------------------------
 
@@ -46,16 +54,18 @@ def cmd_add(args, home: Path) -> int:
         ids = [line.strip() for line in listing.splitlines() if line.strip()]
 
     added = skipped = failed = 0
+    filed = []
     for vid in ids:
         if not force and _is_complete(home, vid):
             skipped += 1
             continue
         if _run_video_pipeline(home, vid, force):
             added += 1
-            _autofile(home, vid)
+            filed.append(vid)
         else:
             failed += 1
     print(f"{added} added, {skipped} already present, {failed} failed")
+    _handoff_wiki_filing(home, filed)
     return 1 if failed else 0
 
 
@@ -103,21 +113,44 @@ def _wiki_maintainer_command(home: Path) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _autofile(home: Path, vid: str) -> None:
-    """The best-effort epilogue: a filing that cannot happen costs one
-    stderr note, never `add`'s exit code, counts, or stdout (SPEC-cli-009)."""
-    if not _wiki_auto(home):
+def _handoff_wiki_filing(home: Path, ids: list[str]) -> None:
+    """The best-effort epilogue's hand-off (SPEC-cli-011). What `add` can
+    know without running anything — `[wiki].auto` off, no maintainer
+    configured — is answered here, synchronously, exactly as SPEC-cli-009
+    pins it. Anything past that is a detached worker's business: `add`
+    spawns it, holds none of its streams, and returns without waiting."""
+    if not ids or not _wiki_auto(home):
         return
     if _wiki_maintainer_command(home) is None:
         print(
-            f"note: {vid}: wiki filing skipped — no [wiki].maintainer_command "
-            "configured",
+            "note: wiki filing skipped for this sweep — no "
+            "[wiki].maintainer_command configured",
             file=sys.stderr,
         )
         return
-    rc = components.run_quiet("wiki", ["file", vid], home)
-    if rc != 0:
-        print(f"note: {vid}: the wiki filing failed (exit {rc})", file=sys.stderr)
+    components.spawn_detached("cli", [FILING_WORKER_VERB, *ids], home)
+    print(
+        f"note: {len(ids)} video(s) handed off to the wiki — filings continue "
+        "in the background; an accepted one lands as an entry in wiki/log.md, "
+        "and `tapedeck wiki sync` converges anything that does not",
+        file=sys.stderr,
+    )
+
+
+def run_filing_worker(home: Path, ids: list[str]) -> int:
+    """The detached worker itself (SPEC-cli-011): one per `add` invocation,
+    filing the ids it was handed in the sweep's own order through the
+    wiki's own boundary — `wiki file --wait`, a call and not a second filing
+    path (LESSON-0003), so the maintainer, the gate, the rollback and the
+    idempotent skip are all the wiki's. `--wait` means a neighbor already
+    holding the wiki — another `add`'s worker, a foreground sync — is
+    queued for rather than skipped. Nobody reads this process's stdio; the
+    caller already discarded it before spawning, so a failure here leaves
+    exactly what a failed filing always left: an unfiled video for
+    `wiki sync` to name and converge."""
+    for vid in ids:
+        components.run_quiet("wiki", ["file", "--wait", vid], home)
+    return 0
 
 
 # --- retranscribe (SPEC-cli-004) -----------------------------------------

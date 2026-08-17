@@ -54,6 +54,24 @@ def run_capture_stdout(module: str, args: list[str], home: Path) -> tuple[int, s
     return result.returncode, result.stdout or ""
 
 
+def spawn_detached(module: str, args: list[str], home: Path) -> None:
+    """Launch `python -m <module> <args>` as an independent process and
+    return without waiting on it (SPEC-cli-011). No pipe is inherited — a
+    child holding any of the caller's stdio keeps every reader of that
+    stream waiting until the child ends too, which is the caller not
+    returning, with extra steps — and `start_new_session` puts it in its own
+    session so it outlives the caller's process group rather than dying
+    with it."""
+    subprocess.Popen(
+        [sys.executable, "-m", module, *args],
+        env=env_for(home),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 def is_video_id(text: str) -> bool:
     return bool(VIDEO_ID.fullmatch(text or ""))
 

@@ -115,6 +115,14 @@ def main(argv=None) -> int:
     if raw[:1] == ["--version"]:
         return cmd_version()
 
+    # The detached filing worker (SPEC-cli-011) re-enters here under an
+    # internal verb `add` alone spawns, never a user. It bypasses argparse
+    # entirely — like `wiki` below — so it can never show up in `--help`,
+    # a usage line, or SPEC-cli-001's exposed surface.
+    if raw[:1] == [pipeline.FILING_WORKER_VERB]:
+        home = home_module.home_dir()
+        return pipeline.run_filing_worker(home, raw[1:])
+
     # `wiki` is handed over whole (SPEC-cli-009): everything after it goes to
     # `python -m wiki` untouched, including its own `-h`/`--help`, which is
     # why this bypasses argparse entirely rather than routing through a
