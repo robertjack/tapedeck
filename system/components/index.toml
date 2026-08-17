@@ -17,5 +17,8 @@ path = "system/evals/index/"
 command = "just eval index"
 
 [budget]
-context_tokens = 8000
-src_tokens = 6000
+# Raised 8000 -> 11000 for the anchor round: SPEC-index-005 and
+# test_anchor_stripping.py, read against SPEC-archive-002's pinned shape.
+context_tokens = 11000
+# Raised 6000 -> 7000: the exact leading-anchor strip in the chunker.
+src_tokens = 7000

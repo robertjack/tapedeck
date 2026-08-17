@@ -17,5 +17,10 @@ path = "system/evals/archive/"
 command = "just eval archive"
 
 [budget]
-context_tokens = 8000
-src_tokens = 6000
+# Raised 8000 -> 11000 for the anchor round: SPEC-archive-002 and
+# test_paragraph_anchors.py join an assembly that was already carrying two
+# schema contracts near the old cap.
+context_tokens = 11000
+# Raised 6000 -> 7000: paragraphs carry their first segment's start, so
+# _paragraphs must keep starts alongside prose.
+src_tokens = 7000

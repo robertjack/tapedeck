@@ -137,7 +137,9 @@ your Claude usage. Search never needs a model at all.
 `list` is one line per video; `show` gives metadata and the archive path.
 Both take `--json`. The archive pages themselves are worth opening in an
 editor: readable markdown, one section per chapter, every heading a
-clickable timestamp.
+clickable timestamp, and every paragraph opening with its own — so a quote
+is always one click from the exact moment it was said, even in an
+hour-long video the uploader never chaptered.
 
 ## SIDE B — POWER USE
 
