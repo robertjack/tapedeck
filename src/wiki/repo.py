@@ -26,6 +26,15 @@ with the process that held it — so a crashed operation leaves nothing to clean
 and a second mutating operation refuses at once rather than interleaving its steps
 with a neighbour's and committing that neighbour's work-in-progress as `user
 edits`.
+
+**SPEC-wiki-012:** a caller may ask to wait instead of refusing. Waiting is not
+interleaving — a caller that blocks before it has read or written anything has
+braided nothing with the holder's commits, which is the failure LESSON-0004
+records. By the time a waiter holds the lock, the wiki is exactly one committed
+or rolled-back state, the same state any caller arriving a moment later would
+find. The wait has no deadline of its own: it is bounded by the holder's own run,
+and a deadline here would be a guess about how long a neighbour's maintainer
+takes to think.
 """
 
 from __future__ import annotations
@@ -34,6 +43,7 @@ import contextlib
 import fcntl
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from . import Busy, Failure
@@ -45,6 +55,14 @@ LOCK = "tapedeck-wiki.lock"
 # Used only where this machine's git has no identity of its own: a user who
 # configured one still commits under it, in a repository that is theirs to push.
 FALLBACK = ("tapedeck", "tapedeck@localhost")
+BUSY_MESSAGE = (
+    "another wiki operation is running and holds this wiki until it commits or "
+    "rolls back — re-run when it is done; `tapedeck wiki sync` picks up whatever "
+    "is left"
+)
+WAITING_MESSAGE = (
+    "the wiki is held by another operation — waiting for it to commit or roll back"
+)
 
 
 def _run(wiki: Path, args: list[str]) -> subprocess.CompletedProcess:
@@ -175,24 +193,31 @@ def _git_dir(wiki: Path) -> Path:
 
 
 @contextlib.contextmanager
-def held(wiki: Path):
-    """Hold the wiki for exactly one operation, or refuse at once.
+def held(wiki: Path, wait: bool = False):
+    """Hold the wiki for exactly one operation.
 
-    A caller that finds the lock taken does not wait and does not interleave. The
+    Without `wait`, a caller that finds the lock taken refuses at once: the
     refusal costs nothing a sweep cannot recover — filing is idempotent and the
-    next `sync` converges — while waiting would put two operations' commits into
-    each other, which is the failure LESSON-0004 is made of.
+    next `sync` converges — while waiting by default would put two operations'
+    commits into each other, the failure LESSON-0004 is made of.
+
+    With `wait=True` (SPEC-wiki-012, `file --wait` alone), a caller that finds the
+    lock taken announces that it is waiting — the one new silence this flag
+    introduces, and one indistinguishable from a hang without the line — and then
+    blocks on the same lock until the holder commits or rolls back. It has read
+    nothing and written nothing while it waited, so by the time it holds the lock
+    the wiki is exactly one committed or rolled-back state: no interleaving, only
+    a caller that arrived late.
     """
     handle = os.open(_git_dir(wiki) / LOCK, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         try:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
-            raise Busy(
-                "another wiki operation is running and holds this wiki until it "
-                "commits or rolls back — re-run when it is done; `tapedeck wiki sync` "
-                "picks up whatever is left"
-            ) from exc
+            if not wait:
+                raise Busy(BUSY_MESSAGE) from exc
+            print(WAITING_MESSAGE, file=sys.stderr, flush=True)
+            fcntl.flock(handle, fcntl.LOCK_EX)  # blocks until the holder releases it
         yield
     finally:
         os.close(handle)

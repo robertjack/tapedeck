@@ -26,7 +26,11 @@ the verb, and held across every filing it performs, so a sweep's commits can nev
 be interleaved with a neighbour's half-written pages. Every maintainer run inside
 it announces itself and streams its progress on stderr before it lands or rolls
 back (SPEC-wiki-007) — the outcome semantics here are unchanged by that; only the
-silence while it runs is gone.
+silence while it runs is gone. `file` alone accepts `--wait` (SPEC-wiki-012): a
+caller that finds the wiki held blocks for it instead of refusing, announcing that
+it is waiting, and lands afterward as any filing does — `sync`, `rebuild` and
+`tend` are all cheap to re-run or are deliberate acts with an operator present, so
+none of them wait.
 
 A rejected run still owes the user its account (SPEC-wiki-011): `perform` prints
 the maintainer's product — what it said it was attempting — alongside the reasons
@@ -237,9 +241,14 @@ def file_one(home: Path, wiki: Path, command: str, video_id: str) -> None:
     )
 
 
-def file_video(home: Path, video_id: str) -> int:
+def file_video(home: Path, video_id: str, wait: bool = False) -> int:
     """`file <id>`: nothing probabilistic runs until the cheap questions are
-    settled, and the cheapest of them is whether there is anything to do."""
+    settled, and the cheapest of them is whether there is anything to do.
+
+    `wait` (SPEC-wiki-012) is passed straight through to `repo.held`: it changes
+    nothing about the filing itself, only whether a held wiki is refused at once
+    or waited for before this same filing begins.
+    """
     if not ingest.VIDEO_ID.fullmatch(video_id):
         raise Usage(f"{video_id!r} is not a video id — ids are 11 characters")
     if not library.holds(home, video_id):
@@ -261,7 +270,7 @@ def file_video(home: Path, video_id: str) -> int:
         return 0
     command = seams.maintainer_command(home)
     repo.ready(wiki)
-    with repo.held(wiki):
+    with repo.held(wiki, wait=wait):
         file_one(home, wiki, command, video_id)
     return 0
 

@@ -1,0 +1,69 @@
+{
+  "id": "gen-20260817T191557Z-wiki-f1cc",
+  "component": "wiki",
+  "trigger": {
+    "kind": "spec-change",
+    "refs": []
+  },
+  "root_hash": "sha256:f1cc9fedd092e8913d554dc3df8f601cda5fd27d69abda7d0f8e494ee820a76e",
+  "inputs": {
+    "manifest": "sha256:17017e82150d62ae98cf731cc0961ff6a7c5c51dc99f12320c52e10483fa4f6a",
+    "clauses": {
+      "SPEC-wiki-001": "sha256:2ef51c9c144f82881ee1947d646ef5693c4e1f366e887e8b7e184c0c48c76e99",
+      "SPEC-wiki-002": "sha256:19ecf5360e62d63a1888b45c97c51b2c64967c61b6955f89e16d55ac2c441b47",
+      "SPEC-wiki-003": "sha256:0f2b6848d3c8d8587cc02f0c8e1a822af52caf4f4ff82d48e8541062d4db6592",
+      "SPEC-wiki-004": "sha256:12fae09f4b90e530ce82a1b67e370102675b965e3ecccddff2d799bffa144d26",
+      "SPEC-wiki-005": "sha256:b486d705a1ff3a8c371a303ee025a9ba5a0dd8e2da0701b1cdda946c3be58e9d",
+      "SPEC-wiki-006": "sha256:1cb02e2184162b8b18c2e69ff63d77fd19f583921611ee856c9eb997c68a5971",
+      "SPEC-wiki-007": "sha256:0e7d73601ae14e29e6db5b05d5cc0de84f0038a996112e23684754d0d793b3cd",
+      "SPEC-wiki-008": "sha256:305adbbeeecb3f6ae581cb2d0050af0301bda25d80b03dd5412b92f30390ccdd",
+      "SPEC-wiki-009": "sha256:9279a606d4b6c7c87367bb2218fd193eeb225e1c730648b54e7af285691d097c",
+      "SPEC-wiki-010": "sha256:112e5cd14416602f2e3c5a16466d3de692098ac0f35d09d757a6098f6b4e9209",
+      "SPEC-wiki-011": "sha256:7c23441f9665864ca0e4a4b46850e9fde0f748f47faba5399cbe427af6b2e093",
+      "SPEC-wiki-012": "sha256:ec259352bf2e01d0fa131899c510ec6afbc9c7b88996e490c1d360da79751658",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/wiki-layout.md": "sha256:fe0848c01c06da9fee05d2119f41b6113c6260d12e9b83a97d5ef75e3b1b6e63",
+      "system/contracts/library-layout.md": "sha256:4e290db436ebeda51fa6eeca0460c8d7e9d76d83218f46fff9e87095e0f724f7",
+      "system/contracts/ask-citations.md": "sha256:c39d794a33fe974b202551d46f51e4126e431290268152aed458a6f10f747c03"
+    },
+    "eval_sources": {
+      "system/evals/wiki/test_bookkeeping.py": "sha256:cc9d5070a33865234f0578b5dee2cd05a63b1c311be42124f7203379420086e8",
+      "system/evals/wiki/test_code_spans.py": "sha256:a6bb36ec5059b49c909898c1e139de7f441d6e4cd47c0d10bcf334122ffe7196",
+      "system/evals/wiki/test_file.py": "sha256:7f4ad59ac73f4c73ac7040570c536a660635a997f42a16be9dc12c2e63bb31b1",
+      "system/evals/wiki/test_gate.py": "sha256:137873f67072c68b9023b91b3158cb9c296f6063e702f56389bf390b0dc7d06a",
+      "system/evals/wiki/test_lint.py": "sha256:b461df678f5acb96fc1b77887e4340520acff31c78887cee2affd6de42b21c3e",
+      "system/evals/wiki/test_lock.py": "sha256:290e2575dfdf3acc0b1fa365859fce2b5782081b68c2bc0a42427236116fa32e",
+      "system/evals/wiki/test_map.py": "sha256:d8a59cdb4e8911c3d8e5fb339fcd48c6e16d3ef3d539b9d3f831de96f3a64a05",
+      "system/evals/wiki/test_progress.py": "sha256:092caf834d3b417c80c9e3a752f4b4c5d6385bd419091e5910cacbc0bc489b32",
+      "system/evals/wiki/test_rebuild.py": "sha256:92c9707a4d05cf21a4f72389364555d9aeae8d1e397fa486731d0658afc8c5a1",
+      "system/evals/wiki/test_scaffold.py": "sha256:ca052559dc5a539c0ec8d58e43d0a45218807a787fa1b543f81bcd6f4865702a",
+      "system/evals/wiki/test_staging.py": "sha256:441da00c59f43a65c2616a3ed274bca9de6d882a899c22d6d9a63c2e3a848d48",
+      "system/evals/wiki/test_sync.py": "sha256:9362f4ece11e1b00efcb0ac448cfe958c5234086482715016cfb9e752a1a0146",
+      "system/evals/wiki/test_tend.py": "sha256:05ec14f510ec2c59acac6cfb45686005ad47d187161f461e542baa0c8e108826",
+      "system/evals/wiki/test_wait.py": "sha256:a53741c1f5a068d4a4c91efe3fb879ef4534301bd6830bd2ef627776f4d292db",
+      "system/evals/wiki/wikilib.py": "sha256:df427286bc6e1f841f193497883eb3e35b5d7548fe261b3ddf83c19b740c68d0"
+    },
+    "lessons": [
+      "LESSON-0004"
+    ]
+  },
+  "generator": {
+    "tool": "claude-code",
+    "model": "claude-sonnet-5",
+    "session_ref": "claude-code:71067f13-e904-451b-9a81-68e9d08df4a7"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "skipped"
+  },
+  "escape_hatch": null,
+  "attempts": 1,
+  "duration_s": 896.4,
+  "transient_retries": 0,
+  "notes": "generated via: claude --model claude-sonnet-5 --permission-mode acceptEdits -p \"$(printf \"Execute this regeneration ticket now. There is no user to ask questions of - write the implementation into the owned paths.\\n\\nWhen you have written it, run \\`just eval $PHX_COMPONENT\\` and read the failures. You are permitted to run that command; it needs no approval. Fix what it reports and run it again, until it is green or you have run out of ideas. Do not hand back a red implementation without saying which evals fail and why you could not satisfy them.\\n\\nThe deleted $PHX_COMPONENT source tree and the running phx process are the burn of this very regeneration and its own parent process - not work belonging to some other session. Write the implementation.\\n\\n\"; cat \"$PHX_CONTEXT_FILE\")\""
+}

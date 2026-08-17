@@ -19,7 +19,10 @@ holds, and a filing gets a ranked shortlist beside it (SPEC-wiki-009), so the
 agent is told what is here instead of paying to discover it by reading. A page
 may quote the wikilink syntax in code without it being read as a claim
 (SPEC-wiki-011), and a rejected run still prints what the maintainer said it was
-attempting, alongside the reasons it was refused.
+attempting, alongside the reasons it was refused. `file` alone may be told
+`--wait`: instead of refusing at once against a held wiki, it blocks until the
+holder finishes and then runs as any filing does (SPEC-wiki-012) — for a caller
+nobody will re-run, the honest alternative to stranding a video unfiled.
 
 Two vocabularies are consumed rather than re-derived (LESSON-0003): ingest's id
 grammar, its rule for what counts as a downloaded video, and its answer for
@@ -50,7 +53,9 @@ class Failure(RuntimeError):
 
 
 class Busy(Failure):
-    """Another operation holds the wiki (LESSON-0004). Refused, never queued."""
+    """Another operation holds the wiki (LESSON-0004). Refused, never queued —
+    unless the caller asked to wait instead (SPEC-wiki-012), in which case this
+    is never raised at all."""
 
 
 __all__ = ["Busy", "Failure", "Usage"]

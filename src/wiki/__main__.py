@@ -15,6 +15,12 @@ be done. Everything a user has to act on goes to stderr; stdout carries only wha
 the verb was asked to produce — the rehearsal's ids, the report, the findings, the
 summary.
 
+`file` alone carries `--wait` (SPEC-wiki-012): a filing invoked with it blocks on
+a held wiki instead of refusing, and lands afterward exactly as any filing does.
+`sync`, `rebuild` and `tend` have no such flag — a sweep is cheap to re-run and
+idempotent by design, and a rebuild or a tend is a deliberate act with an operator
+present, so refuse-fast stays their only behaviour.
+
 The whole group reaches the installed tool through SPEC-cli-009's pass-through, so
 this parser is the only copy of the wiki's surface that exists.
 """
@@ -44,6 +50,11 @@ def parse(argv) -> argparse.Namespace:
 
     filing_one = sub.add_parser("file", help="file one library video into the wiki")
     filing_one.add_argument("video_id")
+    filing_one.add_argument(
+        "--wait",
+        action="store_true",
+        help="wait for a held wiki instead of refusing at once",
+    )
 
     sweep = sub.add_parser("sync", help="file every library video the wiki does not know")
     sweep.add_argument(
@@ -67,7 +78,7 @@ def main(argv=None) -> int:
     home = home_dir()
     try:
         if args.verb == "file":
-            return filing.file_video(home, args.video_id)
+            return filing.file_video(home, args.video_id, wait=args.wait)
         if args.verb == "sync":
             return filing.sync(home, args.dry_run)
         if args.verb == "lint":

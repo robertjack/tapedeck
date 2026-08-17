@@ -7,7 +7,8 @@ subprocess and a fake agent — the layout grammars (including the SPEC-wiki-011
 code-span exemption), the gate's individual checks, the sweep's ordering rule,
 the streaming seam's cost parsing, the SPEC-wiki-008 bookkeeping reconciliation
 (subject decoupled from product, cost as prose), the SPEC-wiki-009 map/shortlist,
-and the SPEC-wiki-010 staging-directory wording.
+the SPEC-wiki-010 staging-directory wording, and the SPEC-wiki-012 wait-vs-refuse
+lock behavior.
 
 Run with: uv run --with pytest pytest src/wiki/tests -q
 """
@@ -16,11 +17,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from wiki import bookkeeping, gate, layout, library, seams, wikimap
+from wiki import bookkeeping, gate, layout, library, repo, seams, wikimap
+from wiki import Busy
 
 FILED = "dQw4w9WgXcQ"
 OTHER = "plainvide00"
@@ -436,3 +440,60 @@ def test_render_bounds_a_line_and_never_inlines_the_body(tmp_path):
     assert tell not in rendered
     lines = [line for line in rendered.splitlines() if "notes/long.md" in line]
     assert len(lines) == 1 and len(lines[0]) <= wikimap.LINE_BUDGET
+
+
+# --- repo: the lock, and SPEC-wiki-012's wait ------------------------------------
+
+
+@needs_git
+def _bare_wiki(tmp_path) -> Path:
+    wiki = tmp_path / "wiki"
+    repo.ready(wiki)
+    return wiki
+
+
+@needs_git
+def test_held_refuses_at_once_by_default_when_the_lock_is_taken(tmp_path):
+    wiki = _bare_wiki(tmp_path)
+    with repo.held(wiki):
+        with pytest.raises(Busy):
+            with repo.held(wiki):
+                pass  # never reached
+
+
+@needs_git
+def test_held_with_wait_blocks_until_the_holder_releases_then_proceeds(tmp_path):
+    wiki = _bare_wiki(tmp_path)
+    entered = threading.Event()
+    released = threading.Event()
+    waiter_got_in = threading.Event()
+
+    def hold_first():
+        with repo.held(wiki):
+            entered.set()
+            released.wait(timeout=5)
+
+    holder = threading.Thread(target=hold_first)
+    holder.start()
+    entered.wait(timeout=5)
+
+    def wait_for_it():
+        with repo.held(wiki, wait=True):
+            waiter_got_in.set()
+
+    waiter = threading.Thread(target=wait_for_it)
+    waiter.start()
+    time.sleep(0.3)
+    assert not waiter_got_in.is_set(), "the waiter must not proceed while the lock is held"
+
+    released.set()
+    holder.join(timeout=5)
+    waiter.join(timeout=5)
+    assert waiter_got_in.is_set(), "the waiter must proceed once the holder releases the lock"
+
+
+@needs_git
+def test_held_with_wait_on_a_free_lock_proceeds_immediately(tmp_path):
+    wiki = _bare_wiki(tmp_path)
+    with repo.held(wiki, wait=True):
+        pass  # no contention, no announcement expected — nothing to assert but that it returns
