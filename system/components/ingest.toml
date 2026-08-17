@@ -17,5 +17,9 @@ path = "system/evals/ingest/"
 command = "just eval ingest"
 
 [budget]
-context_tokens = 8000
-src_tokens = 7000
+# Raised 8000 -> 10000 and 7000 -> 8000 for the staging round: SPEC-ingest-003 and the
+# library-layout staging section land the assembly at ~6767 of 8000 and the module at
+# ~5908 of 7000. Both fit, neither comfortably, and a generator squeezing under a tight
+# cap wastes an attempt.
+context_tokens = 10000
+src_tokens = 8000

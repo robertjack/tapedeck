@@ -22,7 +22,7 @@ the maintainer's reading material; a video without one has nothing to file *from
 Everything else under `library/` — a directory that is not an id, an entry whose video was
 reclaimed by `rm --media-only`, an entry not yet rendered — gets a skip note on stderr and
 is left untouched. That is what makes convergence reachable: once the videos the sweep can
-file are filed, the next `sync` is a no-op, however many foreign or media-less entries the
+file are filed, the next `sync` is a no-op, however many unfilable or media-less entries the
 library keeps.
 
 Eligible and carrying no `wiki/sources/<id>.md` is **unfiled**, and unfiled is the whole

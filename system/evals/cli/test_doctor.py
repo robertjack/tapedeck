@@ -108,6 +108,46 @@ def test_a_seam_command_is_checked_by_resolving_its_head_executable(home):
     assert r.returncode == 1, "a required seam that cannot resolve is exit 1"
 
 
+def test_a_seam_that_begins_with_environment_assignments_resolves_its_real_program(home):
+    """SPEC-cli-010. `VAR=value cmd args` is how a shell sets one variable for one
+    command, and it is how the user's own transcriber is configured:
+
+        HF_HUB_OFFLINE=1 parakeet-mlx --output-format json ...
+
+    Taking the first shell word made doctor report `HF_HUB_OFFLINE=1: not on PATH`,
+    so a working installation showed one failed check from the day that line was
+    written. A health check that cries wolf teaches the user to skim past the row
+    that will one day matter.
+    """
+    write_config(home, transcriber="FOO=1 BAR=2 sh /nowhere/whisper.sh --model large")
+    r, rows = doctor(home)
+    seam = rows["transcribe.transcriber_command"]
+    assert seam["status"] == "pass", (
+        f"the program here is `sh`, which resolves; the leading assignments are the "
+        f"shell's business, not a missing executable: {seam['detail']!r}"
+    )
+    assert "sh" in seam["detail"] and "FOO=1" not in seam["detail"], (
+        f"the row must name the program that resolved, never the assignment: "
+        f"{seam['detail']!r}"
+    )
+    assert r.returncode == 0, (
+        f"one healthy seam misread as broken must not fail the whole diagnosis:\n{r.stdout}"
+    )
+
+
+def test_an_assignment_prefixed_seam_whose_program_is_missing_still_fails(home):
+    """The fix reads past assignments; it does not stop checking. A command whose
+    real program is absent is still a failure, and the reason still names it."""
+    write_config(home, transcriber=f"FOO=1 {MISSING} --model large")
+    _, rows = doctor(home)
+    seam = rows["transcribe.transcriber_command"]
+    assert seam["status"] == "fail", f"the program is absent: {seam['detail']!r}"
+    assert MISSING in seam["detail"], (
+        f"the reason must name the executable that could not be found, not the "
+        f"assignment in front of it: {seam['detail']!r}"
+    )
+
+
 def test_the_checks_are_derived_from_the_seams_not_from_a_tool_list(home):
     """Swap a seam to a different tool and doctor looks for the different tool.
     Nothing here knows the word yt-dlp."""

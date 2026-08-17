@@ -20,7 +20,9 @@ command = "just eval cli"
 # Raised 23000 -> 34000 for the wiki round: SPEC-cli-009 plus test_wiki_surface.py and
 # test_add_autofile.py put the assembly at ~27900, and the clause only makes sense read
 # against the wiki verbs it routes to.
-context_tokens = 34000
+# Raised 34000 -> 40000 for the staging-note round: SPEC-cli-010, the two doctor
+# evals and test_staging_notes.py push the assembly to ~35084, over the old cap.
+context_tokens = 40000
 # Raised 17000 -> 22000: the module gains the pass-through router for the `wiki` group,
 # the per-video filing epilogue inside add, the [wiki] scaffold block and one more
 # doctor check, on top of a src that already measured ~14000.
