@@ -1,6 +1,6 @@
 """The verbs that mutate the library: `add`, `retranscribe`, `rm`
 (SPEC-cli-002, SPEC-cli-003, SPEC-cli-004, SPEC-cli-009's auto-filing,
-SPEC-cli-011's detached hand-off).
+SPEC-cli-011's detached hand-off, SPEC-cli-012's close-out line).
 """
 
 from __future__ import annotations
@@ -25,12 +25,13 @@ CONFIG_NAME = "config.toml"
 # list. An id or URL a user could type will never collide with it.
 FILING_WORKER_VERB = "__wiki-filing-worker__"
 
-# --- add (SPEC-cli-003) --------------------------------------------------
+# --- add (SPEC-cli-003, SPEC-cli-012) -------------------------------------
 
 
 def cmd_add(args, home: Path) -> int:
     url = args.url
     force = args.force
+    verbose = getattr(args, "verbose", False)
     try:
         kind, value = ingest_sources.resolve(url)
     except ingest_sources.BadRequest as exc:
@@ -59,9 +60,10 @@ def cmd_add(args, home: Path) -> int:
         if not force and _is_complete(home, vid):
             skipped += 1
             continue
-        if _run_video_pipeline(home, vid, force):
+        if _run_video_pipeline(home, vid, force, verbose):
             added += 1
             filed.append(vid)
+            _close_out(home, vid)
         else:
             failed += 1
     print(f"{added} added, {skipped} already present, {failed} failed")
@@ -78,9 +80,14 @@ def _is_complete(home: Path, vid: str) -> bool:
     )
 
 
-def _run_video_pipeline(home: Path, vid: str, force: bool) -> bool:
+def _run_video_pipeline(home: Path, vid: str, force: bool, verbose: bool = False) -> bool:
+    ingest_args = ["add", vid]
+    if force:
+        ingest_args.append("--force")
+    if verbose:
+        ingest_args.append("--verbose")
     steps = [
-        ("ingest", ["add", vid, *(["--force"] if force else [])]),
+        ("ingest", ingest_args),
         ("transcribe", ["run", vid]),
         ("archive", ["render", vid]),
         ("index", ["update", vid]),
@@ -91,6 +98,31 @@ def _run_video_pipeline(home: Path, vid: str, force: bool) -> bool:
             print(f"error: {vid}: {module} failed (exit {rc})", file=sys.stderr)
             return False
     return True
+
+
+def _hms(seconds) -> str:
+    s = int(seconds or 0)
+    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
+
+
+def _close_out(home: Path, vid: str) -> None:
+    """One stderr line closing out a just-added video in the user's own
+    terms — title, channel, duration — read from the entry's own meta.json
+    (SPEC-cli-012). Printed before the wiki hand-off note, so a finished
+    add reads: the pipeline's stage lines, then what this was, then what
+    continues without you. Never stdout: the summary line stays the
+    accounting of record."""
+    meta_path = home / "library" / vid / "meta.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(meta, dict):
+        return
+    title = meta.get("title") or vid
+    channel = meta.get("channel") or ""
+    duration = _hms(meta.get("duration_s"))
+    print(f"added: {title} — {channel} ({duration})", file=sys.stderr)
 
 
 def _read_wiki_config(home: Path) -> dict:

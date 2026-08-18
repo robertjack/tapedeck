@@ -35,6 +35,11 @@ def build_parser() -> tuple[argparse.ArgumentParser, dict]:
     )
     p.add_argument("url", help="a video URL/id, or a playlist/channel URL")
     p.add_argument("--force", action="store_true", help="re-fetch a single video from scratch")
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="stream the fetch tool's raw output instead of ingest's quiet capture",
+    )
     subparsers["add"] = p
 
     p = sub.add_parser("search", help="ranked timestamped excerpts with deep links")

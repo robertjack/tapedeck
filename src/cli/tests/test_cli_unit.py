@@ -1,6 +1,7 @@
 """Ephemeral unit tests for cli's own pure logic — disposable, not the
 acceptance criteria (system/evals/cli/ is)."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -51,6 +52,56 @@ def test_wiki_auto_defaults_true_when_absent(tmp_path):
 def test_wiki_auto_false_when_set(tmp_path):
     (tmp_path / "config.toml").write_text("[wiki]\nauto = false\n")
     assert pipeline._wiki_auto(tmp_path) is False
+
+
+# --- SPEC-cli-012: the close-out line and --verbose routing ---------------
+
+
+def test_hms_formats_without_zero_padded_hours():
+    assert pipeline._hms(720) == "0:12:00"
+    assert pipeline._hms(3725) == "1:02:05"
+    assert pipeline._hms(0) == "0:00:00"
+    assert pipeline._hms(None) == "0:00:00"
+
+
+def test_close_out_names_title_channel_and_duration(tmp_path, capsys):
+    vid = "dQw4w9WgXcQ"
+    entry = tmp_path / "library" / vid
+    entry.mkdir(parents=True)
+    (entry / "meta.json").write_text(
+        json.dumps({"title": "A Talk", "channel": "Some Channel", "duration_s": 720})
+    )
+    pipeline._close_out(tmp_path, vid)
+    err = capsys.readouterr().err
+    assert "A Talk" in err and "Some Channel" in err and "0:12:00" in err
+
+
+def test_close_out_is_silent_on_unreadable_meta(tmp_path, capsys):
+    vid = "dQw4w9WgXcQ"
+    pipeline._close_out(tmp_path, vid)  # no meta.json at all
+    assert capsys.readouterr().err == ""
+
+
+def test_run_video_pipeline_passes_verbose_to_ingest(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pipeline.components,
+        "run_quiet",
+        lambda module, args, home: calls.append((module, args)) or 0,
+    )
+    pipeline._run_video_pipeline(tmp_path, "dQw4w9WgXcQ", force=False, verbose=True)
+    assert calls[0] == ("ingest", ["add", "dQw4w9WgXcQ", "--verbose"])
+
+
+def test_run_video_pipeline_omits_verbose_by_default(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        pipeline.components,
+        "run_quiet",
+        lambda module, args, home: calls.append((module, args)) or 0,
+    )
+    pipeline._run_video_pipeline(tmp_path, "dQw4w9WgXcQ", force=False, verbose=False)
+    assert calls[0] == ("ingest", ["add", "dQw4w9WgXcQ"])
 
 
 # --- SPEC-cli-011: the detached hand-off ----------------------------------
@@ -136,3 +187,11 @@ def test_internal_worker_verb_bypasses_argparse():
 
     _, subparsers = main_module.build_parser()
     assert pipeline.FILING_WORKER_VERB not in subparsers
+
+
+def test_add_subparser_has_a_verbose_flag():
+    from cli import main as main_module
+
+    _, subparsers = main_module.build_parser()
+    args = subparsers["add"].parse_args(["https://youtu.be/dQw4w9WgXcQ", "--verbose"])
+    assert args.verbose is True
