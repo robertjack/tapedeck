@@ -73,7 +73,8 @@ video, never the whole playlist. Anything that isn't YouTube exits 2.
 
 `add` runs the full pipeline: download, transcribe, render the archive page,
 index it. Progress is quiet and legible: a byte count while the download
-runs, the pipeline's own stage lines, then a close-out naming what just
+runs — with a percentage against the expected size when the source declares
+one — the pipeline's own stage lines, then a close-out naming what just
 landed — title, channel, duration. When it finishes, the video is fully
 searchable. If a download fails, everything the download tool said is
 replayed in full, so the diagnosis is never hidden behind the quiet.

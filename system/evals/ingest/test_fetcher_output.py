@@ -49,6 +49,24 @@ cat > "$TAPEDECK_DEST/info.json" <<'JSON'
 JSON
 """
 
+# Writes a sized info json FIRST — the shape yt-dlp stages before the video
+# data moves — then lands MORE bytes than it declared (600 KB against a
+# declared 400000), the way merging streams transiently overshoot. So one
+# fixture exercises the denominator, the 99 cap, and the cadence at once.
+SIZED_SLOW = """#!/bin/sh
+cat > "$TAPEDECK_DEST/info.json" <<'JSON'
+{"id": "dQw4w9WgXcQ", "title": "Test Video: Building Things",
+ "uploader": "Fixture Channel", "upload_date": "20260115", "duration": 720,
+ "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+ "description": "A fixture.",
+ "requested_formats": [{"filesize": 300000}, {"filesize_approx": 100000}]}
+JSON
+dd if=/dev/zero of="$TAPEDECK_DEST/video.mp4" bs=1024 count=200 2>/dev/null
+sleep 4
+dd if=/dev/zero of="$TAPEDECK_DEST/video.mp4" bs=1024 count=600 2>/dev/null
+sleep 4
+"""
+
 URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
@@ -85,6 +103,47 @@ def test_a_failed_fetch_replays_everything_the_tool_said(home):
     )
     assert "fetcher" in r.stderr.lower(), "the existing failure line still closes it"
     assert not (home / "library" / "dQw4w9WgXcQ").exists()
+
+
+def test_a_declared_size_turns_progress_into_a_capped_percentage(home):
+    """The staged metadata names 400000 bytes; the fixture lands 600 KB. So a
+    percent must appear (denominator read from the staging files, never the
+    tool's stream), no percent may ever exceed 99 — only a clean exit says
+    done — and an ~8-second fetch at the pinned every-three-seconds-or-so
+    cadence is a handful of lines, not a firehose."""
+    set_fetcher(home, SIZED_SLOW)
+    r = add(home, URL)
+    assert r.returncode == 0, r.stderr
+    percents = [
+        int(m.group(1))
+        for line in r.stderr.splitlines()
+        for m in [re.search(r"\((\d+)%\)", line)]
+        if m
+    ]
+    assert percents, (
+        f"a declared size must surface as a percentage:\n{r.stderr!r}"
+    )
+    assert all(p <= 99 for p in percents), (
+        f"the estimate is approximate: cap at 99, only the exit says done: {percents}"
+    )
+    heartbeats = [
+        line for line in r.stderr.splitlines() if "fetching" in line and "%" in line
+    ]
+    assert len(heartbeats) <= 4, (
+        f"~8s of fetch at every-three-seconds-or-so is a handful of lines:\n"
+        f"{heartbeats!r}"
+    )
+
+
+def test_no_declared_size_keeps_the_plain_byte_line(home):
+    """SLOW_OK writes its info json last and names no sizes: the report
+    degrades to bytes-so-far, never an invented denominator."""
+    set_fetcher(home, SLOW_OK)
+    r = add(home, URL)
+    assert r.returncode == 0, r.stderr
+    assert "%)" not in r.stderr, (
+        f"no declared size, no percentage:\n{r.stderr!r}"
+    )
 
 
 def test_progress_is_reported_from_the_staging_bytes(home):
