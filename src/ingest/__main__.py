@@ -1,4 +1,4 @@
-"""The ingest boundary: `python -m ingest add <url> [--force] | expand <url>`.
+"""The ingest boundary: `python -m ingest add <url> [--force] [--verbose] | expand <url>`.
 
 `add` puts exactly one video in the library, and is the sole writer of
 `library/<id>/video.*` and `library/<id>/meta.json`. `expand` answers what a
@@ -11,6 +11,11 @@ at all. Only when a complete, valid result is in hand does the entry change, by 
 rename on the same filesystem. So a fetch that dies mid-write leaves a fresh
 video unstarted rather than half-made, and leaves an existing one exactly as it
 was: the old video byte-identical beside its old meta.json, still usable.
+
+`add` is quiet by default (SPEC-ingest-004): the fetcher's own chatter is
+captured, not relayed, and what reaches stderr is ingest's own staging-bytes
+heartbeat plus, on failure, the tool's captured words in full. `--verbose` turns
+that off and streams the fetcher raw, as it always used to.
 
 Exit codes are contracts/cli-surface.md's: 0 done, 1 the operation failed,
 2 usage.
@@ -53,7 +58,7 @@ def install(entry: Path, staged: Path, document: dict) -> None:
     meta.write(entry, document)
 
 
-def add(home: Path, target: str, force: bool) -> int:
+def add(home: Path, target: str, force: bool, verbose: bool = False) -> int:
     """One video into `library/<id>/`, or a reason it is not there."""
     video_id = sources.video_id(target)
     library = home / LIBRARY
@@ -67,7 +72,7 @@ def add(home: Path, target: str, force: bool) -> int:
     existed = entry.exists()
     dest = fetch.stage(library, video_id)
     try:
-        fetch.run(command, home, video_id, url, dest)
+        fetch.run(command, home, video_id, url, dest, verbose=verbose)
         video = fetch.find_video(dest, video_id)
         document = meta.normalize(video_id, url, fetch.read_info(dest, video_id))
         install(entry, video, document)
@@ -112,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
     fetching.add_argument(
         "--force", action="store_true", help="re-fetch a video that is already here"
     )
+    fetching.add_argument(
+        "--verbose",
+        action="store_true",
+        help="stream the fetcher's raw output instead of a byte-progress heartbeat",
+    )
     listing = verbs.add_parser("expand", help="print the video ids a URL names")
     listing.add_argument("url", help="a video URL, or a playlist or channel URL")
     return parser
@@ -122,7 +132,7 @@ def main(argv=None) -> int:
     home = home_dir()
     try:
         if args.verb == "add":
-            return add(home, args.url, args.force)
+            return add(home, args.url, args.force, args.verbose)
         return expand(home, args.url)
     except USAGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)

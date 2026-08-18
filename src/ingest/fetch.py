@@ -7,17 +7,21 @@ one edited line in the user's config, and the durable evaluations use that same
 seam to inject fakes.
 
 The shipped defaults live here because the shape of a seam belongs to the
-component that invokes it; the cli only scaffolds them into a fresh config. The
-fetcher default is LESSON-0001 verbatim: YouTube serves 403s for AV1 in this
-setup, so avc1 at <=1080p is preferred with plain fallbacks. A solved incident
-stays solved only if the fix ships as the default.
+component that invokes it. The fetcher default carries two solved incidents
+verbatim so a fresh install never re-suffers them: LESSON-0001's avc1 preference
+(YouTube 403s AV1 in this setup) and LESSON-0006's client chain — some public
+videos are now DRM-flagged to yt-dlp's default player clients, and the embedded
+player (`web_embedded`) still gets clean streams, so it leads the chain with
+`web_safari` excluded (its formats 403 intermittently without a PO-token
+provider).
 
-Also here: what counts as a downloaded video (SPEC-ingest-001), and what counts
-as one of our own staging directories (SPEC-ingest-003). `video.<ext>` is the
-download only when `<ext>` names a container — the suffixes a fetcher leaves
-mid-flight or beside the video never are. `.fetching-<id>-<random>` is ours the
-moment its name says so, whether or not a fetch is still running inside it — every
-component asks both questions here rather than re-deriving either.
+Also here: what counts as a downloaded video (SPEC-ingest-001), what counts as
+one of our own staging directories (SPEC-ingest-003), and how the fetcher's own
+chatter is handled (SPEC-ingest-004). By default it is captured, not streamed:
+discarded on a clean exit, replayed in full — the tool's own words — the moment
+the exit is not clean, because that is the only diagnosis a DRM 403 ever gave us.
+While it runs, progress comes from the staging directory's bytes rather than
+from parsing the tool, so it is unchanged behind whatever the seam points at.
 """
 
 from __future__ import annotations
@@ -25,7 +29,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import tempfile
+import threading
 import tomllib
 from pathlib import Path
 
@@ -40,7 +46,8 @@ INFO_SUFFIX = "info.json"
 # The siblings a fetcher writes into the same directory: fragments of a download
 # in flight, and the sidecars it keeps beside the finished one.
 NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp", ".description", ".webp", ".jpg", ".png")
-STDERR_FD = 2  # a fetcher's chatter is progress, not output: never our stdout
+STDERR_FD = 2  # --verbose's streaming target: a fetcher's chatter is progress, not our stdout
+HEARTBEAT_S = 1.5  # cadence for the staging-bytes progress line while capturing
 
 # The staging directory's name grammar (SPEC-ingest-003, library-layout.md): a
 # fetch in progress or abandoned, never a stranger. Pinned here because three
@@ -49,6 +56,7 @@ STAGING_PREFIX = ".fetching-"
 
 DEFAULT_FETCHER_COMMAND = (
     "yt-dlp --no-playlist --write-info-json "
+    '--extractor-args "youtube:player_client=web_embedded,default,-web_safari" '
     '-f "bv*[vcodec^=avc1][height<=1080]+ba/bv*[height<=1080]+ba/b" '
     '-o "$TAPEDECK_DEST/video.%(ext)s" "$TAPEDECK_VIDEO_URL"'
 )
@@ -124,14 +132,82 @@ def staging(name: str) -> str | None:
     return candidate if VIDEO_ID.fullmatch(candidate) else None
 
 
-def run(command: str, home: Path, video_id: str, url: str, dest: Path) -> None:
-    """Fetch one video into `dest`. Raises FetchError unless the tool exits clean."""
+def _dir_size(path: Path) -> int:
+    """Bytes landed in a staging directory so far — the tool-agnostic progress
+    signal SPEC-ingest-004 asks for, read off the filesystem rather than parsed
+    from anything a fetcher prints."""
+    try:
+        entries = list(path.iterdir())
+    except OSError:
+        return 0
+    total = 0
+    for entry in entries:
+        try:
+            if entry.is_file():
+                total += entry.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def _human(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KB", "MB"):
+        if size < 1024 or unit == "MB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def _watch(dest: Path, video_id: str, stop: threading.Event) -> None:
+    """Reports staging bytes on our own stderr every few seconds, only while the
+    fetcher is running — a handful of lines for a typical download, never a
+    firehose, and unaffected by which tool sits behind the seam."""
+    while not stop.wait(HEARTBEAT_S):
+        print(f"ingest: fetching {video_id} — {_human(_dir_size(dest))} so far", file=sys.stderr)
+
+
+def run(
+    command: str, home: Path, video_id: str, url: str, dest: Path, verbose: bool = False
+) -> None:
+    """Fetch one video into `dest`. Raises FetchError unless the tool exits clean.
+
+    By default the tool's stdout and stderr are captured together and, on a clean
+    exit, discarded — the pipeline's own heartbeat and closing line are the story
+    of the fetch. On a failing exit the captured output is written to our stderr
+    in full before the failure is raised, because the tool's own words are the
+    diagnosis. `--verbose` (verbose=True) is the old raw passthrough: no capture,
+    no heartbeat, the user asked to watch the tool itself.
+    """
     env = _seam_env(
         home, TAPEDECK_VIDEO_ID=video_id, TAPEDECK_VIDEO_URL=url, TAPEDECK_DEST=str(dest)
     )
-    result = subprocess.run(command, shell=True, env=env, stdout=STDERR_FD)
-    if result.returncode != 0:
-        raise FetchError(f"the fetcher failed for {video_id} (exit {result.returncode})")
+    if verbose:
+        result = subprocess.run(command, shell=True, env=env, stdout=STDERR_FD)
+        if result.returncode != 0:
+            raise FetchError(f"the fetcher failed for {video_id} (exit {result.returncode})")
+        return
+
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        errors="replace",
+    )
+    stop = threading.Event()
+    watcher = threading.Thread(target=_watch, args=(dest, video_id, stop), daemon=True)
+    watcher.start()
+    output, _ = proc.communicate()
+    stop.set()
+    watcher.join()
+    if proc.returncode != 0:
+        if output:
+            sys.stderr.write(output if output.endswith("\n") else output + "\n")
+        raise FetchError(f"the fetcher failed for {video_id} (exit {proc.returncode})")
+    print(f"ingest: fetched {video_id} — {_human(_dir_size(dest))}", file=sys.stderr)
 
 
 def collect(command: str, home: Path, url: str) -> str:

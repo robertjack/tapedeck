@@ -3,6 +3,7 @@ are the acceptance criteria; these cover the seams and edges from the inside."""
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -231,10 +232,12 @@ def test_blank_seam_is_a_config_error(tmp_path):
         fetch.fetcher(tmp_path)
 
 
-def test_shipped_defaults_carry_the_hard_won_shapes():
+def test_shipped_fetcher_default_carries_lesson_0001_and_lesson_0006():
     assert fetch.DEFAULT_FETCHER_COMMAND == (
-        'yt-dlp --no-playlist --write-info-json -f "bv*[vcodec^=avc1][height<=1080]'
-        '+ba/bv*[height<=1080]+ba/b" -o "$TAPEDECK_DEST/video.%(ext)s" "$TAPEDECK_VIDEO_URL"'
+        'yt-dlp --no-playlist --write-info-json --extractor-args '
+        '"youtube:player_client=web_embedded,default,-web_safari" '
+        '-f "bv*[vcodec^=avc1][height<=1080]+ba/bv*[height<=1080]+ba/b" '
+        '-o "$TAPEDECK_DEST/video.%(ext)s" "$TAPEDECK_VIDEO_URL"'
     )
     assert fetch.DEFAULT_LISTER_COMMAND == (
         'yt-dlp --flat-playlist --print "%(id)s" "$TAPEDECK_COLLECTION_URL"'
@@ -386,3 +389,48 @@ def test_add_refuses_a_collection_before_reading_config(home, capsys):
 def test_missing_fetcher_config_is_a_usage_error(home, capsys):
     assert run(home, "add", VID) == 2
     assert "fetcher" in capsys.readouterr().err
+
+
+# --- SPEC-ingest-004: captured, not streamed ------------------------------
+
+NOISE = "NOISE-MARKER"
+CHATTY_OK = f"""#!/bin/sh
+echo "{NOISE} extracting" >&2
+printf 'bytes' > "$TAPEDECK_DEST/video.mp4"
+printf '{{"title": "T", "uploader": "C", "upload_date": "20260115", "duration": 10}}' \
+  > "$TAPEDECK_DEST/video.info.json"
+"""
+CHATTY_FAILS = f"""#!/bin/sh
+echo "{NOISE} boom" >&2
+exit 1
+"""
+
+
+def test_a_clean_fetch_swallows_the_chatter(home, capsys):
+    set_seams(home, fetcher=CHATTY_OK)
+    assert run(home, "add", VID) == 0
+    captured = capsys.readouterr()
+    assert NOISE not in captured.err
+    assert NOISE not in captured.out
+
+
+def test_verbose_streams_the_fetcher_raw(home, capsys):
+    set_seams(home, fetcher=CHATTY_OK)
+    assert run(home, "add", VID, "--verbose") == 0
+    assert NOISE in capsys.readouterr().err
+
+
+def test_a_failing_fetch_replays_its_output_before_the_failure_line(home, capsys):
+    set_seams(home, fetcher=CHATTY_FAILS)
+    assert run(home, "add", VID) == 1
+    err = capsys.readouterr().err
+    assert NOISE in err
+    assert err.index(NOISE) < err.index("error:")
+    assert "fetcher" in err.lower()
+
+
+def test_progress_is_read_from_staging_bytes_not_the_tool(tmp_path):
+    dest = tmp_path
+    (dest / "video.mp4").write_bytes(b"x" * 2048)
+    assert fetch._dir_size(dest) == 2048
+    assert re.search(r"\d+(\.\d+)?\s*(B|KB|MB)", fetch._human(fetch._dir_size(dest)))
