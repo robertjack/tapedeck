@@ -87,6 +87,11 @@ def test_first_run_defaults_carry_the_battle_tested_seams(tmp_path):
     cfg = (home / "config.toml").read_text()
     assert "vcodec^=avc1" in cfg, "default fetcher must prefer h264 (YouTube 403s AV1)"
     assert "height<=1080" in cfg
+    assert "player_client=web_embedded,default,-web_safari" in cfg, (
+        "default fetcher must lead with the embedded client (LESSON-0006: YouTube "
+        "DRM-flags some videos to the default clients) and keep web_safari out "
+        "(PO-token 403s)"
+    )
     assert "large-v3-turbo" in cfg, "default whisper model is large-v3-turbo"
     assert "--condition-on-previous-text False" in cfg, "repetition-loop guard missing"
     assert "mlx-whisper/large-v3-turbo" in cfg, "model label must name the real config"

@@ -72,14 +72,19 @@ Accepted forms: a full watch URL, youtu.be/ID, a shorts URL, or the bare
 video, never the whole playlist. Anything that isn't YouTube exits 2.
 
 `add` runs the full pipeline: download, transcribe, render the archive page,
-index it. Progress streams to stderr; when it finishes, the video is fully
-searchable.
+index it. Progress is quiet and legible: a byte count while the download
+runs, the pipeline's own stage lines, then a close-out naming what just
+landed — title, channel, duration. When it finishes, the video is fully
+searchable. If a download fails, everything the download tool said is
+replayed in full, so the diagnosis is never hidden behind the quiet.
 
 - Re-running is always safe: adding a video you already have skips the
   download and just refreshes the derived files.
 - `--force` re-fetches one video from scratch, crash-safely: the copy
   already in your library stays intact until the replacement is fully in
   place.
+- `--verbose` streams the download tool's raw output as it runs, instead
+  of the quiet byte count.
 
 ### 2. Find a moment
 
@@ -545,3 +550,9 @@ Troubleshooting (start with `tapedeck doctor`):
     a leftover video.part
         An interrupted download; the entry counts as having no video, and
         the next add fetches it fresh.
+    the fetcher failed (exit 1)
+        Everything the download tool printed is replayed right above that
+        line — read it there. A 403 on video data usually means YouTube is
+        gating that video's streams for the client yt-dlp used; the shipped
+        default already leads with the embedded player client, which is the
+        known fix (§6 to inspect your fetcher_command).

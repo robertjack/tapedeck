@@ -36,5 +36,10 @@ writing its own.
 
 The component publishes its default fetcher command (the value the cli scaffolds into
 `config.toml` on first run, per SPEC-core-004), and that default is the battle-tested
-shape of LESSON-0001, verbatim:
-`yt-dlp --no-playlist --write-info-json -f "bv*[vcodec^=avc1][height<=1080]+ba/bv*[height<=1080]+ba/b" -o "$TAPEDECK_DEST/video.%(ext)s" "$TAPEDECK_VIDEO_URL"`.
+shape of LESSON-0001 and LESSON-0006, verbatim:
+`yt-dlp --no-playlist --write-info-json --extractor-args "youtube:player_client=web_embedded,default,-web_safari" -f "bv*[vcodec^=avc1][height<=1080]+ba/bv*[height<=1080]+ba/b" -o "$TAPEDECK_DEST/video.%(ext)s" "$TAPEDECK_VIDEO_URL"`.
+The client chain leads with the embedded player because YouTube now serves some public
+videos DRM-flagged to the default clients while the embedded player still gets clean
+streams (LESSON-0006); `web_safari` stays excluded because without a PO-token provider
+its formats 403 intermittently (the 2026-08-16 exclusion, previously only in the
+pilot library's hand-edited config).
