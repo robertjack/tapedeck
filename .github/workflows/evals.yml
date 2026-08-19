@@ -13,7 +13,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
 
-      # Seam tools (yt-dlp, ffmpeg, whisper, etc.) are faked by the evals'
-      # fixtures/mocks under system/evals — no brew installs needed here.
+      # Seam tools (yt-dlp, whisper, etc.) are faked by the evals' fixtures
+      # under system/evals. ffmpeg is the one real-PATH dependency: doctor and
+      # setup check for it genuinely, and the macOS runners don't ship it.
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+
       - name: Run durable evals
         run: uv run --with pytest pytest system/evals -q
