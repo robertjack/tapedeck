@@ -26,8 +26,14 @@ Two commands are enough to start:
 
 ## Installing on a new Mac
 
-    uv tool install tapedeck
+    uv tool install tapedeck-cli
     tapedeck setup
+
+(The package is `tapedeck-cli` — PyPI's `tapedeck` is an unrelated project —
+but the command it installs is `tapedeck`. If `uv` itself is missing:
+`brew install uv`.) The default transcribers are MLX and need Apple Silicon;
+on an Intel Mac, point `[transcribe].transcriber_command` (§6) at any tool
+that writes whisper-shaped JSON instead.
 
 `setup` is the first command of a new machine. It creates the library home
 and tells you where it put it, then runs exactly the checks `doctor` runs
@@ -60,6 +66,13 @@ are optional, so `claude` is pointed at and never installed.
 No model is downloaded here. When your transcriber is installed, setup
 reminds you that the first transcription pulls the weights (~2.4GB for
 parakeet). That wait belongs to your first `tapedeck add`, not to setup.
+
+The tools rot on a schedule you don't control — YouTube changes something
+and yt-dlp needs updating, monthly-ish. `tapedeck setup --refresh` prints
+the update command for every tool you have (a `[setup] update.<tool>` table
+in config.toml, brew and uv by default, yours to edit like the remedies),
+and `--refresh --yes` runs them. Same rule as always: printing first,
+nothing without your say-so.
 
 ## SIDE A — GETTING STARTED
 
@@ -391,8 +404,11 @@ instead of being dropped. It is an epilogue, not a stage: a filing that
 fails changes nothing about `add` — same exit code, same counts, same
 sweep — and leaves its video unfiled, where `wiki sync --dry-run` will
 name it and `wiki sync` will file it. If you never configured a
-maintainer, `add` still says so on stderr right away. Turn it all off
-with one line in `config.toml`:
+maintainer, `add` still says so on stderr right away. Each filing is
+minutes of real agent work billed to your configured `claude` account —
+typically a few dollars per video — so auto-filing is a choice about
+spend as much as about convenience. Turn it all off with one line in
+`config.toml`:
 
     [wiki]
     auto = false
@@ -557,4 +573,6 @@ Troubleshooting (start with `tapedeck doctor`):
         line — read it there. A 403 on video data usually means YouTube is
         gating that video's streams for the client yt-dlp used; the shipped
         default already leads with the embedded player client, which is the
-        known fix (§6 to inspect your fetcher_command).
+        known fix (§6 to inspect your fetcher_command), and
+        `tapedeck setup --refresh` updates yt-dlp when the platform has
+        simply moved on.

@@ -10,7 +10,13 @@ ingest's boundary without the cli knowing what it means.
 """
 
 from conftest import run_cli
-from test_add_collection import FETCH_ANY, IDS, PLAYLIST, set_collection_pipeline
+from test_add_collection import (
+    FETCH_ANY,
+    FETCH_FAIL_MIDDLE,
+    IDS,
+    PLAYLIST,
+    set_collection_pipeline,
+)
 
 VIDEO_A = IDS[0]
 NOISE = "YTDLP-NOISE-MARKER-8842"
@@ -38,6 +44,21 @@ def test_each_added_video_gets_a_close_out_in_the_users_terms(home):
         assert "Fixture Channel" in line, f"the channel belongs in it: {line!r}"
         assert "0:12:00" in line, f"720s reads h:mm:ss in the layout's form: {line!r}"
         assert f"Video {vid}" not in r.stdout, "stdout still means what it meant"
+
+
+def test_a_failed_fetch_points_at_the_manual_and_the_refresher(home):
+    """The most common terminal moment a stranger hits is a fetch the platform
+    broke; the error must end with the two commands that resolve it
+    (SPEC-cli-013), in the cli's own line — ingest's is untouched."""
+    set_collection_pipeline(home, FETCH_FAIL_MIDDLE)
+    r = run_cli(["add", IDS[1]], home)
+    assert r.returncode == 1
+    assert "help manual" in r.stderr, (
+        f"the failure names where the causes are explained:\n{r.stderr!r}"
+    )
+    assert "--refresh" in r.stderr, (
+        f"the failure names the command that updates the tool:\n{r.stderr!r}"
+    )
 
 
 def test_verbose_travels_to_the_fetcher_and_absence_stays_quiet(home):

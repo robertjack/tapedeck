@@ -27,10 +27,14 @@ command = "just eval cli"
 # together, and the clause only makes sense against SPEC-wiki-012's wait.
 # Raised 47000 -> 52000 for the cockpit round: SPEC-cli-012 and
 # test_add_display.py.
-context_tokens = 52000
+# Raised 52000 -> 57000 for the distribution round: SPEC-cli-013, the
+# SPEC-cli-006 amendment, five refresh evals and the failure-hint eval.
+context_tokens = 57000
 # Raised 17000 -> 22000: the module gains the pass-through router for the `wiki` group,
 # the per-video filing epilogue inside add, the [wiki] scaffold block and one more
 # doctor check, on top of a src that already measured ~14000.
 # Raised 22000 -> 24000: the detached epilogue worker — spawn-and-release with
 # the streams closed, the sweep-order drain, the hand-off line.
-src_tokens = 24000
+# Raised 24000 -> 25500: setup --refresh (the update table beside the remedies,
+# the resolve-only plan, the yes runner) and the fetch-failure hint line.
+src_tokens = 25500

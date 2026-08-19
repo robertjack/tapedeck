@@ -279,3 +279,66 @@ def test_the_shipped_remedies_are_published_in_the_scaffolded_config(tmp_path):
                 heads.add(shlex.split(value)[0])
     missing = sorted(head for head in heads if head not in remedy)
     assert not missing, f"shipped defaults name tools the shipped remedy table cannot fix: {missing}"
+
+
+# --- setup --refresh: update what exists, never install what doesn't (SPEC-cli-013)
+
+
+def add_updates(home, *pairs):
+    """Update rows through the same `[setup]` seam the remedies use. write_config
+    leaves the file inside its [setup] section, so appending keeps the table."""
+    with (home / "config.toml").open("a") as fh:
+        for tool, command in pairs:
+            fh.write(f'update.{tool} = "{command}"\n')
+
+
+def test_refresh_prints_the_update_and_runs_nothing_without_yes(home):
+    needs_ffmpeg()
+    write_config(home)
+    marker = home / "updated-ffmpeg"
+    add_updates(home, ("ffmpeg", script(home, "update-ffmpeg.sh", f"touch {marker}")))
+    r = run_cli(["setup", "--refresh"], home)
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert lines_for(r.stdout, "update-ffmpeg.sh"), (
+        f"--refresh names the update command for a tool that resolves:\n{r.stdout!r}"
+    )
+    assert not marker.exists(), "printing is all --refresh does without --yes"
+
+
+def test_refresh_yes_runs_exactly_the_printed_updates(home):
+    needs_ffmpeg()
+    write_config(home)
+    marker = home / "updated-ffmpeg"
+    add_updates(home, ("ffmpeg", script(home, "update-ffmpeg.sh", f"touch {marker}")))
+    r = run_cli(["setup", "--refresh", "--yes"], home)
+    assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+    assert marker.exists(), "--refresh --yes runs the update it printed"
+
+
+def test_refresh_never_touches_a_missing_tool(home):
+    """--refresh updates what exists; installing what doesn't is the plain
+    wizard's business, so a missing tool's update command must not run."""
+    needs_ffmpeg()
+    write_config(home, transcriber=f"{MISSING} run")
+    marker = home / "updated-missing"
+    add_updates(home, (MISSING, script(home, "update-missing.sh", f"touch {marker}")))
+    run_cli(["setup", "--refresh", "--yes"], home)
+    assert not marker.exists(), (
+        "a tool that does not resolve is not the refresher's to touch"
+    )
+
+
+def test_the_shipped_update_table_is_scaffolded(tmp_path):
+    """Like the remedies: what ships is macOS-native and written into the
+    scaffolded config, one default, the code agreeing with what it wrote."""
+    home = tmp_path / "shipped"
+    run_cli(["doctor", "--json"], home)
+    config = tomllib.loads((home / "config.toml").read_text())
+    update = config.get("setup", {}).get("update")
+    assert isinstance(update, dict) and update, (
+        f"the update table is published beside the remedies: {config.get('setup')!r}"
+    )
+    assert update.get("yt-dlp") == "brew upgrade yt-dlp"
+    assert update.get("ffmpeg") == "brew upgrade ffmpeg"
+    assert update.get("mlx_whisper", "").startswith("uv tool upgrade"), update
+    assert update.get("parakeet-mlx", "").startswith("uv tool upgrade"), update

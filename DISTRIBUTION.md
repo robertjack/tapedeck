@@ -34,7 +34,18 @@ gh repo create tapedeck --public --source=. --remote=origin --push
 (use `--private` instead of `--public` to keep it private but hosted, e.g.
 to unblock CI runs on GitHub before a public launch).
 
-### 2. What PyPI project name?
+### 2. What PyPI project name? — DECIDED 2026-08-18
+
+`tapedeck-cli` (pyproject renamed, SPEC-cli-006 amended; the executable stays
+`tapedeck`). To publish once credentials are in hand:
+
+```sh
+uv build
+uv publish   # needs a PyPI token (UV_PUBLISH_TOKEN or ~/.pypirc)
+```
+
+Original notes:
+
 
 Checked on 2026-08-13:
 

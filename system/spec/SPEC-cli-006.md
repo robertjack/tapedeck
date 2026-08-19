@@ -17,3 +17,10 @@ report a number it invented.
 requires no `$TAPEDECK_HOME`, creates no home, reads no `config.toml`, and works from
 any directory. It is the first thing a stranger runs after installing, so it must never
 depend on this machine's layout or on any external tool being present.
+
+**Amended for the distribution round:** the installed distribution is named
+`tapedeck-cli` — PyPI's `tapedeck` belongs to an unrelated project, and installing a
+squatted name is how a stranger gets somebody else's software — while the executable,
+the config, the library layout and every piece of user-facing vocabulary stay
+`tapedeck`. The metadata `--version` reads is `tapedeck-cli`'s; nothing else about
+this clause moves.

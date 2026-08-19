@@ -3,10 +3,13 @@
 # the `tapedeck` console script appears with the cli component.
 
 [project]
-name = "tapedeck"
+# Distribution name: PyPI's `tapedeck` is squatted by an unrelated project, so
+# the package ships as `tapedeck-cli` while the executable stays `tapedeck`
+# (SPEC-cli-006, amended for the distribution round).
+name = "tapedeck-cli"
 # the one place the version is written; `tapedeck --version` reads it back out of
 # the installed distribution's metadata (SPEC-cli-006)
-version = "0.2.0"
+version = "0.3.0"
 description = "A local video brain: download, transcribe, archive, ask"
 requires-python = ">=3.12"
 dependencies = []
