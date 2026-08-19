@@ -1,6 +1,9 @@
-"""The verbs that mutate the library: `add`, `retranscribe`, `rm`
-(SPEC-cli-002, SPEC-cli-003, SPEC-cli-004, SPEC-cli-009's auto-filing,
-SPEC-cli-011's detached hand-off, SPEC-cli-012's close-out line).
+"""The verbs that walk the library: `add`, `retranscribe`, `rm`, `list`, `show`.
+
+`add` and `retranscribe` orchestrate the derivation chain — ingest -> transcribe
+-> archive -> index — by calling each sibling's own module boundary in turn
+(SPEC-cli-003, SPEC-cli-004); `rm`, `list` and `show` read `library/` directly,
+asking ingest what counts as a video rather than deciding it here (LESSON-0003).
 """
 
 from __future__ import annotations
@@ -11,282 +14,261 @@ import sys
 import tomllib
 from pathlib import Path
 
-from ingest import sources as ingest_sources
-from transcribe import transcriber as transcribe_transcriber
+import archive
+import ingest
+from wiki import layout as wiki_layout
 
-from . import components
+from .components import run_module, wiki_epilogue
 
-CONFIG_NAME = "config.toml"
-
-# The internal verb `add` re-invokes itself under, to spawn the detached
-# filing worker (SPEC-cli-011). It is dispatched directly in main.py before
-# argparse ever sees it, so it appears in no `--help`, no subparser and no
-# usage line — the surface tapedeck exposes is still exactly SPEC-cli-001's
-# list. An id or URL a user could type will never collide with it.
-FILING_WORKER_VERB = "__wiki-filing-worker__"
-
-# --- add (SPEC-cli-003, SPEC-cli-012) -------------------------------------
+FETCH_HELP_HINT = (
+    'see "tapedeck help manual" for common causes, or run '
+    '"tapedeck setup --refresh" to update the fetcher'
+)
 
 
-def cmd_add(args, home: Path) -> int:
-    url = args.url
-    force = args.force
-    verbose = getattr(args, "verbose", False)
-    try:
-        kind, value = ingest_sources.resolve(url)
-    except ingest_sources.BadRequest as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-
-    if kind == ingest_sources.COLLECTION and force:
-        print(
-            "error: --force is not allowed on a collection — add one video "
-            "at a time to re-fetch it deliberately",
-            file=sys.stderr,
-        )
-        return 2
-
-    if kind == ingest_sources.VIDEO:
-        ids = [value]
-    else:
-        rc, listing = components.run_capture_stdout("ingest", ["expand", url], home)
-        if rc != 0:
-            return rc
-        ids = [line.strip() for line in listing.splitlines() if line.strip()]
-
-    added = skipped = failed = 0
-    filed = []
-    for vid in ids:
-        if not force and _is_complete(home, vid):
-            skipped += 1
-            continue
-        if _run_video_pipeline(home, vid, force, verbose):
-            added += 1
-            filed.append(vid)
-            _close_out(home, vid)
-        else:
-            failed += 1
-    print(f"{added} added, {skipped} already present, {failed} failed")
-    _handoff_wiki_filing(home, filed)
-    return 1 if failed else 0
+# --- add -----------------------------------------------------------------
 
 
-def _is_complete(home: Path, vid: str) -> bool:
-    entry = home / "library" / vid
+def is_complete(home: Path, video_id: str) -> bool:
+    """Media present by ingest's rule, a transcript, and an archive page — the
+    whole of what a sweep skips re-deriving (SPEC-cli-003)."""
+    entry = home / "library" / video_id
     return (
-        components.has_media(entry)
+        ingest.has_video(entry)
         and (entry / "transcript.json").is_file()
-        and (home / "archive" / f"{vid}.md").is_file()
+        and (home / "archive" / f"{video_id}.md").is_file()
     )
 
 
-def _run_video_pipeline(home: Path, vid: str, force: bool, verbose: bool = False) -> bool:
-    ingest_args = ["add", vid]
+def close_out(home: Path, video_id: str) -> None:
+    """One stderr line in the user's terms — title, channel, duration
+    (SPEC-cli-012) — read from the entry's own meta.json, nothing re-derived."""
+    try:
+        meta = json.loads((home / "library" / video_id / "meta.json").read_text())
+    except (OSError, ValueError):
+        return
+    duration = archive.hms(meta.get("duration_s", 0))
+    channel = meta.get("channel") or ""
+    title = meta.get("title", video_id)
+    tail = f" — {channel}" if channel else ""
+    print(f"tapedeck: added {title}{tail} ({duration})", file=sys.stderr)
+
+
+def pipeline_one(home: Path, video_id: str, target: str, force: bool, verbose: bool) -> bool:
+    args = ["add", target]
     if force:
-        ingest_args.append("--force")
+        args.append("--force")
     if verbose:
-        ingest_args.append("--verbose")
-    steps = [
-        ("ingest", ingest_args),
-        ("transcribe", ["run", vid]),
-        ("archive", ["render", vid]),
-        ("index", ["update", vid]),
-    ]
-    for module, cmd_args in steps:
-        rc = components.run_quiet(module, cmd_args, home)
-        if rc != 0:
-            print(f"error: {vid}: {module} failed (exit {rc})", file=sys.stderr)
-            return False
+        args.append("--verbose")
+    if run_module(home, "ingest", args).returncode != 0:
+        print(f"error: {video_id}: fetch failed — {FETCH_HELP_HINT}", file=sys.stderr)
+        return False
+    if run_module(home, "transcribe", ["run", video_id]).returncode != 0:
+        print(f"error: {video_id}: transcription failed", file=sys.stderr)
+        return False
+    if run_module(home, "archive", ["render", video_id]).returncode != 0:
+        print(f"error: {video_id}: archive render failed", file=sys.stderr)
+        return False
+    if run_module(home, "index", ["update", video_id]).returncode != 0:
+        print(f"error: {video_id}: index update failed", file=sys.stderr)
+        return False
     return True
 
 
-def _hms(seconds) -> str:
-    s = int(seconds or 0)
-    return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
-
-
-def _close_out(home: Path, vid: str) -> None:
-    """One stderr line closing out a just-added video in the user's own
-    terms — title, channel, duration — read from the entry's own meta.json
-    (SPEC-cli-012). Printed before the wiki hand-off note, so a finished
-    add reads: the pipeline's stage lines, then what this was, then what
-    continues without you. Never stdout: the summary line stays the
-    accounting of record."""
-    meta_path = home / "library" / vid / "meta.json"
+def add(home: Path, target: str, force: bool, verbose: bool) -> int:
     try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if not isinstance(meta, dict):
-        return
-    title = meta.get("title") or vid
-    channel = meta.get("channel") or ""
-    duration = _hms(meta.get("duration_s"))
-    print(f"added: {title} — {channel} ({duration})", file=sys.stderr)
-
-
-def _read_wiki_config(home: Path) -> dict:
-    path = home / CONFIG_NAME
-    try:
-        doc = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-    except (OSError, ValueError):
-        doc = {}
-    section = doc.get("wiki")
-    return section if isinstance(section, dict) else {}
-
-
-def _wiki_auto(home: Path) -> bool:
-    value = _read_wiki_config(home).get("auto")
-    return True if value is None else bool(value)
-
-
-def _wiki_maintainer_command(home: Path) -> str | None:
-    value = _read_wiki_config(home).get("maintainer_command")
-    return value.strip() if isinstance(value, str) and value.strip() else None
-
-
-def _handoff_wiki_filing(home: Path, ids: list[str]) -> None:
-    """The best-effort epilogue's hand-off (SPEC-cli-011). What `add` can
-    know without running anything — `[wiki].auto` off, no maintainer
-    configured — is answered here, synchronously, exactly as SPEC-cli-009
-    pins it. Anything past that is a detached worker's business: `add`
-    spawns it, holds none of its streams, and returns without waiting."""
-    if not ids or not _wiki_auto(home):
-        return
-    if _wiki_maintainer_command(home) is None:
-        print(
-            "note: wiki filing skipped for this sweep — no "
-            "[wiki].maintainer_command configured",
-            file=sys.stderr,
-        )
-        return
-    components.spawn_detached("cli", [FILING_WORKER_VERB, *ids], home)
-    print(
-        f"note: {len(ids)} video(s) handed off to the wiki — filings continue "
-        "in the background; an accepted one lands as an entry in wiki/log.md, "
-        "and `tapedeck wiki sync` converges anything that does not",
-        file=sys.stderr,
-    )
-
-
-def run_filing_worker(home: Path, ids: list[str]) -> int:
-    """The detached worker itself (SPEC-cli-011): one per `add` invocation,
-    filing the ids it was handed in the sweep's own order through the
-    wiki's own boundary — `wiki file --wait`, a call and not a second filing
-    path (LESSON-0003), so the maintainer, the gate, the rollback and the
-    idempotent skip are all the wiki's. `--wait` means a neighbor already
-    holding the wiki — another `add`'s worker, a foreground sync — is
-    queued for rather than skipped. Nobody reads this process's stdio; the
-    caller already discarded it before spawning, so a failure here leaves
-    exactly what a failed filing always left: an unfiled video for
-    `wiki sync` to name and converge."""
-    for vid in ids:
-        components.run_quiet("wiki", ["file", "--wait", vid], home)
-    return 0
-
-
-# --- retranscribe (SPEC-cli-004) -----------------------------------------
-
-
-def cmd_retranscribe(args, home: Path) -> int:
-    try:
-        _, target_model = transcribe_transcriber.seam(home)
-    except transcribe_transcriber.ConfigError as exc:
+        kind, value = ingest.resolve(target)
+    except ingest.BadRequest as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    if kind == ingest.COLLECTION:
+        if force:
+            print(
+                "error: --force is single-video only — add one video at a "
+                "time to re-fetch it deliberately",
+                file=sys.stderr,
+            )
+            return 2
+        listing = run_module(home, "ingest", ["expand", target])
+        if listing.returncode != 0:
+            print(f"error: could not expand {target}", file=sys.stderr)
+            return 1
+        ids = [line.strip() for line in (listing.stdout or "").splitlines() if line.strip()]
+        targets = {video_id: ingest.canonical_url(video_id) for video_id in ids}
+    else:
+        ids, targets = [value], {value: target}
 
-    selected = _select_for_retranscribe(home, target_model)
-
-    if args.dry_run:
-        for vid in selected:
-            print(vid)
-        return 0
-
-    failed = 0
-    for vid in selected:
-        ok = (
-            components.run_quiet("transcribe", ["run", vid, "--force"], home) == 0
-            and components.run_quiet("archive", ["render", vid], home) == 0
-            and components.run_quiet("index", ["update", vid], home) == 0
-        )
-        if not ok:
+    added_n = already = failed = 0
+    filed_ids: list[str] = []
+    for video_id in ids:
+        if not force and is_complete(home, video_id):
+            already += 1
+            continue
+        if pipeline_one(home, video_id, targets[video_id], force, verbose):
+            added_n += 1
+            close_out(home, video_id)
+            filed_ids.append(video_id)
+        else:
             failed += 1
-            print(f"error: {vid}: retranscribe failed", file=sys.stderr)
-    if selected or failed:
-        print(f"{len(selected) - failed} redone, {failed} failed")
+
+    print(f"{added_n} added, {already} already present, {failed} failed")
+    wiki_epilogue(home, filed_ids)
     return 1 if failed else 0
 
 
-def _select_for_retranscribe(home: Path, target_model: str) -> list[str]:
-    library = home / "library"
-    if not library.is_dir():
-        return []
-    selected = []
-    for entry in sorted(p for p in library.iterdir() if p.is_dir()):
-        name = entry.name
-        if components.is_video_id(name):
-            if not components.has_media(entry):
-                print(
-                    f"note: {name}: no video file — cannot retranscribe without "
-                    "re-downloading it, skipped",
-                    file=sys.stderr,
-                )
-                continue
-            if _transcript_model(entry) != target_model:
-                selected.append(name)
-            continue
-        staged_for = components.staging_video(name)
-        if staged_for is not None:
-            print(
-                f"note: library/{name} is a tapedeck download in progress for "
-                f"{staged_for} — left alone, skipped",
-                file=sys.stderr,
-            )
-            continue
-        print(f"note: library/{name} is not a tapedeck video — skipped", file=sys.stderr)
-    return selected
+# --- retranscribe ----------------------------------------------------------
 
 
-def _transcript_model(entry: Path) -> str | None:
-    path = entry / "transcript.json"
-    if not path.is_file():
-        return None
+def _configured_model(home: Path) -> str | None:
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    label = doc.get("model") if isinstance(doc, dict) else None
+    value = (config.get("transcribe") or {}).get("model")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _current_label(entry: Path) -> str | None:
+    try:
+        doc = json.loads((entry / "transcript.json").read_text())
+    except (OSError, ValueError):
+        return None
+    label = doc.get("model")
     return label if isinstance(label, str) else None
 
 
-# --- rm (SPEC-cli-002, SPEC-cli-009) --------------------------------------
+def _select_for_retranscribe(home: Path, model: str) -> list[str]:
+    """Only what the sweep could actually re-derive (SPEC-cli-004): a
+    well-formed video id, whose media ingest still has. Everything else under
+    `library/` is reported and left alone — a staging directory in flight is
+    tapedeck's own (SPEC-ingest-003), never called a stranger's."""
+    selected = []
+    for entry in sorted((home / "library").iterdir()):
+        name = entry.name
+        staged = ingest.staging(name)
+        if staged is not None:
+            print(f"{name}: tapedeck is still fetching {staged} here — skipped", file=sys.stderr)
+            continue
+        if not ingest.VIDEO_ID.fullmatch(name):
+            print(f"{name}: not a video — skipped", file=sys.stderr)
+            continue
+        if not ingest.has_video(entry):
+            print(f"{name}: no video file — media was reclaimed, skipped", file=sys.stderr)
+            continue
+        if _current_label(entry) != model:
+            selected.append(name)
+    return selected
 
 
-def cmd_rm(args, home: Path) -> int:
-    vid = args.video_id
-    entry = home / "library" / vid
-    if not components.is_video_id(vid) or not entry.is_dir():
-        print(f"error: {vid!r} is not a known video id", file=sys.stderr)
+def retranscribe(home: Path, dry_run: bool) -> int:
+    model = _configured_model(home)
+    if model is None or not (home / "library").is_dir():
+        return 0
+    selected = _select_for_retranscribe(home, model)
+
+    if dry_run:
+        for video_id in selected:
+            print(video_id)
+        return 0
+
+    failed = 0
+    for video_id in selected:
+        if run_module(home, "transcribe", ["run", video_id, "--force"]).returncode != 0:
+            print(f"error: {video_id}: transcription failed", file=sys.stderr)
+            failed += 1
+            continue
+        if run_module(home, "archive", ["render", video_id]).returncode != 0:
+            print(f"error: {video_id}: archive render failed", file=sys.stderr)
+            failed += 1
+            continue
+        if run_module(home, "index", ["update", video_id]).returncode != 0:
+            print(f"error: {video_id}: index update failed", file=sys.stderr)
+            failed += 1
+    return 1 if failed else 0
+
+
+# --- rm / list / show --------------------------------------------------------
+
+
+def rm(home: Path, video_id: str, media_only: bool) -> int:
+    if not ingest.VIDEO_ID.fullmatch(video_id):
+        print(f"error: {video_id!r} is not a video id", file=sys.stderr)
         return 2
-
-    if args.media_only:
-        for video in components.video_files(entry):
-            video.unlink()
-        print(vid)
+    entry = home / "library" / video_id
+    if not entry.is_dir():
+        print(f"error: {video_id}: not in the library", file=sys.stderr)
+        return 2
+    if media_only:
+        for path in ingest.videos(entry):
+            path.unlink()
         return 0
 
     shutil.rmtree(entry, ignore_errors=True)
-    page = home / "archive" / f"{vid}.md"
-    if page.is_file():
-        page.unlink()
-    components.run_quiet("index", ["update", vid], home)
-
-    wiki_page = home / "wiki" / "sources" / f"{vid}.md"
-    if wiki_page.is_file():
+    (home / "archive" / f"{video_id}.md").unlink(missing_ok=True)
+    run_module(home, "index", ["update", video_id])
+    wiki_dir = wiki_layout.wiki_dir(home)
+    if wiki_layout.filed(wiki_dir, video_id):
         print(
-            f"note: {vid}: the wiki still holds a page for this video — "
+            f"note: the wiki still holds a page for {video_id} — "
             "`tapedeck wiki lint` will name it",
             file=sys.stderr,
         )
-    print(vid)
+    return 0
+
+
+def _load_meta(entry: Path) -> dict | None:
+    try:
+        return json.loads((entry / "meta.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def list_videos(home: Path, as_json: bool) -> int:
+    library = home / "library"
+    rows = []
+    if library.is_dir():
+        for entry in sorted(library.iterdir()):
+            if not ingest.VIDEO_ID.fullmatch(entry.name):
+                continue
+            meta = _load_meta(entry)
+            if meta is not None:
+                rows.append(meta)
+    rows.sort(key=lambda m: (m.get("upload_date") or "", m.get("id") or ""))
+    if as_json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+    else:
+        for meta in rows:
+            print(
+                f"{meta.get('id')}  {meta.get('upload_date', '?')}  "
+                f"{meta.get('channel', '?')}  {meta.get('title', '?')}"
+            )
+    return 0
+
+
+def show(home: Path, video_id: str, as_json: bool) -> int:
+    if not ingest.VIDEO_ID.fullmatch(video_id):
+        print(f"error: {video_id!r} is not a video id", file=sys.stderr)
+        return 2
+    entry = home / "library" / video_id
+    meta = _load_meta(entry) if entry.is_dir() else None
+    if meta is None:
+        print(f"error: {video_id}: not in the library", file=sys.stderr)
+        return 2
+    media = ingest.videos(entry)
+    archive_page = home / "archive" / f"{video_id}.md"
+    result = {
+        **meta,
+        "media": str(media[0]) if media else None,
+        "archive": str(archive_page) if archive_page.is_file() else None,
+    }
+    if as_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    print(f"id: {meta.get('id')}")
+    print(f"title: {meta.get('title')}")
+    print(f"channel: {meta.get('channel')}")
+    print(f"upload_date: {meta.get('upload_date')}")
+    print(f"duration: {archive.hms(meta.get('duration_s', 0))}")
+    print(f"media: {result['media'] or '(missing)'}")
+    print(f"archive: {result['archive'] or '(not rendered)'}")
     return 0

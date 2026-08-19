@@ -1,9 +1,10 @@
 """`$TAPEDECK_HOME` resolution and the first-run scaffold (SPEC-cli-001).
 
-The default home belongs to whoever installed the tool: a plain, visible
-directory in their own home, never a path particular to this machine. Every
-seam default written here is imported from the component that owns it
-(LESSON-0003) rather than re-typed — cli only decides the file they land in.
+The default home is a plain, visible directory in whoever installed the tool's
+own home — never the author's `~/dev/storage/tapedeck` (that default is stale;
+this module is the sole authority now). Every seam default written into the
+scaffolded `config.toml` is imported from the component that owns that seam's
+shape (LESSON-0003): this file duplicates none of them.
 """
 
 from __future__ import annotations
@@ -11,89 +12,108 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from ask.seams import BRIEF_NAME, DEFAULT_ANSWERER_COMMAND, DEFAULT_LIBRARIAN_COMMAND
-from ingest.fetch import DEFAULT_FETCHER_COMMAND, DEFAULT_LISTER_COMMAND
-from transcribe.transcriber import (
-    DEFAULT_MODEL,
-    DEFAULT_TRANSCRIBER_COMMAND,
-    PARAKEET_MODEL,
-    PARAKEET_TRANSCRIBER_COMMAND,
-)
-from wiki.seams import DEFAULT_MAINTAINER_COMMAND as WIKI_MAINTAINER_COMMAND
+import ingest
+import transcribe
+from ask import seams as ask_seams
+from wiki import seams as wiki_seams
 
+HOME_ENV = "TAPEDECK_HOME"
+DEFAULT_HOME_NAME = "Tapedeck"
 CONFIG_NAME = "config.toml"
-DISPLAY_DEFAULT_HOME = "~/Tapedeck"
+BRIEF_NAME = "CLAUDE.md"
 
+BRIEF = """\
+# Librarian brief
 
-def home_dir() -> Path:
-    override = os.environ.get("TAPEDECK_HOME")
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / "Tapedeck"
+Answer only from this library: `library/` and the pages rendered under
+`archive/`. Never use outside knowledge. Cite every claim with an inline deep
+link — `[label](https://www.youtube.com/watch?v=<id>&t=<seconds>s)` — built
+from the archive page's own section headings. If the sources here do not
+answer the question, reply exactly: not in the library
+"""
 
-
-def _toml(command: str) -> str:
-    """A TOML literal string — single-quoted, so the double quotes every
-    published seam command carries need no escaping."""
-    return f"'{command}'"
-
-
-_DEFAULT_CONFIG = f"""# tapedeck configuration — every external tool sits behind one of these
-# seams (SPEC-core-004). Edit any line to swap tools; nothing is hardcoded.
+CONFIG_TEMPLATE = """\
+# tapedeck config — every external tool sits behind one of these command
+# templates (SPEC-core-004). Edit any line freely; comments are yours to
+# keep or drop.
 
 [ingest]
-fetcher_command = {_toml(DEFAULT_FETCHER_COMMAND)}
-lister_command = {_toml(DEFAULT_LISTER_COMMAND)}
+# fetcher_command downloads one video (SPEC-ingest-001). This default carries
+# two solved YouTube incidents so a fresh install never re-suffers them:
+# LESSON-0001's avc1 preference and LESSON-0006's embedded-client lead.
+fetcher_command = '{fetcher}'
+# lister_command enumerates a playlist or channel URL (SPEC-ingest-002).
+lister_command = '{lister}'
 
 [transcribe]
-transcriber_command = {_toml(DEFAULT_TRANSCRIBER_COMMAND)}
-model = "{DEFAULT_MODEL}"
-# Apple Silicon alternative — parakeet-mlx (~2.4GB download on first use):
-# transcriber_command = {_toml(PARAKEET_TRANSCRIBER_COMMAND)}
-# model = "{PARAKEET_MODEL}"
+# transcriber_command derives a transcript (SPEC-core-004). LESSON-0002:
+# turbo weights with conditioning off avoid large-v3's repetition loops.
+transcriber_command = '{transcriber}'
+model = "{model}"
+# Apple's parakeet-mlx is the published alternative (SPEC-transcribe-002) —
+# swap to it by uncommenting these two lines instead of the pair above:
+# transcriber_command = '{parakeet_cmd}'
+# model = "{parakeet_model}"
 
 [ask]
-librarian_command = {_toml(DEFAULT_LIBRARIAN_COMMAND)}
-answerer_command = {_toml(DEFAULT_ANSWERER_COMMAND)}
+librarian_command = '{librarian}'
+answerer_command = '{answerer}'
 
 [wiki]
+# maintainer_command is the agent that writes and later tends this wiki.
+maintainer_command = '{maintainer}'
+# auto files each video `add` completes; an absent key also reads true.
 auto = true
-maintainer_command = {_toml(WIKI_MAINTAINER_COMMAND)}
 
 [setup]
+# remedy.<executable> installs a tool `doctor` found missing; `tapedeck
+# setup` prints these and `--yes` runs them. update.<executable> upgrades
+# one already on PATH (`tapedeck setup --refresh`).
 remedy.yt-dlp = "brew install yt-dlp"
 remedy.ffmpeg = "brew install ffmpeg"
 remedy.mlx_whisper = "uv tool install mlx-whisper"
 remedy.parakeet-mlx = "uv tool install parakeet-mlx"
-remedy.claude = "see https://docs.claude.com/en/docs/claude-code for install instructions"
-"""
-
-_DEFAULT_BRIEF = """# tapedeck librarian brief
-
-You are answering questions about the videos in this library, and nothing else.
-
-- Answer only from what these videos actually say. If the library does not
-  cover the question, say plainly that it is "not in the library" rather
-  than guessing or drawing on outside knowledge.
-- Cite every claim with an inline markdown deep link —
-  [label](https://www.youtube.com/watch?v=<id>&t=<seconds>s) — pointing at
-  the moment in the video that supports it. An answer with no citation is
-  refused.
-- Prefer reading transcripts and archive pages under this library over
-  anything you already believe about the topic.
+remedy.claude = "see https://docs.claude.com/en/docs/claude-code/setup"
+update.yt-dlp = "brew upgrade yt-dlp"
+update.ffmpeg = "brew upgrade ffmpeg"
+update.mlx_whisper = "uv tool upgrade mlx-whisper"
+update.parakeet-mlx = "uv tool upgrade parakeet-mlx"
 """
 
 
-def ensure_home(home: Path) -> None:
-    """The scaffold every verb performs on first use (SPEC-cli-001):
-    library/, archive/, a commented config.toml, and the librarian's brief.
-    Never overwrites what is already there — after the first run, this file
-    and this brief are the user's."""
+def default_home() -> Path:
+    return Path.home() / DEFAULT_HOME_NAME
+
+
+def home_dir() -> Path:
+    raw = os.environ.get(HOME_ENV)
+    return Path(raw).expanduser() if raw else default_home()
+
+
+def _config_text() -> str:
+    return CONFIG_TEMPLATE.format(
+        fetcher=ingest.DEFAULT_FETCHER_COMMAND,
+        lister=ingest.DEFAULT_LISTER_COMMAND,
+        transcriber=transcribe.DEFAULT_TRANSCRIBER_COMMAND,
+        model=transcribe.DEFAULT_MODEL,
+        parakeet_cmd=transcribe.PARAKEET_TRANSCRIBER_COMMAND,
+        parakeet_model=transcribe.PARAKEET_MODEL,
+        librarian=ask_seams.DEFAULT_LIBRARIAN_COMMAND,
+        answerer=ask_seams.DEFAULT_ANSWERER_COMMAND,
+        maintainer=wiki_seams.DEFAULT_MAINTAINER_COMMAND,
+    )
+
+
+def ensure_home(home: Path) -> Path:
+    """The first-run scaffold every verb performs: the home directories, a
+    default `config.toml`, and the librarian's brief — created once, then
+    left to the user (SPEC-cli-001, SPEC-ask-002)."""
     (home / "library").mkdir(parents=True, exist_ok=True)
     (home / "archive").mkdir(parents=True, exist_ok=True)
     config = home / CONFIG_NAME
     if not config.is_file():
-        config.write_text(_DEFAULT_CONFIG, encoding="utf-8")
+        config.write_text(_config_text(), encoding="utf-8")
     brief = home / BRIEF_NAME
     if not brief.is_file():
-        brief.write_text(_DEFAULT_BRIEF, encoding="utf-8")
+        brief.write_text(BRIEF, encoding="utf-8")
+    return home

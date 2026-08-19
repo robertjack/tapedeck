@@ -1,11 +1,14 @@
-"""`setup` (SPEC-cli-008): doctor's own report, plus the printed remedy for
-every required gap — and, under `--yes`, consent to run exactly those
-commands and nothing else.
+"""`setup`: the first-verb wizard, and its `--refresh` sibling (SPEC-cli-008,
+SPEC-cli-013).
+
+Consent is the specification: nothing runs without `--yes`, and `--yes` runs
+only the commands this run already printed. `setup` reports exactly what
+`doctor` reports — same function, same rows — and adds only the remedy (or
+update) column beside a failing (or resolving) check.
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -14,98 +17,98 @@ from pathlib import Path
 
 from . import doctor
 
-CONFIG_NAME = "config.toml"
-BREW_BOOTSTRAP = (
-    '/bin/bash -c "$(curl -fsSL '
-    'https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-)
+TRANSCRIBER_CHECK = "transcribe.transcriber_command"
+BREW_BOOTSTRAP = "Homebrew is missing — install it first: https://brew.sh"
 
 
-def _remedy_table(home: Path) -> dict:
-    path = home / CONFIG_NAME
+def _setup_table(home: Path, key: str) -> dict:
     try:
-        config = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        config = {}
-    table = (config.get("setup") or {}).get("remedy")
+        return {}
+    table = (config.get("setup") or {}).get(key)
     return table if isinstance(table, dict) else {}
 
 
-def _print_remedies(required_fail: list[dict], remedy: dict) -> list[str]:
-    plan = []
-    for row in required_fail:
-        executable = row.get("executable")
-        if executable is None:
-            print(f"{row['check']}: {row['detail']} — no install fixes this")
-            continue
-        command = remedy.get(executable)
-        if command is None:
-            print(f"{executable}: missing, and tapedeck has no remedy for it")
-            continue
-        print(f"{executable}:\n    {command}")
-        plan.append(command)
-    return plan
+def _needs_homebrew(commands: list[str]) -> bool:
+    return any(cmd.strip().startswith("brew") for cmd in commands) and shutil.which("brew") is None
 
 
-def _print_optional(optional_rows: list[dict], remedy: dict) -> None:
-    print("\noptional (never installed automatically):")
-    for row in optional_rows:
-        executable = row["executable"]
-        command = remedy.get(executable)
-        print(f"  {executable}: {command or row['detail']}")
-
-
-def _model_note(rows: list[dict]) -> None:
-    by_check = {r["check"]: r for r in rows}
-    transcriber = by_check.get("transcribe.transcriber_command")
-    if transcriber and transcriber["status"] == "pass":
-        print("\nnote: the first transcription downloads the model.")
-
-
-def cmd_setup(args, home: Path) -> int:
-    print(f"library home: {home}")
-    rows = doctor.checks(home)
-    print(doctor.render_report(rows))
-
-    remedy = _remedy_table(home)
-    required_fail = [r for r in rows if r["status"] == "fail"]
-    optional_gaps = [r for r in rows if r["status"] == "optional" and r.get("executable")]
-
-    if not required_fail:
-        print("\nready — nothing required is missing")
-        if optional_gaps:
-            _print_optional(optional_gaps, remedy)
-        _model_note(rows)
-        return 0
-
-    print()
-    plan = _print_remedies(required_fail, remedy)
-    if optional_gaps:
-        _print_optional(optional_gaps, remedy)
-
-    needs_brew = any(command.strip().startswith("brew") for command in plan)
-    brew_missing = needs_brew and shutil.which("brew") is None
-    if brew_missing:
+def _download_note(rows: list) -> None:
+    transcriber = next((c for c in rows if c.check == TRANSCRIBER_CHECK), None)
+    if transcriber and transcriber.status != "fail":
         print(
-            "\nHomebrew is not installed, so the brew remedies above cannot run.\n"
-            f"Install it first:\n    {BREW_BOOTSTRAP}"
+            "note: the first transcription downloads the model — this can "
+            "take a while and a few GB of disk"
         )
 
-    if not args.yes:
-        print("\nrun `tapedeck setup --yes` to apply the remedies above")
-        return 1
-    if brew_missing:
-        return 1
 
-    for command in plan:
-        print(f"\n$ {command}", file=sys.stderr)
-        subprocess.run(command, shell=True, env=os.environ)
+def run(home: Path, yes: bool, refresh: bool) -> int:
+    print(f"tapedeck home: {home}")
+    if refresh:
+        return _refresh(home, yes)
+    return _plain(home, yes)
 
-    print()
+
+def _plain(home: Path, yes: bool) -> int:
     rows = doctor.checks(home)
-    print(doctor.render_report(rows))
-    if any(r["status"] == "fail" for r in rows):
+    print(doctor.format_report(rows))
+    required_fail = [c for c in rows if c.status == "fail"]
+
+    remedy_table = _setup_table(home, "remedy")
+    remedies: list[str] = []
+    unknown: list[str] = []
+    for check in required_fail:
+        if check.executable is None:
+            print(f"{check.check}: {check.detail} — no install fixes this", file=sys.stderr)
+            continue
+        command = remedy_table.get(check.executable)
+        (remedies if command else unknown).append(command or check.executable)
+
+    if _needs_homebrew(remedies):
+        print(BREW_BOOTSTRAP)
+    for command in remedies:
+        print(command)
+    for executable in unknown:
+        print(f"no remedy known for {executable} — install it yourself", file=sys.stderr)
+
+    _download_note(rows)
+
+    if not required_fail:
+        print("tapedeck is ready.")
+        return 0
+    if not yes or _needs_homebrew(remedies):
         return 1
-    print("\nready — nothing required is missing")
-    _model_note(rows)
-    return 0
+
+    for command in remedies:
+        subprocess.run(command, shell=True)
+    print()
+    rows2 = doctor.checks(home)
+    print(doctor.format_report(rows2))
+    if not any(c.status == "fail" for c in rows2):
+        print("tapedeck is ready.")
+        return 0
+    return 1
+
+
+def _refresh(home: Path, yes: bool) -> int:
+    rows = doctor.checks(home)
+    print(doctor.format_report(rows))
+    update_table = _setup_table(home, "update")
+    commands = []
+    for check in rows:
+        if check.status == "fail" or check.executable is None:
+            continue
+        command = update_table.get(check.executable)
+        if command:
+            print(command)
+            commands.append(command)
+
+    if not yes or not commands:
+        return 0
+    for command in commands:
+        subprocess.run(command, shell=True)
+    print()
+    rows2 = doctor.checks(home)
+    print(doctor.format_report(rows2))
+    return 1 if any(c.status == "fail" for c in rows2) else 0

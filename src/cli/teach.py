@@ -1,5 +1,5 @@
-"""`help` (SPEC-cli-005): a one-screen tour, per-verb usage plus a worked
-example, and the manual — byte-identical to MANUAL.md when stdout is piped.
+"""`help`: a one-screen tour, per-verb usage plus an example, or the full
+manual (SPEC-cli-005). `-h/--help` stays argparse's own terse usage.
 """
 
 from __future__ import annotations
@@ -9,104 +9,89 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .home import DISPLAY_DEFAULT_HOME
-
-TOPICS = (
-    "add", "search", "ask", "list", "show", "reindex", "rm", "retranscribe",
-    "wiki", "adapt-parakeet", "doctor", "setup", "manual",
-)
+MANUAL_NAME = "MANUAL.md"
 
 EXAMPLES = {
-    "add": "tapedeck add https://youtu.be/dQw4w9WgXcQ",
+    "add": 'tapedeck add "https://www.youtube.com/watch?v=dQw4w9WgXcQ"',
     "search": 'tapedeck search "agents" -k 5',
-    "ask": 'tapedeck ask "what is the core idea?"',
-    "list": "tapedeck list --json",
+    "ask": 'tapedeck ask "what does this library say about ambition?"',
+    "list": "tapedeck list",
     "show": "tapedeck show dQw4w9WgXcQ",
     "reindex": "tapedeck reindex",
-    "rm": "tapedeck rm dQw4w9WgXcQ --media-only",
+    "rm": "tapedeck rm dQw4w9WgXcQ",
     "retranscribe": "tapedeck retranscribe --dry-run",
-    "adapt-parakeet": "tapedeck adapt-parakeet < parakeet.json > whisper.json",
-    "doctor": "tapedeck doctor --json",
+    "wiki": "tapedeck wiki file dQw4w9WgXcQ",
+    "adapt-parakeet": "parakeet-mlx ... | tapedeck adapt-parakeet",
+    "doctor": "tapedeck doctor",
     "setup": "tapedeck setup --yes",
+    "help": "tapedeck help add",
 }
 
+TOUR = """\
+tapedeck: a local video brain — download, transcribe, archive, ask.
 
-def manual_path() -> Path:
-    """The installed copy sits beside this module (pyproject's force-include,
-    SPEC-cli-005); a repo checkout falls back to the root the package is
-    generated under."""
-    here = Path(__file__).resolve().parent
-    local = here / "MANUAL.md"
-    if local.is_file():
-        return local
-    return here.parents[1] / "MANUAL.md"
+Every video goes through the same chain: ingest -> transcribe -> archive -> index.
 
+Everyday verbs:
+  tapedeck add <url>                add a video, playlist, or channel
+  tapedeck search "topic"           ranked, timestamped excerpts
+  tapedeck ask "a question"         an answer from your library, cited
+  tapedeck list                     every video you have added
+  tapedeck show <id>                one video's metadata
+  tapedeck retranscribe --dry-run   see what a model upgrade would redo
 
-def _tour() -> str:
-    return f"""tapedeck — a local video brain: download, transcribe, archive, ask.
-
-Everything lives in the library home (default {DISPLAY_DEFAULT_HOME}; override
-with $TAPEDECK_HOME). Every video moves through one chain:
-
-    video -> transcript -> archive page -> search index
-
-Start here:
-  tapedeck add <url>              {EXAMPLES['add']}
-  tapedeck search <query>         {EXAMPLES['search']}
-  tapedeck ask <question>         {EXAMPLES['ask']}
-  tapedeck list                   {EXAMPLES['list']}
-  tapedeck show <id>              {EXAMPLES['show']}
-  tapedeck retranscribe           {EXAMPLES['retranscribe']}
-
-More: tapedeck help <verb> | tapedeck help manual | tapedeck doctor
+The library lives at $TAPEDECK_HOME (default ~/Tapedeck).
+`tapedeck help <verb>` shows one verb's usage and an example.
+`tapedeck help manual` shows the whole manual.
 """
 
 
-def cmd_help(args, home, subparsers: dict) -> int:
-    topic = args.topic
-    if topic is None:
-        print(_tour())
-        return 0
-    if topic == "manual":
-        return _show_manual()
-    if topic == "wiki":
-        return _wiki_help()
-    if topic in subparsers:
-        print(subparsers[topic].format_help())
-        example = EXAMPLES.get(topic)
-        if example:
-            print(f"Example:\n  {example}")
-        return 0
-    print(
-        f"error: unknown help topic {topic!r} — try: {', '.join(TOPICS)}",
-        file=sys.stderr,
-    )
-    return 2
+def _manual_path() -> Path:
+    packaged = Path(__file__).resolve().parent / MANUAL_NAME
+    if packaged.is_file():
+        return packaged
+    return Path(__file__).resolve().parents[2] / MANUAL_NAME
 
 
-def _wiki_help() -> int:
-    result = subprocess.run([sys.executable, "-m", "wiki", "--help"], capture_output=True, text=True)
-    print(result.stdout, end="")
-    print("Example:\n  tapedeck wiki file dQw4w9WgXcQ")
+def tour() -> int:
+    sys.stdout.write(TOUR)
     return 0
 
 
-def _show_manual() -> int:
-    text = manual_path().read_text(encoding="utf-8")
-    stream = sys.stdout
-    if stream.isatty() and not os.environ.get("NO_COLOR"):
-        _page(text)
-    else:
-        stream.write(text)
-    return 0
-
-
-def _page(text: str) -> None:
-    for pager in filter(None, (os.environ.get("PAGER"), "less -R")):
+def manual() -> int:
+    try:
+        text = _manual_path().read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"error: could not read the manual — {exc}", file=sys.stderr)
+        return 1
+    if sys.stdout.isatty() and not os.environ.get("NO_COLOR"):
+        pager = os.environ.get("PAGER") or "less -R"
         try:
-            result = subprocess.run(pager, shell=True, input=text, text=True)
+            if subprocess.run(pager, shell=True, input=text, text=True).returncode == 0:
+                return 0
         except OSError:
-            continue
-        if result.returncode == 0:
-            return
+            pass
     sys.stdout.write(text)
+    return 0
+
+
+def verb(choices: dict, name: str) -> int:
+    topics = sorted({*choices.keys(), "manual"})
+    if name not in topics:
+        print(
+            f"error: unknown help topic {name!r} — known topics: {', '.join(topics)}",
+            file=sys.stderr,
+        )
+        return 2
+    if name == "manual":
+        return manual()
+    if name == "wiki":
+        text = subprocess.run(
+            [sys.executable, "-m", "wiki", "--help"], capture_output=True, text=True
+        ).stdout
+    else:
+        text = choices[name].format_help()
+    sys.stdout.write(text if text.endswith("\n") else text + "\n")
+    print()
+    print(EXAMPLES.get(name, f"tapedeck {name}"))
+    return 0
