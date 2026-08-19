@@ -29,7 +29,7 @@ commit → `phx regen <component> --trigger=...` → green → redeploy.
   that read this bullet, checked `git status` and `pgrep`, concluded a peer session was
   mid-regen, and stood down — politely, and at full cost.)
 - **Deploy discipline**: after every green regen of user-facing code,
-  `uv tool install --force ~/dev/personal/tapedeck` — the installed tool is a
+  `uv tool install --force <repo root>` — the installed tool is a
   SNAPSHOT and does not track the repo. Then smoke-test the deployed binary from a
   neutral cwd (evals run from the checkout and cannot see packaging gaps).
 - **MANUAL.md** (repo root) is durable user documentation shipped verbatim by
@@ -38,7 +38,6 @@ commit → `phx regen <component> --trigger=...` → green → redeploy.
   same ticket.
 - Hand-editable infra: `pyproject.toml`, `justfile`, `lefthook.yml`, `MANUAL.md`,
   `README.md`. Everything under `src/` belongs to the generator.
-- The user's real library is `$TAPEDECK_HOME` → `~/dev/storage/tapedeck` (exported in
-  their zshrc; predates the `~/Tapedeck` default). Never scaffold or write to a
-  library home in tests — evals isolate through TAPEDECK_HOME tmp dirs.
-- Git identity: personal (`~/dev/personal/` rules).
+- Never scaffold or write to a real library home in tests — evals isolate through
+  TAPEDECK_HOME tmp dirs. Operator-specific paths live in CLAUDE.local.md
+  (untracked).
