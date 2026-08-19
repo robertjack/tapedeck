@@ -26,6 +26,9 @@ whatever the seam points at. When the staged info json already names an expected
 size (yt-dlp writes it before the video data moves), the heartbeat turns that
 into a percentage — capped at 99 and never decreasing, because merging streams
 can transiently overshoot the estimate and only a clean exit ever means done.
+When our stderr is a terminal, those reports stop stacking as scrollback and
+redraw one line in place instead — a bar, not a log — ending with a real newline
+the moment the fetch is over so whatever prints next starts its own line.
 """
 
 from __future__ import annotations
@@ -53,6 +56,7 @@ NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp", ".description", ".webp"
 STDERR_FD = 2  # --verbose's streaming target: a fetcher's chatter is progress, not our stdout
 HEARTBEAT_S = 2.5  # cadence for the staging-bytes progress line: every three seconds or so
 MAX_PERCENT = 99  # the estimate is approximate; only a clean exit ever says done
+BAR_WIDTH = 20  # the redrawn TTY bar's width in characters
 
 # The staging directory's name grammar (SPEC-ingest-003, library-layout.md): a
 # fetch in progress or abandoned, never a stranger. Pinned here because three
@@ -205,13 +209,35 @@ def _human(n: float) -> str:
     return f"{size:.1f} GB"
 
 
-def _watch(dest: Path, video_id: str, stop: threading.Event) -> None:
+def _bar(percent: int) -> str:
+    """A fill bar for the TTY redraw — monotonic with `percent`, never the tool's
+    words, just a picture of the same number the piped line already carries."""
+    filled = round(BAR_WIDTH * max(0, min(100, percent)) / 100)
+    return "#" * filled + "-" * (BAR_WIDTH - filled)
+
+
+def _report(video_id: str, current: float, declared: float | None, percent: int) -> str:
+    if declared:
+        return (
+            f"ingest: fetching {video_id} — [{_bar(percent)}] {_human(current)} of "
+            f"~{_human(declared)} ({percent}%)"
+        )
+    return f"ingest: fetching {video_id} — {_human(current)} so far"
+
+
+def _watch(dest: Path, video_id: str, stop: threading.Event, tty: bool) -> None:
     """Reports staging bytes on our own stderr every few seconds, only while the
     fetcher is running — a handful of lines for a typical download, never a
     firehose, and unaffected by which tool sits behind the seam. When the staged
     info json already names an expected size, the line becomes a percentage
     against it; the percent only ever climbs, because the estimate is approximate
-    and the actual bytes can transiently pass it while streams merge."""
+    and the actual bytes can transiently pass it while streams merge.
+
+    Off a terminal each report is its own line (SPEC-ingest-004's original
+    shape, and what every capture-based eval pins). On a terminal the same
+    report redraws a single line in place instead of stacking as scrollback —
+    presentation only, never a change to what a program reading the stream sees.
+    """
     best_percent = 0
     while not stop.wait(HEARTBEAT_S):
         current = _dir_size(dest)
@@ -220,13 +246,14 @@ def _watch(dest: Path, video_id: str, stop: threading.Event) -> None:
         if declared and declared > 0:
             percent = min(MAX_PERCENT, max(0, round(current / declared * 100)))
             best_percent = max(best_percent, percent)
-            line = (
-                f"ingest: fetching {video_id} — {_human(current)} of "
-                f"~{_human(declared)} ({best_percent}%)"
-            )
         else:
-            line = f"ingest: fetching {video_id} — {_human(current)} so far"
-        print(line, file=sys.stderr)
+            best_percent = 0
+        line = _report(video_id, current, declared, best_percent)
+        if tty:
+            sys.stderr.write(f"\r{line}\x1b[K")
+            sys.stderr.flush()
+        else:
+            print(line, file=sys.stderr)
 
 
 def run(
@@ -250,6 +277,7 @@ def run(
             raise FetchError(f"the fetcher failed for {video_id} (exit {result.returncode})")
         return
 
+    tty = sys.stderr.isatty()
     proc = subprocess.Popen(
         command,
         shell=True,
@@ -260,11 +288,17 @@ def run(
         errors="replace",
     )
     stop = threading.Event()
-    watcher = threading.Thread(target=_watch, args=(dest, video_id, stop), daemon=True)
+    watcher = threading.Thread(target=_watch, args=(dest, video_id, stop, tty), daemon=True)
     watcher.start()
     output, _ = proc.communicate()
     stop.set()
     watcher.join()
+    if tty:
+        # end the redrawn line with a real newline: whatever prints next — the
+        # failure replay, the closing account — starts fresh rather than tailing
+        # onto the bar.
+        sys.stderr.write("\n")
+        sys.stderr.flush()
     if proc.returncode != 0:
         if output:
             sys.stderr.write(output if output.endswith("\n") else output + "\n")

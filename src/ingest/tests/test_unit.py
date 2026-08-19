@@ -465,3 +465,67 @@ def test_heartbeat_cadence_is_roughly_three_seconds():
 
 def test_max_percent_never_exceeds_the_cap():
     assert fetch.MAX_PERCENT == 99
+
+
+# --- SPEC-ingest-004 (amended): a TTY redraws one bar instead of stacking ---
+
+
+def test_bar_fills_monotonically_with_percent():
+    empty = fetch._bar(0)
+    half = fetch._bar(50)
+    full = fetch._bar(100)
+    assert len(empty) == len(half) == len(full) == fetch.BAR_WIDTH
+    assert empty.count("#") == 0
+    assert full.count("#") == fetch.BAR_WIDTH
+    assert 0 < half.count("#") < fetch.BAR_WIDTH
+
+
+def test_report_carries_the_percent_when_a_size_is_declared():
+    line = fetch._report(VID, 512, 1024, 50)
+    assert "(50%)" in line
+    assert VID in line
+    assert "[" in line and "]" in line  # the bar itself
+
+
+def test_report_degrades_to_plain_bytes_with_no_declared_size():
+    line = fetch._report(VID, 512, None, 0)
+    assert "%" not in line
+    assert VID in line
+
+
+def test_watch_off_a_tty_prints_one_full_line_per_report(tmp_path, capsys):
+    import threading
+
+    (tmp_path / "video.mp4").write_bytes(b"x" * 10)
+    stop = threading.Event()
+    stop.set()  # loop body never runs; exercised end-to-end by the durable evals
+    fetch._watch(tmp_path, VID, stop, tty=False)
+    assert capsys.readouterr().err == ""
+
+
+def test_watch_writes_bare_carriage_returns_when_tty(tmp_path):
+    import io
+    import threading
+    import time
+
+    (tmp_path / "video.mp4").write_bytes(b"x" * 10)
+    buf = io.StringIO()
+    buf.isatty = lambda: True
+    stop = threading.Event()
+
+    def stop_soon():
+        time.sleep(fetch.HEARTBEAT_S * 2.2)
+        stop.set()
+
+    real_stderr = fetch.sys.stderr
+    fetch.sys.stderr = buf
+    try:
+        t = threading.Thread(target=stop_soon)
+        t.start()
+        fetch._watch(tmp_path, VID, stop, tty=True)
+        t.join()
+    finally:
+        fetch.sys.stderr = real_stderr
+    seen = buf.getvalue()
+    assert seen.count("\r") >= 2
+    assert "\n" not in seen  # no scrollback — every report overwrites in place
