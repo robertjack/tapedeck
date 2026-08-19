@@ -181,7 +181,7 @@ def test_auto_true_with_no_maintainer_command_still_exits_0(home):
 
 def test_a_failing_maintainer_leaves_add_at_exit_0_with_the_library_intact(home):
     set_collection_pipeline(home)
-    configure_wiki(home, maintainer=ALWAYS_FAILS)
+    configure_wiki(home, auto=True, maintainer=ALWAYS_FAILS)
     r = run_cli(["add", VIDEO_A], home)
     assert r.returncode == 0, (
         f"a maintainer that fails is a wiki-filing failure, not a pipeline one:\n{r.stderr}"
@@ -208,7 +208,7 @@ def test_a_failing_maintainer_leaves_add_at_exit_0_with_the_library_intact(home)
 
 def test_collection_add_files_each_added_video(home):
     set_collection_pipeline(home)
-    configure_wiki(home, maintainer=GOOD)
+    configure_wiki(home, auto=True, maintainer=GOOD)
     r = run_cli(["add", PLAYLIST], home)
     assert r.returncode == 0, r.stderr
     pages = {vid: home / "wiki" / "sources" / f"{vid}.md" for vid in IDS}
@@ -236,7 +236,7 @@ def test_one_videos_filing_failure_neither_stops_the_sweep_nor_marks_it_failed(h
     assert control.returncode == 0, control.stderr
 
     set_collection_pipeline(home)
-    configure_wiki(home, maintainer=fails_for(failing))
+    configure_wiki(home, auto=True, maintainer=fails_for(failing))
     r = run_cli(["add", PLAYLIST], home)
 
     assert r.returncode == 0, (
