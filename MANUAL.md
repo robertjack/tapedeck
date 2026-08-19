@@ -72,10 +72,11 @@ Accepted forms: a full watch URL, youtu.be/ID, a shorts URL, or the bare
 video, never the whole playlist. Anything that isn't YouTube exits 2.
 
 `add` runs the full pipeline: download, transcribe, render the archive page,
-index it. Progress is quiet and legible: a byte count while the download
-runs — with a percentage against the expected size when the source declares
-one — the pipeline's own stage lines, then a close-out naming what just
-landed — title, channel, duration. When it finishes, the video is fully
+index it. Progress is quiet and legible: on a terminal, one animated bar
+filling 0–100 while the download runs (a plain byte count with the
+percentage when the output is piped, or when the source declares no size),
+the pipeline's own stage lines, then a close-out naming what just landed —
+title, channel, duration. When it finishes, the video is fully
 searchable. If a download fails, everything the download tool said is
 replayed in full, so the diagnosis is never hidden behind the quiet.
 

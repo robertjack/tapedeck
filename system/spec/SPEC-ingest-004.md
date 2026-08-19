@@ -40,6 +40,18 @@ line — because the tool's own words are the diagnosis. The production incident
 preserves: a 2026-08-17 DRM 403 (LESSON-0006) was diagnosable *only* from yt-dlp's
 raw output. Quiet means quiet on success; a failure has never been louder.
 
+**On a terminal, the report is a bar, not a stack of lines.** When stderr is a TTY,
+the periodic reports above collapse into **one line redrawn in place** — a bar
+filling from empty toward full alongside the same bytes, total and percent, redrawn
+smoothly (sub-second is fine; redrawing costs no scrollback) — finished with a real
+newline when the fetch ends so the closing account and everything after it stand on
+their own lines. The exact glyphs are the implementation's; one redrawn line,
+monotonic fill, and a clean final newline are the pinned shape. Anywhere stderr is
+not a TTY — a pipe, a log, a capturing eval — the line-per-report form above is
+unchanged, which is also what keeps every capture-based pin in this suite meaningful:
+animation is presentation for a person watching, never a change to what a program
+reading the stream observes.
+
 **`add --verbose` streams raw, as today.** The boundary gains the flag: with it, the
 fetcher's output passes straight through as it always has, no capture and no
 heartbeat — the user asked to watch the tool itself. Without it, the discipline above

@@ -24,9 +24,12 @@ command = "just eval ingest"
 # Raised 10000 -> 13000 for the cockpit round: SPEC-ingest-004, the
 # SPEC-ingest-001 default amendment, LESSON-0006 and test_fetcher_output.py.
 # Raised 13000 -> 14500: the percentage amendment and its two evals.
-context_tokens = 14500
+# Raised 14500 -> 16000: the TTY-bar amendment and its pty-driven eval.
+context_tokens = 16000
 # Raised 8000 -> 9500: capture-and-replay around the fetcher subprocess, the
 # staging-bytes heartbeat thread, and the --verbose flag on add's parser.
 # Raised 9500 -> 10500: the denominator read from staged metadata, the 99 cap,
 # and the monotonic display.
-src_tokens = 10500
+# Raised 10500 -> 11500: the TTY branch — one redrawn bar line vs the piped
+# line-per-report form.
+src_tokens = 11500

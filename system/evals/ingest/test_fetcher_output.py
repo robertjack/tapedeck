@@ -10,9 +10,15 @@ fails, because the tool's own words are the diagnosis (LESSON-0006's 403 was
 diagnosable only from them).
 """
 
+import os
+import pty
 import re
+import shlex
+import subprocess
+import sys
+import time
 
-from conftest import run_component, set_fetcher
+from conftest import REPO, TIMEOUT, run_component, set_fetcher
 
 NOISE = "YTDLP-NOISE-MARKER-8842"
 
@@ -143,6 +149,64 @@ def test_no_declared_size_keeps_the_plain_byte_line(home):
     assert r.returncode == 0, r.stderr
     assert "%)" not in r.stderr, (
         f"no declared size, no percentage:\n{r.stderr!r}"
+    )
+
+
+def _add_on_a_tty(home, *args):
+    """`python -m ingest add` with stderr on a pseudo-terminal, so the
+    component sees what a person's terminal is: a TTY. Returns (exit code,
+    everything written to that terminal, decoded)."""
+    cmd = os.environ.get("TAPEDECK_INGEST_CMD", f"{sys.executable} -m ingest")
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(
+        [*shlex.split(cmd), "add", *args],
+        cwd=REPO,
+        stdout=subprocess.DEVNULL,
+        stderr=slave,
+        env={
+            **os.environ,
+            "TAPEDECK_HOME": str(home),
+            "PYTHONPATH": os.pathsep.join(
+                [str(REPO / "src"), os.environ.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep),
+        },
+    )
+    os.close(slave)
+    chunks, deadline = [], time.monotonic() + TIMEOUT
+    while True:
+        assert time.monotonic() < deadline, "the TTY fetch never finished"
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:  # EOF on macOS pty
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+    os.close(master)
+    code = proc.wait(timeout=TIMEOUT)
+    return code, b"".join(chunks).decode(errors="replace")
+
+
+def test_a_tty_gets_one_redrawn_bar_not_a_stack_of_lines(home):
+    """A person watching gets animation: the periodic reports redraw one line
+    in place (bare carriage returns — a pty turns every real newline into
+    CRLF, so a \\r NOT followed by \\n is the redraw itself) and the percent
+    still appears. A program reading a pipe keeps the line-per-report form,
+    which the capture-based tests above already pin."""
+    set_fetcher(home, SIZED_SLOW)
+    code, seen = _add_on_a_tty(home, URL)
+    assert code == 0, seen
+    redraws = len(re.findall(r"\r(?!\n)", seen))
+    assert redraws >= 2, (
+        f"a TTY report redraws one line in place rather than stacking:\n{seen!r}"
+    )
+    assert re.search(r"\(\d+%\)", seen), f"the bar still carries the percent:\n{seen!r}"
+    stacked = [
+        line for line in seen.replace("\r\n", "\n").split("\n")
+        if "fetching" in line and "\r" not in line
+    ]
+    assert len(stacked) <= 2, (
+        f"the redrawn line must not also stack as scrollback:\n{stacked!r}"
     )
 
 
