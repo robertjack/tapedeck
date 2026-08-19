@@ -1,7 +1,7 @@
 # The Tapedeck Manual
 
 A local video brain. `add` a YouTube URL and the video is downloaded,
-transcribed on this machine, archived as readable markdown, and indexed —
+transcribed on your own machine, archived as readable markdown, and indexed —
 then `search` finds the moment and `ask` answers questions with timestamped
 deep links back into the videos. Everything lives in the library home
 (default `~/Tapedeck`, a plain folder you can open) and nothing leaves your
@@ -303,7 +303,7 @@ Check that it still holds together:
     tapedeck wiki lint
     tapedeck wiki lint --json
 
-`lint` is `doctor` (§10) one layer up: `doctor` asks whether this machine
+`lint` is `doctor` (§10) one layer up: `doctor` asks whether your machine
 can do the work, `lint` asks whether what the work produced is still true.
 The gate judges a filing the moment it lands, but the wiki keeps living
 after that — you rename a note, delete a page, edit a source page and take
@@ -513,8 +513,8 @@ Verbs:
     wiki rebuild [--yes]                   clear it and refile from zero
     wiki tend [--yes]                      read the whole wiki, then act
     adapt-parakeet                         parakeet JSON -> whisper shape
-    doctor [--json]                        check the seams and this machine
-    setup [--yes]                          first run: scaffold, check, remedy
+    doctor [--json]                        check the seams and your machine
+    setup [--yes|--refresh]                first run + tool updates, by consent
     help [<verb> | manual]                 this manual, in tiers
 
 Global options:
@@ -576,3 +576,10 @@ Troubleshooting (start with `tapedeck doctor`):
         known fix (§6 to inspect your fetcher_command), and
         `tapedeck setup --refresh` updates yt-dlp when the platform has
         simply moved on.
+    "Sign in to confirm you're not a bot"
+        YouTube has rate-limited your network address, usually after heavy
+        fetching in a short window. It clears on its own — wait a few hours
+        and re-run the add; nothing else about your library is affected.
+        yt-dlp's suggestion of browser cookies does work, but it attaches
+        your YouTube account to automated downloading, which YouTube has
+        been known to act on — treat it as a last resort, not a first fix.
