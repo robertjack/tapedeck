@@ -257,6 +257,11 @@ def test_read_info_skips_unreadable_json(tmp_path):
         fetch.read_info(tmp_path, VID)
 
 
+def test_read_info_is_none_before_any_json_lands(tmp_path):
+    assert fetch._load_info(tmp_path) is None
+    assert fetch._load_info(tmp_path / "nope") is None
+
+
 # --- normalization -------------------------------------------------------
 
 
@@ -434,3 +439,29 @@ def test_progress_is_read_from_staging_bytes_not_the_tool(tmp_path):
     (dest / "video.mp4").write_bytes(b"x" * 2048)
     assert fetch._dir_size(dest) == 2048
     assert re.search(r"\d+(\.\d+)?\s*(B|KB|MB)", fetch._human(fetch._dir_size(dest)))
+
+
+# --- SPEC-ingest-004 (amended): a declared size becomes a capped percentage --
+
+
+def test_declared_bytes_sums_requested_formats():
+    info = {"requested_formats": [{"filesize": 300000}, {"filesize_approx": 100000}]}
+    assert fetch._declared_bytes(info) == 400000
+
+
+def test_declared_bytes_falls_back_to_the_top_level_approximation():
+    assert fetch._declared_bytes({"filesize_approx": 999}) == 999
+    assert fetch._declared_bytes({"filesize": 111}) == 111
+
+
+def test_declared_bytes_is_none_with_no_size_anywhere():
+    assert fetch._declared_bytes({"title": "T"}) is None
+    assert fetch._declared_bytes({"requested_formats": [{"format_id": "137"}]}) is None
+
+
+def test_heartbeat_cadence_is_roughly_three_seconds():
+    assert 2 <= fetch.HEARTBEAT_S <= 3.5
+
+
+def test_max_percent_never_exceeds_the_cap():
+    assert fetch.MAX_PERCENT == 99

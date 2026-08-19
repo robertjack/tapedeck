@@ -20,8 +20,12 @@ one of our own staging directories (SPEC-ingest-003), and how the fetcher's own
 chatter is handled (SPEC-ingest-004). By default it is captured, not streamed:
 discarded on a clean exit, replayed in full — the tool's own words — the moment
 the exit is not clean, because that is the only diagnosis a DRM 403 ever gave us.
-While it runs, progress comes from the staging directory's bytes rather than
-from parsing the tool, so it is unchanged behind whatever the seam points at.
+While it runs, progress comes from the staging directory's bytes rather than from
+parsing the tool, refreshed every three seconds or so, so it is unchanged behind
+whatever the seam points at. When the staged info json already names an expected
+size (yt-dlp writes it before the video data moves), the heartbeat turns that
+into a percentage — capped at 99 and never decreasing, because merging streams
+can transiently overshoot the estimate and only a clean exit ever means done.
 """
 
 from __future__ import annotations
@@ -47,7 +51,8 @@ INFO_SUFFIX = "info.json"
 # in flight, and the sidecars it keeps beside the finished one.
 NOT_VIDEO = (".json", ".part", ".ytdl", ".temp", ".tmp", ".description", ".webp", ".jpg", ".png")
 STDERR_FD = 2  # --verbose's streaming target: a fetcher's chatter is progress, not our stdout
-HEARTBEAT_S = 1.5  # cadence for the staging-bytes progress line while capturing
+HEARTBEAT_S = 2.5  # cadence for the staging-bytes progress line: every three seconds or so
+MAX_PERCENT = 99  # the estimate is approximate; only a clean exit ever says done
 
 # The staging directory's name grammar (SPEC-ingest-003, library-layout.md): a
 # fetch in progress or abandoned, never a stranger. Pinned here because three
@@ -150,7 +155,48 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-def _human(n: int) -> str:
+def _load_info(dest: Path) -> dict | None:
+    """The fetcher's metadata sidecar, if one is already on disk and readable —
+    None otherwise, never raised. Used both by the heartbeat, which asks mid-fetch
+    when the file may not exist yet or may still be mid-write, and by `read_info`
+    below, which asks once the tool has exited and treats a miss as a failure."""
+    if not dest.is_dir():
+        return None
+    candidates = sorted(dest.glob("*.json"))
+    candidates.sort(key=lambda path: not path.name.endswith(INFO_SUFFIX))
+    for path in candidates:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(document, dict):
+            return document
+    return None
+
+
+def _size_field(source: dict) -> float | None:
+    for key in ("filesize", "filesize_approx"):
+        value = source.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+def _declared_bytes(info: dict) -> float | None:
+    """The expected total the staged info json names, when it names one at all
+    (SPEC-ingest-004): the requested formats' sizes summed, or the top-level
+    approximation when that is all the fetcher wrote. A bonus read from files
+    already on disk — never a requirement, never a parse of the tool's stream."""
+    formats = info.get("requested_formats")
+    if isinstance(formats, list) and formats:
+        sizes = [_size_field(fmt) for fmt in formats if isinstance(fmt, dict)]
+        found = [size for size in sizes if size is not None]
+        if found:
+            return sum(found)
+    return _size_field(info)
+
+
+def _human(n: float) -> str:
     size = float(n)
     for unit in ("B", "KB", "MB"):
         if size < 1024 or unit == "MB":
@@ -162,9 +208,25 @@ def _human(n: int) -> str:
 def _watch(dest: Path, video_id: str, stop: threading.Event) -> None:
     """Reports staging bytes on our own stderr every few seconds, only while the
     fetcher is running — a handful of lines for a typical download, never a
-    firehose, and unaffected by which tool sits behind the seam."""
+    firehose, and unaffected by which tool sits behind the seam. When the staged
+    info json already names an expected size, the line becomes a percentage
+    against it; the percent only ever climbs, because the estimate is approximate
+    and the actual bytes can transiently pass it while streams merge."""
+    best_percent = 0
     while not stop.wait(HEARTBEAT_S):
-        print(f"ingest: fetching {video_id} — {_human(_dir_size(dest))} so far", file=sys.stderr)
+        current = _dir_size(dest)
+        info = _load_info(dest)
+        declared = _declared_bytes(info) if info else None
+        if declared and declared > 0:
+            percent = min(MAX_PERCENT, max(0, round(current / declared * 100)))
+            best_percent = max(best_percent, percent)
+            line = (
+                f"ingest: fetching {video_id} — {_human(current)} of "
+                f"~{_human(declared)} ({best_percent}%)"
+            )
+        else:
+            line = f"ingest: fetching {video_id} — {_human(current)} so far"
+        print(line, file=sys.stderr)
 
 
 def run(
@@ -259,16 +321,10 @@ def read_info(dest: Path, video_id: str) -> dict:
     in `info.json` is the same promise, and a lone `.json` is taken as the sidecar
     too so a thinner fetcher still satisfies the seam.
     """
-    candidates = sorted(dest.glob("*.json")) if dest.is_dir() else []
-    candidates.sort(key=lambda path: not path.name.endswith(INFO_SUFFIX))
-    for path in candidates:
-        try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if isinstance(document, dict):
-            return document
-    raise FetchError(
-        f"the fetcher wrote no readable info json for {video_id} — there is no "
-        "metadata to build meta.json from"
-    )
+    document = _load_info(dest)
+    if document is None:
+        raise FetchError(
+            f"the fetcher wrote no readable info json for {video_id} — there is no "
+            "metadata to build meta.json from"
+        )
+    return document
