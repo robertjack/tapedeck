@@ -33,10 +33,9 @@ still there, still readable.
   across videos, every link verified. It reads beautifully in
   [Obsidian](https://obsidian.md) and compounds as your library grows. Filings
   run in the background under your own `claude` account and cost real money —
-  typically a few dollars of agent work per video. **If Claude Code is on your
-  PATH, auto-filing is on from the first `add`**; it does nothing without
-  `claude` installed, and one line turns it off entirely
-  (`[wiki] auto = false` in config.toml — see `tapedeck help manual`).
+  typically a few dollars of agent work per video — so **auto-filing ships
+  off**: one deliberate line turns it on (`[wiki] auto = true` in config.toml
+  — see `tapedeck help manual`), and until then `add` never spends a cent.
 
 ## Install (macOS, Apple Silicon)
 

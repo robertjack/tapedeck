@@ -59,20 +59,23 @@ sends the user hunting through a completed library for what actually broke is no
 about the epilogue can damage the library either, since everything the maintainer and its
 gate touch is under `wiki/` and rolls back there.
 
-Whether the epilogue runs at all is `[wiki].auto`, and **an absent key reads true**. The
-first-run `config.toml` scaffold gains a `[wiki]` section beside the others in its existing
-commented style: `auto = true`, and `maintainer_command` set to SPEC-wiki-002's published
-default verbatim,
-`claude -p --permission-mode acceptEdits --allowedTools "Read,Grep,Glob,Write,Edit"`, so
-the seam and the switch are visible and editable on the first day like every other default
-(SPEC-core-004). The absent key must read the same way the scaffold writes it, because the
-alternative is two defaults for one question — the shipped file saying `true` while a
-config written before this clause silently means `false` — and a user would then get
-different behavior from the same tool depending on the age of a file they never edited.
-There is one default, the scaffold writes it down, and the code agrees with what it wrote.
-Turning the epilogue off is `auto = false`, an edit the user made on purpose, and it means
-`add` never touches the wiki: no maintainer, no note, no mention of a wiki at all, since
-silence is the whole content of the request.
+Whether the epilogue runs at all is `[wiki].auto`, and **an absent key reads false**
+(amended for the public era — it originally read true). A filing is minutes of real
+agent work billed to whatever account the maintainer seam names, and this tool is now
+installed by strangers: a first `add` that quietly spends their money is the consent
+failure `setup` was specifically designed never to commit, applied to a bigger bill.
+The wiki starts silent and is turned on by one deliberate line. The first-run
+`config.toml` scaffold still writes the whole `[wiki]` section in its existing
+commented style — `auto = false`, a comment saying what turning it on costs and does,
+and `maintainer_command` set to SPEC-wiki-002's published default verbatim,
+`claude -p --permission-mode acceptEdits --allowedTools "Read,Grep,Glob,Write,Edit"` —
+so the seam and the switch are visible and editable on the first day like every other
+default (SPEC-core-004). The rule that matters is unchanged: the absent key must read
+the same way the scaffold writes it — one default, written down, the code agreeing
+with what it wrote — and that shared value is now `false`. A config that says
+`auto = true` is an edit the user made on purpose, and it means exactly what it always
+meant; absent or `false`, `add` never touches the wiki: no maintainer, no note, no
+mention of a wiki at all, since silence is the whole content of the request.
 
 `rm` gains one sentence of its own. When `rm <id>` removes a video — full removal, not
 `--media-only` — and `wiki/sources/<id>.md` exists, the cli prints one note on stderr

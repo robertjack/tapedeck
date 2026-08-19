@@ -193,7 +193,7 @@ is yours.
     [ask]     librarian_command    the default ask agent
     [ask]     answerer_command     the --fast answerer
     [wiki]    maintainer_command   the agent that writes the wiki (§9)
-    [wiki]    auto                 file each added video (default true)
+    [wiki]    auto                 file each added video (default false — costs money)
 
 Each seam runs as a shell command with its inputs in environment variables,
 documented in comments above each line.
@@ -393,27 +393,28 @@ keep. tapedeck never rewrites it, and the maintainer is forbidden to touch
 it — a filing that edited its own instructions is rejected on that alone.
 Rewriting it wholesale is the intended end state, not a fault.
 
-Filing happens automatically, in the background. Every `tapedeck add`
-that finishes hands its videos to a filing worker and returns — your
-terminal is back when the video is downloaded, transcribed and indexed,
-usually a minute or two, while the filings (ten-plus minutes of agent work
-each) continue on their own, in the order the sweep added them. `add`
-prints one line saying so; accepted filings appear as commits and log
-entries, and if two adds overlap, the second's filings wait their turn
-instead of being dropped. It is an epilogue, not a stage: a filing that
-fails changes nothing about `add` — same exit code, same counts, same
-sweep — and leaves its video unfiled, where `wiki sync --dry-run` will
-name it and `wiki sync` will file it. If you never configured a
-maintainer, `add` still says so on stderr right away. Each filing is
+Auto-filing is opt-in, because it spends your money: each filing is
 minutes of real agent work billed to your configured `claude` account —
-typically a few dollars per video — so auto-filing is a choice about
-spend as much as about convenience. Turn it all off with one line in
-`config.toml`:
+typically a few dollars per video. It ships off; one line in
+`config.toml` turns it on:
 
     [wiki]
-    auto = false
+    auto = true
 
-Then the wiki changes only when you ask it to.
+Once on, every `tapedeck add` that finishes hands its videos to a filing
+worker and returns — your terminal is back when the video is downloaded,
+transcribed and indexed, usually a minute or two, while the filings
+(ten-plus minutes of agent work each) continue on their own, in the order
+the sweep added them. `add` prints one line saying so; accepted filings
+appear as commits and log entries, and if two adds overlap, the second's
+filings wait their turn instead of being dropped. It is an epilogue, not
+a stage: a filing that fails changes nothing about `add` — same exit
+code, same counts, same sweep — and leaves its video unfiled, where
+`wiki sync --dry-run` will name it and `wiki sync` will file it. If auto
+is on but you never configured a maintainer, `add` says so on stderr
+right away. With auto off (or absent), `add` never touches the wiki at
+all — filing stays a thing you do on purpose, with `wiki file` or
+`wiki sync`.
 
 Read it in Obsidian. Point Obsidian at `wiki/` — "Open folder as vault" —
 and the wikilinks, the backlinks and the graph all work with no
@@ -564,7 +565,8 @@ Troubleshooting (start with `tapedeck doctor`):
         added, indexed and searchable. `tapedeck wiki sync --dry-run`
         names everything unfiled and `tapedeck wiki sync` files it; run
         `tapedeck wiki file <id>` in the foreground to watch why it
-        fails, or set `[wiki] auto = false` (§9) to stop trying.
+        fails. (And if you never turned auto-filing on — it ships off,
+        §9 — there is no page because nothing was ever asked to write one.)
     a leftover video.part
         An interrupted download; the entry counts as having no video, and
         the next add fetches it fresh.

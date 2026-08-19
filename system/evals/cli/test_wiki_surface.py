@@ -338,11 +338,12 @@ def test_rebuild_without_yes_previews_and_changes_nothing(home, monkeypatch):
 
 
 def test_the_first_run_config_carries_the_wiki_section(tmp_path):
-    """A fresh install can file without editing anything: the scaffold ships the
-    published maintainer default and auto-filing already on, in the same commented
-    style as the seams beside it. The default is compared whole — a command that
-    grants the agent one more tool than SPEC-wiki-002 published is a different
-    default, not a formatting difference."""
+    """A fresh install sees the whole wiki seam — the published maintainer
+    default and the auto switch — but the switch ships OFF (SPEC-cli-009,
+    amended): a filing costs real money on the user's own account, and the
+    first add must never spend it unasked. The maintainer default is compared
+    whole — a command that grants the agent one more tool than SPEC-wiki-002
+    published is a different default, not a formatting difference."""
     home = tmp_path / "fresh" / "deck"  # does not exist yet
     assert run_cli(["list"], home).returncode == 0
 
@@ -353,9 +354,9 @@ def test_the_first_run_config_carries_the_wiki_section(tmp_path):
         f"the scaffolded seam is not SPEC-wiki-002's published default: "
         f"{config['wiki'].get('maintainer_command')!r}"
     )
-    assert config["wiki"]["auto"] is True, (
-        f"auto-filing ships on, written out rather than left to be inferred: "
-        f"{config['wiki'].get('auto')!r}"
+    assert config["wiki"]["auto"] is False, (
+        f"auto-filing ships off, written out rather than left to be inferred — "
+        f"the wiki spends only when asked: {config['wiki'].get('auto')!r}"
     )
 
 

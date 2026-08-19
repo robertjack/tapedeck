@@ -129,23 +129,34 @@ def library_artifacts_intact(home, video_id):
 
 def test_auto_toggle_controls_whether_add_files_the_wiki(home):
     """One home, two unrelated videos, the config edited between the two adds:
-    the only variable across them is `[wiki].auto`, so the difference in
-    outcome is the toggle's doing — and the second half is what keeps this red
-    today rather than passing because nothing about the wiki was attempted."""
+    the only variable across them is `[wiki].auto`. Amended for the public
+    era (SPEC-cli-009): the wiki spends only when asked, so an ABSENT key —
+    every fresh install, every stranger with claude on PATH — never touches
+    the wiki, and `auto = true` is the deliberate line that turns it on."""
     set_collection_pipeline(home)
-    configure_wiki(home, auto=False, maintainer=MUST_NOT_RUN)
+    configure_wiki(home, maintainer=MUST_NOT_RUN)  # no `auto` key at all
     r_off = run_cli(["add", VIDEO_A], home)
     assert r_off.returncode == 0, r_off.stderr
-    assert not (home / "wiki").exists(), "auto = false must never touch the wiki at all"
-    assert not (home / "maintainer-ran").exists(), "the maintainer ran despite auto = false"
 
     set_collection_pipeline(home)  # rebuild the shared config.toml before re-appending
-    configure_wiki(home, maintainer=GOOD)  # no `auto` key: the shipped default is true
+    configure_wiki(home, auto=True, maintainer=GOOD)  # the deliberate opt-in
     r_on = run_cli(["add", VIDEO_B], home)
     assert r_on.returncode == 0, r_on.stderr
     page = home / "wiki" / "sources" / f"{VIDEO_B}.md"
-    settled(page.is_file, "an absent `auto` key must read true and file the video")
+    settled(page.is_file, "auto = true is the opt-in and must file the video")
     assert VIDEO_B in page.read_text()
+
+    # Only now is the negative deterministic: B's filing landed, and any worker
+    # A's add had wrongly spawned ran serially ahead of B's behind the wiki
+    # lock — so A's absence of traces is proof, not a race won by asserting
+    # before a detached worker got started.
+    assert not (home / "maintainer-ran").exists(), (
+        "an absent auto key reads false: a first add must never spend the "
+        "user's agent budget unasked"
+    )
+    assert not (home / "wiki" / "sources" / f"{VIDEO_A}.md").exists(), (
+        f"{VIDEO_A} was filed despite auto being absent"
+    )
 
 
 # --- filing failures cost the wiki, never the pipeline or add's exit code ----
