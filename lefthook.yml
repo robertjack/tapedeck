@@ -7,4 +7,9 @@
 commit-msg:
   commands:
     phx-gate:
-      run: phx gate {1}
+      # Degrades gracefully for contributors: the gate binary is part of a
+      # private harness, so a clone without it commits normally and the
+      # provenance discipline is enforced on the maintainer's side.
+      run: >-
+        sh -c 'command -v phx >/dev/null && exec phx gate "$1" ||
+        echo "phx-gate skipped - harness not installed"' -- {1}
