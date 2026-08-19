@@ -10,9 +10,25 @@ name = "tapedeck-cli"
 # the one place the version is written; `tapedeck --version` reads it back out of
 # the installed distribution's metadata (SPEC-cli-006)
 version = "0.3.0"
-description = "A local video brain: download, transcribe, archive, ask"
+description = "Your local video brain: download YouTube videos, transcribe on-device, search every spoken moment, ask questions with verified timestamped citations"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = []
+keywords = ["youtube", "transcription", "search", "video", "knowledge-base", "whisper", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+]
+
+[project.urls]
+Repository = "https://github.com/robertjack/tapedeck"
+Issues = "https://github.com/robertjack/tapedeck/issues"
 
 [project.scripts]
 tapedeck = "cli.main:main"

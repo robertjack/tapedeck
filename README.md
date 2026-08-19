@@ -1,5 +1,7 @@
 # tapedeck
 
+[![evals](https://github.com/robertjack/tapedeck/actions/workflows/evals.yml/badge.svg)](https://github.com/robertjack/tapedeck/actions/workflows/evals.yml)
+
 **Your local video brain.** Point it at a YouTube video and it downloads it,
 transcribes it on your own machine, archives it as readable markdown, and makes
 every spoken moment searchable — then answers your questions with citations that
@@ -30,8 +32,11 @@ still there, still readable.
   an interlinked knowledge base: one page per video, notes for ideas that recur
   across videos, every link verified. It reads beautifully in
   [Obsidian](https://obsidian.md) and compounds as your library grows. Filings
-  run in the background and are billed to your own `claude` account — a few
-  dollars per video, off by default until you configure it.
+  run in the background under your own `claude` account and cost real money —
+  typically a few dollars of agent work per video. **If Claude Code is on your
+  PATH, auto-filing is on from the first `add`**; it does nothing without
+  `claude` installed, and one line turns it off entirely
+  (`[wiki] auto = false` in config.toml — see `tapedeck help manual`).
 
 ## Install (macOS, Apple Silicon)
 

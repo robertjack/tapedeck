@@ -1,88 +1,52 @@
-# Distribution prep
+# Distribution status
 
-This is a checklist, not a plan already put into motion — nothing has been
-published anywhere. No git remote is configured and no package has been
-uploaded. Everything below is either already done in-repo, or is an open
-decision with the exact commands to run once the decision is made.
+**tapedeck is a live public project** as of 2026-08-19:
+https://github.com/robertjack/tapedeck — MIT-licensed, CI green on every push.
+This file tracks what's done and what remains between here and
+`uv tool install tapedeck-cli` working for the whole world.
 
-## Already done
+## Done
 
-- **CI**: `.github/workflows/evals.yml` runs the durable eval suite
-  (`system/evals`) on `macos-latest` for every push and PR, via `uv run
-  --with pytest pytest system/evals -q`. The seam tools (yt-dlp, ffmpeg,
-  mlx_whisper, etc.) are faked by the evals' fixtures, so the CI job needs
-  no `brew install` steps.
-- **Versioning**: `pyproject.toml` `[project].version` is the single source
-  of truth (currently `0.2.0`); `tapedeck --version` reads it back out of
-  installed distribution metadata (SPEC-cli-006).
-- **Doctor / setup**: `tapedeck setup` (`src/cli/setup.py`) is the
-  first-run wizard — it creates the library home and runs the same checks
-  as `tapedeck doctor` (`src/cli/doctor.py`), naming the exact command to
-  close any gap (e.g. `uv tool install mlx-whisper`, `brew install
-  ffmpeg`). It installs nothing without consent.
+- **Public GitHub repo** with `origin` remote; history audited (gitleaks
+  clean, no secrets, operator-specific paths untracked via CLAUDE.local.md).
+- **License**: MIT (`LICENSE`, detected by GitHub, declared in pyproject).
+- **CI**: `.github/workflows/evals.yml` runs the durable eval suite on
+  `macos-latest` for every push and PR. Seam tools are faked by the evals'
+  fixtures; ffmpeg is the one real-PATH dependency (doctor/setup check it
+  genuinely) and the workflow installs it.
+- **Package identity**: distribution `tapedeck-cli` (PyPI's `tapedeck` is an
+  unrelated squatted project), executable `tapedeck`, version single-sourced
+  in pyproject (`0.3.0`), full PyPI metadata (readme, license, urls,
+  classifiers).
+- **Docs for strangers**: README (user-facing), MANUAL (shipped in the wheel,
+  `tapedeck help manual`), CONTRIBUTING (how the spec-first build works, what
+  merges), and a commit gate that degrades gracefully on clones without the
+  private harness.
 
-## Open decisions
+## Remaining: publish to PyPI
 
-### 1. Should the repo be made public?
-
-Currently local-only, no remote. If/when the answer is yes:
-
-```sh
-gh repo create tapedeck --public --source=. --remote=origin --push
-```
-
-(use `--private` instead of `--public` to keep it private but hosted, e.g.
-to unblock CI runs on GitHub before a public launch).
-
-### 2. What PyPI project name? — DECIDED 2026-08-18
-
-`tapedeck-cli` (pyproject renamed, SPEC-cli-006 amended; the executable stays
-`tapedeck`). To publish once credentials are in hand:
+Needs a PyPI account token (never stored in this repo):
 
 ```sh
-uv build
-uv publish   # needs a PyPI token (UV_PUBLISH_TOKEN or ~/.pypirc)
+uv build                      # sdist + wheel into dist/
+UV_PUBLISH_TOKEN=... uv publish
 ```
 
-Original notes:
-
-
-Checked on 2026-08-13:
-
-| Name            | Status                                    |
-|-----------------|--------------------------------------------|
-| `tapedeck`      | **taken** — an unrelated "music player" project (v0.0.5) already owns it |
-| `tapedeck-cli`  | **available** (PyPI returns 404)          |
-
-`pyproject.toml` currently declares `name = "tapedeck"`, which cannot be
-published as-is. Decision needed: rename the PyPI distribution to
-`tapedeck-cli` (keeping the `tapedeck` console-script entry point — users
-would still type `tapedeck ...`, only `pip install tapedeck-cli` differs),
-or pick another free name. Re-check availability before publishing, since
-names can be claimed between now and then:
+Then smoke the public path from a machine (or empty uv cache) that has never
+seen this repo:
 
 ```sh
-curl -s -o /dev/null -w '%{http_code}\n' https://pypi.org/pypi/<name>/json
-# 404 = free, 200 = taken
+uv tool install tapedeck-cli
+tapedeck --version            # 0.3.0
+tapedeck setup
 ```
 
-Once a name is chosen and set in `pyproject.toml`:
+Release cadence after that: bump `[project].version`, tag (`git tag v0.3.x &&
+git push --tags`), `uv build && uv publish`.
 
-```sh
-uv build
-uv publish   # prompts for a PyPI API token, or set UV_PUBLISH_TOKEN
-```
+## Later, if wanted
 
-### 3. Homebrew tap later?
-
-Not required for a first release (`uv tool install tapedeck-cli` covers
-the documented install path in MANUAL.md). If wanted later, once the repo
-is public and a release is tagged:
-
-```sh
-gh repo create <you>/homebrew-tapedeck --public
-# then add a Formula/tapedeck.rb built from the PyPI sdist/wheel URL + sha256
-```
-
-No commands in this file have been run against any remote service other
-than the read-only PyPI availability checks above.
+- **Homebrew tap** (`brew install robertjack/tap/tapedeck`) — the most natural
+  channel for the Mac users this targets; worth doing once PyPI installs are
+  proven.
+- **GitHub release notes** per version, generated from the spec tickets.
