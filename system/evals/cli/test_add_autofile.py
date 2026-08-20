@@ -13,8 +13,9 @@ system/evals/cli on pytest's collection path.
 
 What Round 3 pins: after each video's ingest -> transcribe -> archive -> index
 chain succeeds inside `add`, the cli files that id into the wiki as a
-best-effort epilogue, gated by `[wiki].auto` (absent or true files it, false
-never touches the wiki at all). A filing that cannot happen costs `add`
+best-effort epilogue, gated by `[wiki].auto` — which since SPEC-cli-009's
+amendment ships off: `true` files, absent or `false` never touches the wiki
+at all. A filing that cannot happen costs `add`
 nothing: not its exit code, not the library the pipeline already produced, and
 not the collection summary's accounting of what the sweep did.
 
@@ -100,6 +101,19 @@ def settled(condition, message):
         time.sleep(0.2)
 
 
+def filed(page, video_id):
+    """True once `page` exists *and* carries its video id.
+
+    Existence alone is not the signal. The maintainer writes its page with a
+    shell redirect, which creates the file before a byte of content reaches
+    it, so a poll that stops at `is_file()` can hand back a page that is still
+    empty — CI caught exactly that on 2026-08-20, reading '' out of a page
+    whose filing was mid-write. Polling the content the assertion actually
+    needs closes the window without pretending to know the implementation's
+    internals."""
+    return page.is_file() and video_id in page.read_text()
+
+
 def configure_wiki(home, *, auto=None, maintainer=None):
     """Append the `[wiki]` seam (SPEC-wiki-002) to a config.toml a fetcher and
     transcriber seam have already written. config.toml is one file every seam
@@ -143,8 +157,10 @@ def test_auto_toggle_controls_whether_add_files_the_wiki(home):
     r_on = run_cli(["add", VIDEO_B], home)
     assert r_on.returncode == 0, r_on.stderr
     page = home / "wiki" / "sources" / f"{VIDEO_B}.md"
-    settled(page.is_file, "auto = true is the opt-in and must file the video")
-    assert VIDEO_B in page.read_text()
+    settled(
+        lambda: filed(page, VIDEO_B),
+        "auto = true is the opt-in and must file the video",
+    )
 
     # Only now is the negative deterministic: B's filing landed, and any worker
     # A's add had wrongly spawned ran serially ahead of B's behind the wiki
@@ -213,11 +229,9 @@ def test_collection_add_files_each_added_video(home):
     assert r.returncode == 0, r.stderr
     pages = {vid: home / "wiki" / "sources" / f"{vid}.md" for vid in IDS}
     settled(
-        lambda: all(p.is_file() for p in pages.values()),
-        f"unfiled: {[v for v, p in pages.items() if not p.is_file()]}",
+        lambda: all(filed(p, v) for v, p in pages.items()),
+        f"unfiled: {[v for v, p in pages.items() if not filed(p, v)]}",
     )
-    for vid, page in pages.items():
-        assert vid in page.read_text()
 
 
 def test_one_videos_filing_failure_neither_stops_the_sweep_nor_marks_it_failed(home):
@@ -246,10 +260,10 @@ def test_one_videos_filing_failure_neither_stops_the_sweep_nor_marks_it_failed(h
         assert library_artifacts_intact(home, vid), (
             f"{vid}'s pipeline output must be untouched by the wiki failure"
         )
-    survivors = [home / "wiki" / "sources" / f"{IDS[0]}.md",
-                 home / "wiki" / "sources" / f"{IDS[2]}.md"]
+    survivors = [(IDS[0], home / "wiki" / "sources" / f"{IDS[0]}.md"),
+                 (IDS[2], home / "wiki" / "sources" / f"{IDS[2]}.md")]
     settled(
-        lambda: all(p.is_file() for p in survivors)
+        lambda: all(filed(p, v) for v, p in survivors)
         and (home / f"attempted-{failing}").exists(),
         "the sweep's other filings (or the failing attempt) never landed",
     )

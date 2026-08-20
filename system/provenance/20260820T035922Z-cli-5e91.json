@@ -1,0 +1,79 @@
+{
+  "id": "gen-20260820T035922Z-cli-5e91",
+  "component": "cli",
+  "trigger": {
+    "kind": "drift",
+    "refs": [
+      "Flaky eval repair: test_add_autofile.py and test_add_detach.py polled for a source page to EXIST and then read its content, but the maintainer creates the page by shell redirect before writing into it — CI read an empty page on 2026-08-20 (run 32329458835). The polls now settle on the content each assertion needs, and the sweep-order test settles on the chronology rather than on pages that appear before it. Test-only change; no clause moved and no code is owed."
+    ]
+  },
+  "root_hash": "sha256:5e9156cd66ae3b3d3721af560f1713dfe8d92b1af1d9bbb85438dad3a8c17183",
+  "generator": {
+    "tool": "hand",
+    "model": null,
+    "session_ref": "claude-code:71067f13-e904-451b-9a81-68e9d08df4a7"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "skipped"
+  },
+  "escape_hatch": null,
+  "attempts": 0,
+  "duration_s": 0,
+  "transient_retries": 0,
+  "notes": "Re-attestation, not a generation: src/cli is byte-identical to what gen-20260820T024027Z-cli-f2b8 produced. Only eval sources moved, so the root hash moved with them; 306/306 durable evals green, cli suite run three times for flake.",
+  "inputs": {
+    "manifest": "sha256:6a8d043db61b819b28cd0142eb80493e921c796805dc58260d562d5e86d713f8",
+    "clauses": {
+      "SPEC-cli-001": "sha256:63d955a7a7651e48f1c5fac7aa591463eb4e22304430b5649093ed968a4b3425",
+      "SPEC-cli-002": "sha256:d93260f40d918251e700ce4185b44249bfa984eeab383f1011cbc7ff307828ad",
+      "SPEC-cli-003": "sha256:5fd4ef02cda9afdf75d1963a3ef769d4c36fef4973c6673f607dddf167e5f6cb",
+      "SPEC-cli-004": "sha256:1a2e5a8db8af8e2a3182b06eae8eca1b5e5ac0081509a3716045839ada36961e",
+      "SPEC-cli-005": "sha256:e244ac3111380ec3bc0a030a000659274774e945430a5ad8c4abebbfa9ea40d9",
+      "SPEC-cli-006": "sha256:5ba2e8b5a66607a0b9420af021e65186ab17a53b5cee07abf6bb2fa5621b11e0",
+      "SPEC-cli-007": "sha256:320ce72e7a1564b6a8a6a26818284c5bdb276057a3b3180c954089dd8e3b3913",
+      "SPEC-cli-008": "sha256:15451335ef159e368bd9c857c5414cfb74e8cd42fe4252cef5f9d161416f2a70",
+      "SPEC-cli-009": "sha256:b77c2debead8bcb611b9efa43a376a66c871e644dcb62d86684ff9e8352b619b",
+      "SPEC-cli-010": "sha256:34b8ee8024308b88672dfd5becdd0619ccf183e0f72b96723a706b8cb4d50c9a",
+      "SPEC-cli-011": "sha256:9b6f68f3b0965b7a47dd38c783091e1cc435354501f221d45680aaea190f1e50",
+      "SPEC-cli-012": "sha256:b174ae5c1b47c9e8a677d5543e24183412431ea4a4149b1c25f8aefa8a2cda7f",
+      "SPEC-cli-013": "sha256:3f6f7710dfc1709541c879eb833371299985fe12693805de975a5850cebc077c",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/cli-surface.md": "sha256:c80c729db75636a3292ac0c59be570a677be30546a5cefc7a4fcbd1555b58bb2"
+    },
+    "eval_sources": {
+      "system/evals/cli/test_add_autofile.py": "sha256:5d4067294e9445895efd23503c40c3b42d6213cb27e23c843f7e6bbd61fcf7e7",
+      "system/evals/cli/test_add_collection.py": "sha256:24e54181ad822acbcd0d3a527654680225a085130a12386f38cff7f2c91ff506",
+      "system/evals/cli/test_add_detach.py": "sha256:005f48a36f20d0f5385271715a630045f636d202f3dd66be99c3a8fb65e1dd4a",
+      "system/evals/cli/test_add_display.py": "sha256:9b2e9bcac2a2c3c36a1eccad83e6a838cc3defb78edcf4b62e12868fa11d732d",
+      "system/evals/cli/test_cli.py": "sha256:7be00edcfdaa08244afc29a92882139fe3c026e4ca4f7211fe3eda46d1befe54",
+      "system/evals/cli/test_doctor.py": "sha256:b7b463558fffec7bd7de69dcbacfa0295997e908d0cf983f67d5aa56e8601e09",
+      "system/evals/cli/test_help.py": "sha256:bccc4522447f7f56fc48d56619303ce06bf9effff2cbed9955851ac34f3499fe",
+      "system/evals/cli/test_portability.py": "sha256:35909122ce6649f2e3f27cb73f856cc305822d17600ab9a479c1a171390e1563",
+      "system/evals/cli/test_retranscribe.py": "sha256:1927d5ad0030681ed265625f8dc92d5aa92f88a7f8a53364a3a89f8dfe581e58",
+      "system/evals/cli/test_rm.py": "sha256:666a41c2155ce70b91f98e4d6772979d3571f6694c309df10bbf3e666d53aa1e",
+      "system/evals/cli/test_setup.py": "sha256:bf8b1b6732d995b7d1a9fb85487076e3c3b3f98c851954d025e90c631ae714c6",
+      "system/evals/cli/test_staging_notes.py": "sha256:a1b7d28b08aeca8f73afb807563f35f71991c8419f2f1f85f70c8a44dd2174f1",
+      "system/evals/cli/test_wiki_surface.py": "sha256:2d645d05a57b44d3c810fde666232806ddbdb6c5215f7dc36843066c13272d2e"
+    },
+    "lessons": {
+      "LESSON-0003": "sha256:c8f5d869f21ef882ccf20dbe57346069f2788b654691d86dba3bdfbe07268030",
+      "LESSON-0005": "sha256:8cb8f31074e01f16a33c3f928e3d3a806f7f24051cd4707ccd6d5aa75528b126"
+    },
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:bb9bc0258920ba6692de9ad974abb490acf79331d6f1061b8b04bd05aab1c8ff"
+    },
+    "consumed_contracts": {
+      "system/contracts/ask-citations.md": "sha256:c39d794a33fe974b202551d46f51e4126e431290268152aed458a6f10f747c03",
+      "system/contracts/library-layout.md": "sha256:4e290db436ebeda51fa6eeca0460c8d7e9d76d83218f46fff9e87095e0f724f7",
+      "system/contracts/meta.schema.json": "sha256:98c560566ec2aea13d57aec61ed91cf6cb94a3aff698c909b640131e77f64bbd",
+      "system/contracts/transcript.schema.json": "sha256:5badcff15976c09aca2cd6ed396f815e4a7b27832fce287101d01d7b12358b5e",
+      "system/contracts/wiki-layout.md": "sha256:fe0848c01c06da9fee05d2119f41b6113c6260d12e9b83a97d5ef75e3b1b6e63"
+    }
+  }
+}

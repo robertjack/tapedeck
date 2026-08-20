@@ -124,10 +124,12 @@ def test_a_sweep_hands_off_every_video_and_the_log_keeps_sweep_order(home):
         f"one hand-off line per invocation, naming the wiki's log:\n{r.stderr!r}"
     )
 
-    pages = [home / "wiki" / "sources" / f"{vid}.md" for vid in IDS]
+    # Settle on the chronology itself, not on the pages: tapedeck writes the
+    # log entry after the maintainer exits, so pages appear first and a poll
+    # that stops at them can read a log the last filing has not reached yet.
     settle(
-        lambda: all(p.is_file() for p in pages),
-        f"not every filing landed: {[p.name for p in pages if not p.is_file()]}",
+        lambda: all(f"file | {vid}" in wiki_log(home) for vid in IDS),
+        "not every filing reached the chronology",
     )
     chronology = wiki_log(home)
     positions = [chronology.index(f"file | {vid}") for vid in IDS]
