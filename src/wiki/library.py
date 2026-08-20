@@ -53,15 +53,30 @@ def archive_page(home: Path, video_id: str) -> Path:
     return home / ARCHIVE / f"{video_id}.md"
 
 
+def _meta(home: Path, video_id: str) -> dict:
+    try:
+        parsed = json.loads((entry(home, video_id) / META).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def upload_date(home: Path, video_id: str) -> str:
     """When the material appeared, from the video's own metadata. An entry whose
     meta.json cannot be read sorts first and is filed all the same: the sweep's
     order is a choice about the artifact, not a precondition for making it."""
-    try:
-        meta = json.loads((entry(home, video_id) / META).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ""
-    return meta.get("upload_date", "") if isinstance(meta, dict) else ""
+    return _meta(home, video_id).get("upload_date", "")
+
+
+def video_url(home: Path, video_id: str) -> str:
+    """The video's own address, exactly as ingest wrote it (SPEC-ingest-005) — a
+    YouTube watch URL or a local file's `file://` path. This is the prefix every
+    deep link to this video must carry before its `t=` offset, which is what lets
+    the gate and `lint` recognize a citation without knowing where the video came
+    from. An entry whose meta.json cannot be read has no address to check
+    against, so callers fail closed rather than guessing one."""
+    url = _meta(home, video_id).get("url", "")
+    return url if isinstance(url, str) else ""
 
 
 def eligible(home: Path, note=None) -> list[str]:

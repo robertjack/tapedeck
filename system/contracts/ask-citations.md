@@ -3,7 +3,11 @@
 ## Librarian mode (default)
 
 The librarian answers in prose with **inline markdown deep links** as citations:
-`[label](https://www.youtube.com/watch?v=<id>&t=<seconds>s)`.
+`[label](https://www.youtube.com/watch?v=<id>&t=<seconds>s)` for a video from YouTube,
+and `[label](file:///path/to/video.mkv?t=<seconds>s)` for a local one — the layout
+contract's one deep-link rule, which is the video's own `url` carrying a `t=` offset.
+A local citation is resolved to its entry by the path it names; everything below
+applies to both forms identically.
 
 Mechanically enforced by tapedeck after the answer returns (SPEC-ask-001):
 

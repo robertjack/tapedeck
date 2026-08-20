@@ -70,13 +70,13 @@ def _named(paths: list[str], nothing: str, some: str) -> str:
     )
 
 
-def anchored(wiki: Path) -> list[str]:
+def anchored(home: Path, wiki: Path) -> list[str]:
     """The gate's rule about the page it just accepted, re-asked of every page ever
     accepted: prose survives edits that its citations do not."""
     return [
         f"{layout.name(wiki, page)} carries no deep link to {page.stem}"
         for page in layout.source_pages(wiki)
-        if not layout.cites(layout.read(page), page.stem)
+        if not layout.cites(layout.read(page), library.video_url(home, page.stem))
     ]
 
 
@@ -153,7 +153,7 @@ def rows(home: Path, wiki: Path) -> list[dict]:
             f"{len(layout.entries(log))} entry heading(s) match '{layout.ENTRY_SHAPE}'",
         )),
         ("sources", *_detail(
-            anchored(wiki),
+            anchored(home, wiki),
             f"all {len(layout.source_pages(wiki))} source page(s) cite their own video",
         )),
         ("filed", *_detail(

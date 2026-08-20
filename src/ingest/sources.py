@@ -10,14 +10,24 @@ The split between a video and a collection is decided by the URL alone
 carries a `list=` parameter, because that is what `--no-playlist` means. Only a
 URL with no video id of its own — a playlist, a channel — names a collection,
 and only those are worth asking an external lister about.
+
+A target naming a file that already exists on this machine is a video too
+(SPEC-ingest-005), and `resolve` checks the filesystem before it parses anything
+as a URL at all. Its id is not YouTube's: it is a digest of the file's own
+contents, so the same footage is the same entry however it is named or moved,
+and editing the footage is honestly a different video.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+ID_LENGTH = 11
+VIDEO_ID = re.compile(rf"[A-Za-z0-9_-]{{{ID_LENGTH}}}")
 VIDEO = "video"
 COLLECTION = "collection"
 
@@ -43,13 +53,49 @@ def canonical_url(video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
+def local_target(target: str) -> Path | None:
+    """The absolute path `target` names, if it is a file that already exists on
+    this machine — checked before `target` is considered as a YouTube URL at all
+    (SPEC-ingest-005). None for anything that is not an existing file, including
+    a bare relative name that happens to parse as a URL segment.
+
+    Resolved (symlinks and relative components followed) here, once, so every
+    later step — hashing, the symlink target, the file:// url — addresses the
+    same real path.
+    """
+    text = (target or "").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    return path.resolve() if path.is_file() else None
+
+
+def local_id(path: Path) -> str:
+    """A deterministic digest of the file's own contents — not its path, name,
+    or modification time — so the same footage added twice, however it was
+    renamed or moved, lands as the same entry, and edited footage is honestly a
+    different one. The layout's id alphabet is exactly base64url's, so the
+    digest needs no re-encoding to fit it.
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return base64.urlsafe_b64encode(digest.digest()).decode("ascii")[:ID_LENGTH]
+
+
 def resolve(target: str) -> tuple[str, str]:
     """`(VIDEO, id)` or `(COLLECTION, url)`. Raises BadRequest on anything else.
 
-    The collection keeps its URL rather than an id of its own: the lister seam is
-    told where to look, and every channel form points at the same place.
+    A file already on this machine wins first and unconditionally: it needs no
+    network round trip and no YouTube grammar to be a video. The collection case
+    keeps its URL rather than an id of its own: the lister seam is told where to
+    look, and every channel form points at the same place.
     """
     text = (target or "").strip()
+    local = local_target(text)
+    if local is not None:
+        return VIDEO, local_id(local)
     if VIDEO_ID.fullmatch(text):
         return VIDEO, text
     host, segments, query = _parse(text)
@@ -60,7 +106,7 @@ def resolve(target: str) -> tuple[str, str]:
         return VIDEO, found
     if _collection(host, segments, query):
         return COLLECTION, text
-    raise BadRequest(f"{target!r} names no YouTube video, playlist or channel")
+    raise BadRequest(f"{target!r} names no local file, YouTube video, playlist or channel")
 
 
 def video_id(target: str) -> str:

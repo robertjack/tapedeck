@@ -180,21 +180,29 @@ def malformed(log_text: str) -> list[str]:
     ]
 
 
-def deep_link_form(video_id: str) -> str:
-    """How a moment in this video is addressed, in the library layout's one
-    format — quoted to the maintainer so it never has to invent the shape."""
-    return f"https://www.youtube.com/watch?v={video_id}&t=<seconds>s"
+def deep_link_form(url: str) -> str:
+    """How a moment in this video is addressed: the video's own url with a
+    `t=<seconds>s` query parameter appended — `&` when the url already carries a
+    query (a YouTube watch URL does, via `v=`), `?` otherwise (a local file's
+    `file://` address does not). Quoted to the maintainer using the video's own
+    address, so it never has to invent YouTube's shape for footage that never
+    had one (SPEC-ingest-005)."""
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}t=<seconds>s"
 
 
-def cites(text: str, video_id: str) -> bool:
+def cites(text: str, url: str) -> bool:
     """Does this page anchor itself in this recording?
 
-    Deliberately the narrowest possible question: whether the layout's deep-link
-    form for *this* id appears at all. Whether the links a page carries are true
-    is decided by ask and by nothing here, so this never has to know where a URL
-    ends or what an unknown duration waives.
+    Deliberately the narrowest possible question: whether the video's own
+    address — the prefix every deep link to it must carry before its `t=` offset
+    — appears in the text at all. One rule covers a YouTube watch URL and a local
+    `file://` path alike, since both are read from the video's own `url` rather
+    than reconstructed from a host this component would have to know. Whether the
+    links a page carries are true is decided by ask and by nothing here, so this
+    never has to know where a URL ends or what an unknown duration waives.
     """
-    return f"watch?v={video_id}" in text
+    return bool(url) and url in text
 
 
 def today() -> str:

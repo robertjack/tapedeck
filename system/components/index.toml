@@ -19,6 +19,8 @@ command = "just eval index"
 [budget]
 # Raised 8000 -> 11000 for the anchor round: SPEC-index-005 and
 # test_anchor_stripping.py, read against SPEC-archive-002's pinned shape.
+# Raised for the local-files round: the SPEC-index-002 amendment and
+# test_local_addresses.py — a result addresses the moment the page did.
 context_tokens = 11000
 # Raised 6000 -> 7000: the exact leading-anchor strip in the chunker.
-src_tokens = 7000
+src_tokens = 8000

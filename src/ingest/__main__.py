@@ -1,18 +1,25 @@
-"""The ingest boundary: `python -m ingest add <url> [--force] [--verbose] | expand <url>`.
+"""The ingest boundary: `python -m ingest add <url|path> [--force] [--verbose] | expand <url>`.
 
 `add` puts exactly one video in the library, and is the sole writer of
 `library/<id>/video.*` and `library/<id>/meta.json`. `expand` answers what a
 playlist or channel URL contains, so a caller can sweep it one video at a time.
 
-The order of `add` is the whole safety story of SPEC-ingest-001. Everything that
-can fail — the download, finding the video, reading the metadata, normalizing it
-— happens in a staging directory beside the library, before the entry is touched
-at all. Only when a complete, valid result is in hand does the entry change, by a
-rename on the same filesystem. So a fetch that dies mid-write leaves a fresh
-video unstarted rather than half-made, and leaves an existing one exactly as it
-was: the old video byte-identical beside its old meta.json, still usable.
+The order of `add_remote` is the whole safety story of SPEC-ingest-001. Everything
+that can fail — the download, finding the video, reading the metadata, normalizing
+it — happens in a staging directory beside the library, before the entry is
+touched at all. Only when a complete, valid result is in hand does the entry
+change, by a rename on the same filesystem. So a fetch that dies mid-write leaves
+a fresh video unstarted rather than half-made, and leaves an existing one exactly
+as it was: the old video byte-identical beside its old meta.json, still usable.
 
-`add` is quiet by default (SPEC-ingest-004): the fetcher's own chatter is
+A target naming a file already on this machine (SPEC-ingest-005) is resolved
+before anything is parsed as a URL at all — that decision belongs to `sources`,
+ingest's own id grammar, and is never re-derived here. `add_local` never touches
+the fetcher seam: nothing is downloaded, so a machine with no fetcher configured
+can still add local footage. Its staging and atomic install are exactly
+`add_remote`'s.
+
+`add_remote` is quiet by default (SPEC-ingest-004): the fetcher's own chatter is
 captured, not relayed, and what reaches stderr is ingest's own staging-bytes
 heartbeat plus, on failure, the tool's captured words in full. `--verbose` turns
 that off and streams the fetcher raw, as it always used to.
@@ -29,13 +36,13 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import fetch, meta, sources
+from . import fetch, local, meta, sources
 
 DEFAULT_HOME = "~/dev/storage/tapedeck"
 LIBRARY = "library"
 
 USAGE_ERRORS = (sources.BadRequest, fetch.ConfigError)
-FAILURES = (fetch.FetchError, meta.BadMeta, OSError)
+FAILURES = (fetch.FetchError, meta.BadMeta, local.MediaError, OSError)
 
 
 def home_dir() -> Path:
@@ -47,7 +54,8 @@ def install(entry: Path, staged: Path, document: dict) -> None:
 
     The rename is atomic and the entry's old video survives until it lands; the
     leftovers go afterwards, so an entry never holds two videos and never holds a
-    video that is still arriving.
+    video that is still arriving. Works identically for a fetched file or a
+    local-add symlink — `os.replace` moves the directory entry either way.
     """
     entry.mkdir(parents=True, exist_ok=True)
     landed = entry / staged.name
@@ -60,6 +68,39 @@ def install(entry: Path, staged: Path, document: dict) -> None:
 
 def add(home: Path, target: str, force: bool, verbose: bool = False) -> int:
     """One video into `library/<id>/`, or a reason it is not there."""
+    source = sources.local_target(target)
+    if source is not None:
+        return add_local(home, source, force)
+    return add_remote(home, target, force, verbose)
+
+
+def add_local(home: Path, source: Path, force: bool) -> int:
+    """A file already on this machine, installed by symlink with no fetcher
+    involved (SPEC-ingest-005)."""
+    video_id = sources.local_id(source)
+    library = home / LIBRARY
+    entry = library / video_id
+    if not force and fetch.has_video(entry) and (entry / meta.META_NAME).is_file():
+        print(entry)  # already here: no re-link, and the entry is still the answer
+        return 0
+
+    existed = entry.exists()
+    dest = fetch.stage(library, video_id)
+    try:
+        document = meta.normalize(video_id, local.file_url(source), local.info(source))
+        install(entry, local.install_link(dest, source), document)
+    except BaseException:
+        if not existed:
+            shutil.rmtree(entry, ignore_errors=True)
+        raise
+    finally:
+        shutil.rmtree(dest, ignore_errors=True)
+    print(entry)
+    return 0
+
+
+def add_remote(home: Path, target: str, force: bool, verbose: bool) -> int:
+    """A YouTube URL or bare id, fetched through the configured seam."""
     video_id = sources.video_id(target)
     library = home / LIBRARY
     entry = library / video_id
@@ -109,13 +150,15 @@ def expand(home: Path, target: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ingest", description="Put YouTube videos in the tapedeck library."
+        prog="ingest", description="Put videos in the tapedeck library."
     )
     verbs = parser.add_subparsers(dest="verb", required=True)
-    fetching = verbs.add_parser("add", help="download one video into the library")
-    fetching.add_argument("url", help="a watch/shorts/youtu.be URL, or a bare video id")
+    fetching = verbs.add_parser("add", help="add one video into the library")
     fetching.add_argument(
-        "--force", action="store_true", help="re-fetch a video that is already here"
+        "url", help="a watch/shorts/youtu.be URL, a bare video id, or a local media path"
+    )
+    fetching.add_argument(
+        "--force", action="store_true", help="re-fetch or re-link a video that is already here"
     )
     fetching.add_argument(
         "--verbose",

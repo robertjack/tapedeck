@@ -42,7 +42,15 @@ def test_hms(seconds, expected):
 
 
 def test_deep_link_floors_to_whole_seconds():
-    assert deep_link("abcdefghijk", 95.9) == "https://www.youtube.com/watch?v=abcdefghijk&t=95s"
+    assert deep_link(META["url"], 95.9) == "https://www.youtube.com/watch?v=abcdefghijk&t=95s"
+
+
+def test_deep_link_opens_a_query_string_for_a_url_without_one():
+    assert deep_link("file:///a/standup.mp4", 90) == "file:///a/standup.mp4?t=90s"
+
+
+def test_deep_link_joins_an_existing_query_string():
+    assert deep_link("https://x.test/watch?v=abc", 5) == "https://x.test/watch?v=abc&t=5s"
 
 
 @pytest.mark.parametrize(
@@ -107,9 +115,9 @@ def test_paragraphs_carry_their_own_first_segment_start():
 def test_page_anchors_each_paragraph_with_its_own_start_not_the_section_start():
     doc = transcript([seg(2, 4, "early words"), seg(310, 312, "late words")])
     body = page(META, doc)
-    assert f"[0:00:02]({deep_link(META['id'], 2)}) early words" in body
-    assert f"[0:05:10]({deep_link(META['id'], 310)}) late words" in body
-    assert f"[0:00:00]({deep_link(META['id'], 0)}) early" not in body
+    assert f"[0:00:02]({deep_link(META['url'], 2)}) early words" in body
+    assert f"[0:05:10]({deep_link(META['url'], 310)}) late words" in body
+    assert f"[0:00:00]({deep_link(META['url'], 0)}) early" not in body
 
 
 def test_exactly_one_anchor_per_paragraph_line():
@@ -119,6 +127,23 @@ def test_exactly_one_anchor_per_paragraph_line():
     assert len(paragraph_lines) == 2
     for line in paragraph_lines:
         assert line.count("](https://") == 1
+
+
+# --- local (non-YouTube) addresses ------------------------------------------
+
+
+def test_local_file_url_is_addressed_directly_no_youtube_knowledge():
+    local = {**META, "channel": "", "url": "file:///Users/somebody/Footage/standup.mp4"}
+    body = page(local, transcript([seg(2, 4, "hello")]))
+    assert "youtube.com" not in body
+    assert "[0:00:02](file:///Users/somebody/Footage/standup.mp4?t=2s) hello" in body
+
+
+def test_empty_channel_leaves_no_dangling_separator_in_the_byline():
+    local = {**META, "channel": "", "url": "file:///a/b.mp4"}
+    body = page(local, transcript([seg(0, 1, "x")]))
+    byline = next(line for line in body.splitlines() if "2026-03-04" in line)
+    assert not byline.startswith("·") and " ·  · " not in byline
 
 
 # --- page shape -------------------------------------------------------------

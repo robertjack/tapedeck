@@ -80,7 +80,7 @@ def brief_kept(wiki: Path, before: Before) -> list[str]:
     ]
 
 
-def marker_written(wiki: Path, video_id: str) -> list[str]:
+def marker_written(wiki: Path, video_id: str, url: str) -> list[str]:
     """The filing's own claim: the page exists, and it is anchored in the
     recording it describes rather than being a summary of a memory."""
     page = layout.source_page(wiki, video_id)
@@ -90,7 +90,7 @@ def marker_written(wiki: Path, video_id: str) -> list[str]:
             f"{where} does not exist — that page is the whole record that "
             f"{video_id} has been filed"
         ]
-    if not layout.cites(layout.read(page), video_id):
+    if not layout.cites(layout.read(page), url):
         return [
             f"{where} carries no deep link into {video_id} itself — a source page "
             f"with no anchor in its own recording is a summary of a memory"
@@ -198,18 +198,20 @@ def verdict(
     wiki: Path,
     before: Before,
     video_id: str | None = None,
+    url: str = "",
     keep_sources: bool = False,
 ) -> list[str]:
     """Everything wrong with the wiki as the agent left it, all of it.
 
-    `video_id` asks the filing's own question — that this video's marker appeared.
-    `keep_sources` asks the same concern the other way round, and is what stands
-    in its place on a run that files no video: that no marker disappeared.
+    `video_id` asks the filing's own question — that this video's marker appeared,
+    anchored via `url`, the video's own address (SPEC-ingest-005). `keep_sources`
+    asks the same concern the other way round, and is what stands in its place on
+    a run that files no video: that no marker disappeared.
     """
     pages = layout.pages(wiki)
     problems = brief_kept(wiki, before)
     if video_id is not None:
-        problems += marker_written(wiki, video_id)
+        problems += marker_written(wiki, video_id, url)
     if keep_sources:
         problems += sources_kept(wiki, before)
     problems += unresolved(wiki, pages)

@@ -2,8 +2,8 @@
 
 These poke at the seams between the pieces the durable evals only see through the
 process boundary: how a citation is read out of prose, that librarian mode and the
-`verify` verb are literally one reading (SPEC-ask-005), and how a question becomes
-an fts5 MATCH.
+`verify` verb are literally one reading (SPEC-ask-005), how a local citation resolves
+to its entry by path (SPEC-ingest-005), and how a question becomes an fts5 MATCH.
 """
 
 from __future__ import annotations
@@ -19,14 +19,23 @@ from ask.library import Library
 
 VID = "dQw4w9WgXcQ"
 OTHER = "plainvide00"
+LOCAL_ID = "loc4lvide01"
+LOCAL_PATH = "/Users/somebody/Footage/standup.mp4"
+LOCAL_URL = f"file://{LOCAL_PATH}"
 
 
-def stock(home, video_id=VID, duration=720):
+def stock(home, video_id=VID, duration=720, url=None):
     d = home / "library" / video_id
     d.mkdir(parents=True)
     meta = {"id": video_id, "title": "T", "channel": "C", "duration_s": duration}
+    if url is not None:
+        meta["url"] = url
     (d / "meta.json").write_text(json.dumps(meta))
     return Library(home)
+
+
+def stock_local(home, video_id=LOCAL_ID, path=LOCAL_PATH, duration=600):
+    return stock(home, video_id, duration, url=f"file://{path}")
 
 
 # --- reading a citation out of a sentence (contracts/ask-citations.md) ---
@@ -46,6 +55,7 @@ def stock(home, video_id=VID, duration=720):
 def test_punctuation_is_prose_not_url(text, video_id, seconds):
     (cite,) = citations.deep_links(text)
     assert cite.video_id == video_id
+    assert cite.path is None
     assert cite.seconds == seconds
     assert not cite.url.endswith((".", ",", '"', "!"))
 
@@ -60,6 +70,61 @@ def test_an_unreadable_offset_is_a_failed_citation_not_a_waived_one(tmp_path):
 
 def test_no_link_means_no_citation():
     assert citations.deep_links("plain prose, no links, https://example.com/x") == []
+
+
+# --- local citations resolve to an entry by the path they name ---
+
+
+@pytest.mark.parametrize(
+    "text, seconds",
+    [
+        (f"He says it [here]({LOCAL_URL}?t=95s).", 95),
+        (f"Bare {LOCAL_URL}.", None),
+        (f"Comma {LOCAL_URL}?t=95s, then", 95),
+    ],
+)
+def test_a_local_link_parses_to_a_path_and_no_video_id(text, seconds):
+    (cite,) = citations.deep_links(text)
+    assert cite.video_id is None
+    assert cite.path == LOCAL_PATH
+    assert cite.seconds == seconds
+    assert not cite.url.endswith((".", ",", '"'))
+
+
+def test_local_resolution_is_by_the_path_the_entry_wrote_for_itself(tmp_path):
+    library = stock_local(tmp_path)
+    assert library.resolve_local(LOCAL_PATH) == LOCAL_ID
+    assert library.resolve_local("/nope/not-added.mp4") is None
+
+
+def test_a_local_citation_inside_the_video_verifies(tmp_path):
+    library = stock_local(tmp_path)
+    assert citations.audit(f"[a]({LOCAL_URL}?t=95s).", library) == []
+
+
+def test_a_local_citation_past_the_end_is_a_fabrication(tmp_path):
+    library = stock_local(tmp_path)
+    problems = citations.audit(f"[a]({LOCAL_URL}?t=99999s).", library)
+    assert len(problems) == 1 and "99999" in problems[0]
+
+
+def test_a_local_citation_to_a_never_added_file_fails(tmp_path):
+    library = stock_local(tmp_path)
+    other = "file:///Users/somebody/Footage/never-added.mp4"
+    problems = citations.audit(f"[a]({other}?t=10s).", library)
+    assert len(problems) == 1 and other in problems[0]
+
+
+def test_a_local_citation_counts_as_a_citation(tmp_path):
+    library = stock_local(tmp_path)
+    assert citations.audit(f"[a]({LOCAL_URL}?t=5s).", library, require_citation=True) == []
+
+
+def test_a_youtube_video_is_not_mistaken_for_a_local_entry(tmp_path):
+    """A YouTube entry's url has no file:// address to index — resolve_local must
+    simply not find it there, never raise."""
+    library = stock(tmp_path, url=f"https://www.youtube.com/watch?v={VID}")
+    assert library.resolve_local(LOCAL_PATH) is None
 
 
 # --- the bounds check ---
@@ -121,12 +186,15 @@ def test_require_citation_is_the_only_difference_between_the_doors(tmp_path):
         f"See https://www.youtube.com/watch?v={VID}&t=95s, which says so.",
         f"It is settled at https://www.youtube.com/watch?v={VID}&t=9999s.",
         "Covered in [nothing](https://www.youtube.com/watch?v=nosuchvid00&t=95s).",
+        f"Local [here]({LOCAL_URL}?t=5s).",
+        f"Local past end [here]({LOCAL_URL}?t=99999s).",
     ],
 )
 def test_both_doors_reach_the_same_verdict(tmp_path, monkeypatch, capsys, text):
     """The verb's exit code must follow `audit` exactly — the claim the durable
     evals check from outside, checked here against the function itself."""
-    library = stock(tmp_path)
+    stock(tmp_path)
+    library = stock_local(tmp_path)
     expected = bool(citations.audit(text, library, require_citation=True))
     monkeypatch.setattr("sys.stdin", io.StringIO(text))
     if expected:
@@ -147,6 +215,15 @@ def test_scope_rejects_another_library_video(tmp_path):
     assert citations.audit(text, library) == []  # in the library
     problems = citations.audit(text, library, scope=VID)  # but not in scope
     assert problems and OTHER in problems[0]
+
+
+def test_scope_rejects_a_local_video_outside_it_too(tmp_path):
+    stock(tmp_path)
+    library = stock_local(tmp_path)
+    text = f"[home]({LOCAL_URL}?t=5s)"
+    assert citations.audit(text, library) == []
+    problems = citations.audit(text, library, scope=VID)
+    assert problems and LOCAL_ID in problems[0]
 
 
 def test_unknown_scope_id_is_a_usage_error(tmp_path):

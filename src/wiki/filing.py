@@ -161,12 +161,12 @@ def _knowledge(wiki: Path, subject_text: str | None = None) -> str:
     return block
 
 
-def file_task(wiki: Path, video_id: str, page: Path) -> str:
+def file_task(wiki: Path, video_id: str, page: Path, url: str) -> str:
     return FILE_TASK.format(
         video_id=video_id,
         page=page,
         wiki=wiki,
-        link=layout.deep_link_form(video_id),
+        link=layout.deep_link_form(url),
         rules=GATE_RULES,
         map=_knowledge(wiki, layout.read(page)),
     )
@@ -191,6 +191,7 @@ def perform(
     op: str,
     video_id: str | None = None,
     archive_page: Path | None = None,
+    url: str = "",
     keep_sources: bool = False,
 ) -> None:
     """One accept-or-roll-back operation, from the pre-run commit to the commit
@@ -214,7 +215,9 @@ def perform(
     # video.
     bookkeeping.reconcile_catalog(wiki)
     bookkeeping.reconcile_log(wiki, before.log, op, video_id or NO_SUBJECT, product, cost)
-    problems = gate.verdict(home, wiki, before, video_id=video_id, keep_sources=keep_sources)
+    problems = gate.verdict(
+        home, wiki, before, video_id=video_id, url=url, keep_sources=keep_sources
+    )
     if problems:
         repo.restore(wiki, pre_run)
         _account_for(product)
@@ -228,16 +231,18 @@ def perform(
 def file_one(home: Path, wiki: Path, command: str, video_id: str) -> None:
     """The filing itself, once every cheap question is settled and the lock held."""
     page = library.archive_page(home, video_id)
+    url = library.video_url(home, video_id)
     perform(
         home,
         wiki,
         command,
-        file_task(wiki, video_id, page),
+        file_task(wiki, video_id, page, url),
         f"wiki {FILE_OP} {video_id}",
         f"filing {video_id}",
         FILE_OP,
         video_id=video_id,
         archive_page=page,
+        url=url,
     )
 
 

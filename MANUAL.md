@@ -82,7 +82,31 @@ nothing without your say-so.
 
 Accepted forms: a full watch URL, youtu.be/ID, a shorts URL, or the bare
 11-character id. A watch URL with a &list= parameter is treated as that one
-video, never the whole playlist. Anything that isn't YouTube exits 2.
+video, never the whole playlist.
+
+**Or a file you already have:**
+
+    tapedeck add ./meeting-recording.mp4
+
+A path to a media file on this machine is added like any other video —
+transcribed, archived, searchable, and answerable by `ask`. Three things
+are worth knowing:
+
+- **Your file is not copied.** The library links to it where it sits, so
+  adding a folder of lecture captures costs no extra disk. `rm` removes
+  the link, never your file.
+- **Move or delete the original and the knowledge stands.** The
+  transcript, the archive page and the search index all live in the
+  library; only re-transcription needs the media back. Re-adding the file
+  at its new home repairs the link.
+- **The same footage is the same entry**, whatever you rename it to: a
+  local video's id comes from the file's contents, so re-adding it is a
+  skip rather than a duplicate.
+
+Citations point at the file. `search` and `ask` return
+`file:///path/to/video.mp4?t=95s` for local footage, which opens the
+video rather than sending you to youtube.com. Anything that is neither a
+YouTube URL nor a path that exists exits 2.
 
 `add` runs the full pipeline: download, transcribe, render the archive page,
 index it. Progress is quiet and legible: on a terminal, one animated bar

@@ -39,7 +39,9 @@ command = "just eval wiki"
 # behavior, the lock is repo.py's vocabulary, and a lock component of its own
 # would be a seam through the one invariant (one operation at a time) that must
 # never have two owners. The vocabulary stays whole.
-context_tokens = 78000
+# Raised for the local-files round: the SPEC-wiki-002 citation amendment and
+# test_local_video.py — the filed marker follows the video own address.
+context_tokens = 82000
 # Above the usual 8000/6000 default: the component carries its own git lifecycle
 # (scaffold, per-run commit, hard reset/clean on gate failure) plus a six-check
 # whole-wiki acceptance gate, on top of driving the maintainer subprocess itself.
@@ -56,4 +58,4 @@ context_tokens = 78000
 # run's product, on an implementation already at ~21443.
 # Raised 28000 -> 30000: `file --wait` — a blocking acquire beside the
 # refuse-fast one, its announce line, and the flag on file's parser.
-src_tokens = 30000
+src_tokens = 31000

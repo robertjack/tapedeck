@@ -12,6 +12,10 @@ user_version`) and which tokenizer stemmed it (its own DDL), and `open_current`
 refuses anything else — a foreign database is not read wrongly, it is not read at
 all (SPEC-index-004). Only `build` is exempt, because rebuilding is the migration.
 
+Each chunk carries the deep link its own page section carried — never one rebuilt
+from the video id — so a YouTube result and a local-file result come back the
+same way they went in (SPEC-index-002, SPEC-ingest-005).
+
 Ranking is bm25 with explicit tie-breaks, so insertion order — the one thing a
 full rebuild and an incremental update do not share — never reaches the results.
 """
@@ -24,10 +28,10 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from .pages import Page, deep_link, hms
+from .pages import Page, hms
 
 DB_NAME = "tapedeck.db"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # Porter over unicode61, so morphological variants match (SPEC-index-003).
 # Stemming happens at write time: a database built under another tokenizer answers
 # different queries, which is why the DDL is checked alongside the version.
@@ -44,11 +48,13 @@ CREATE TABLE videos (
 );
 
 -- One row per archive-page section (SPEC-index-001). The section title and its
--- prose are what searching matches; the id and start second ride along unindexed
--- so a hit can be addressed as a moment in a video.
+-- prose are what searching matches; the id, start second and the section's own
+-- deep link ride along unindexed so a hit can be addressed as the moment the
+-- page pointed to, not one reconstructed from the video id.
 CREATE VIRTUAL TABLE chunks USING fts5(
     video_id UNINDEXED,
     start_s UNINDEXED,
+    url UNINDEXED,
     section,
     text,
     tokenize = '{TOKENIZE}'
@@ -56,13 +62,14 @@ CREATE VIRTUAL TABLE chunks USING fts5(
 """
 
 SNIPPET_TOKENS = 24  # fts5 caps this at 64
-COLUMN_WEIGHTS = "0.0, 0.0, 2.0, 1.0"  # a hit in a section title beats one in prose
+COLUMN_WEIGHTS = "0.0, 0.0, 0.0, 2.0, 1.0"  # a hit in a section title beats one in prose
 SEARCH_SQL = f"""
 SELECT chunks.video_id                  AS video_id,
        chunks.start_s                   AS start_s,
        chunks.section                   AS section,
+       chunks.url                       AS url,
        COALESCE(videos.title, '')       AS title,
-       snippet(chunks, 3, '', '', '…', {SNIPPET_TOKENS}) AS excerpt,
+       snippet(chunks, 4, '', '', '…', {SNIPPET_TOKENS}) AS excerpt,
        bm25(chunks, {COLUMN_WEIGHTS})   AS score
 FROM chunks LEFT JOIN videos ON videos.video_id = chunks.video_id
 WHERE chunks MATCH ?
@@ -172,8 +179,8 @@ def _write_page(db: sqlite3.Connection, page: Page) -> None:
         (page.video_id, page.title, page.channel, page.upload_date, page.url, page.duration_s),
     )
     db.executemany(
-        "INSERT INTO chunks (video_id, start_s, section, text) VALUES (?, ?, ?, ?)",
-        [(page.video_id, s.start_s, s.title, s.text) for s in page.sections],
+        "INSERT INTO chunks (video_id, start_s, url, section, text) VALUES (?, ?, ?, ?, ?)",
+        [(page.video_id, s.start_s, s.url, s.title, s.text) for s in page.sections],
     )
 
 
@@ -219,7 +226,7 @@ def _result(row: sqlite3.Row) -> dict:
         "section": row["section"] or "",
         "start_s": start,
         "timestamp": hms(start),
-        "url": deep_link(row["video_id"], start),
+        "url": row["url"] or "",
         "excerpt": " ".join((row["excerpt"] or "").split()),
     }
 

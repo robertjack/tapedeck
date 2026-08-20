@@ -7,7 +7,10 @@ environment, which is what makes a chunk a pure function of the page it came fro
 and an incremental update indistinguishable from a full rebuild.
 
 The page shape is the one SPEC-archive-001 pins: YAML frontmatter, then one
-`## [h:mm:ss](deep-link) Title` heading per section, the title optional.
+`## [h:mm:ss](deep-link) Title` heading per section, the title optional. A
+section's `url` is the heading's own deep-link text, carried through verbatim —
+never rebuilt from the video id — so a result addresses the moment the way the
+page did, YouTube or a local file alike (SPEC-index-002, SPEC-ingest-005).
 """
 
 from __future__ import annotations
@@ -20,11 +23,11 @@ HEADING = re.compile(r"^##[ \t]+\[(?P<stamp>[^\]]*)\]\((?P<link>[^)]*)\)[ \t]*(?
 LINK_SECONDS = re.compile(r"[?&]t=(\d+)s?(?:&|$)")
 STAMP = re.compile(r"(?:(\d+):)?(\d{1,2}):(\d{2})$")
 # The exact leading construct SPEC-archive-002 writes at the head of a paragraph —
-# `[h:mm:ss](deep-link) ` in the layout contract's own URL shape — and nothing
-# looser (SPEC-index-005): prose that merely mentions a link stays prose.
-PARA_ANCHOR = re.compile(
-    r"^\[[^\]]*\]\(https://www\.youtube\.com/watch\?v=[A-Za-z0-9_-]{11}&t=\d+s\)[ \t]*"
-)
+# `[h:mm:ss](deep-link) ` addressing the moment with `...[?&]t=<seconds>s` — and
+# nothing looser (SPEC-index-005). Scheme-agnostic on purpose: the layout contract
+# is one deep-link rule for a YouTube watch url and a local `file://` one alike, so
+# stripping the anchor never grew a second rule of its own either.
+PARA_ANCHOR = re.compile(r"^\[[^\]]*\]\([^\s)]*[?&]t=\d+s\)[ \t]*")
 
 FENCE = "---"
 # The escapes the renderer emits inside a double-quoted frontmatter scalar.
@@ -41,17 +44,14 @@ def hms(seconds) -> str:
     return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
 
 
-def deep_link(video_id: str, seconds) -> str:
-    """A moment in a video, per system/contracts/library-layout.md."""
-    return f"https://www.youtube.com/watch?v={video_id}&t={int(seconds)}s"
-
-
 @dataclass(frozen=True)
 class Section:
-    """One chunk: where it starts, what it is called, what is said in it."""
+    """One chunk: where it starts, what it is called, where it points, what is
+    said in it."""
 
     start_s: int
     title: str
+    url: str
     text: str
 
 
@@ -155,7 +155,7 @@ def parse(text: str, stem: str | None = None) -> Page:
         raise PageError(f"frontmatter id {video_id!r} does not match the filename")
 
     sections: list[Section] = []
-    open_section: tuple[int, str] | None = None
+    open_section: tuple[int, str, str] | None = None
     buf: list[str] = []
     for line in lines[body:]:
         heading = HEADING.match(line)
@@ -168,7 +168,9 @@ def parse(text: str, stem: str | None = None) -> Page:
         # heading whose start second is unreadable takes its text down with it.
         start_s = _seconds(heading)
         buf = []
-        open_section = None if start_s is None else (start_s, heading["title"].strip())
+        open_section = (
+            None if start_s is None else (start_s, heading["title"].strip(), heading["link"].strip())
+        )
     if open_section is not None:
         sections.append(Section(*open_section, _prose(buf)))
 

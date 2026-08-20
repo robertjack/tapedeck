@@ -124,10 +124,24 @@ def test_log_entries_and_malformed_headings_are_the_pinned_shape():
     assert layout.malformed(log) == ["## [not-a-date] file | broken"]
 
 
-def test_cites_asks_only_whether_the_deep_link_form_appears():
-    assert layout.cites(f"see https://www.youtube.com/watch?v={FILED}&t=1s", FILED)
-    assert not layout.cites("no links here", FILED)
-    assert not layout.cites(f"watch?v={OTHER}", FILED)
+def test_cites_asks_only_whether_the_videos_own_address_appears():
+    url = f"https://www.youtube.com/watch?v={FILED}"
+    assert layout.cites(f"see {url}&t=1s", url)
+    assert not layout.cites("no links here", url)
+    assert not layout.cites(f"https://www.youtube.com/watch?v={OTHER}&t=1s", url)
+
+
+def test_cites_works_for_a_local_files_own_address_too():
+    url = "file:///Users/somebody/Footage/standup.mp4"
+    assert layout.cites(f"see [it]({url}?t=300s)", url)
+    assert not layout.cites("file:///Users/somebody/Footage/other.mp4?t=10s", url)
+
+
+def test_deep_link_form_appends_ampersand_or_question_mark_as_needed():
+    assert layout.deep_link_form("https://www.youtube.com/watch?v=x").endswith(
+        "&t=<seconds>s"
+    )
+    assert layout.deep_link_form("file:///a/b.mp4").endswith("?t=<seconds>s")
 
 
 def test_opening_heading_is_the_first_hash_line_or_none():
@@ -267,11 +281,12 @@ def test_brief_kept_fails_only_on_a_byte_difference(tmp_path):
 
 def test_marker_written_requires_the_page_and_its_own_citation(tmp_path):
     wiki = wiki_with(tmp_path)
-    assert gate.marker_written(wiki, FILED) != []
+    url = f"https://www.youtube.com/watch?v={FILED}"
+    assert gate.marker_written(wiki, FILED, url) != []
     (wiki / "sources" / f"{FILED}.md").write_text("no citation here")
-    assert gate.marker_written(wiki, FILED) != []
-    (wiki / "sources" / f"{FILED}.md").write_text(f"watch?v={FILED}")
-    assert gate.marker_written(wiki, FILED) == []
+    assert gate.marker_written(wiki, FILED, url) != []
+    (wiki / "sources" / f"{FILED}.md").write_text(f"{url}&t=1s")
+    assert gate.marker_written(wiki, FILED, url) == []
 
 
 def test_sources_kept_flags_only_a_removed_source_page(tmp_path):
