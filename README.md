@@ -84,15 +84,15 @@ same tests comes back. This is *regenerative* software engineering — the code 
 an artifact of the specification, the way a compiled binary is an artifact of
 its source.
 
-The idea is borrowed from operations. In
-[Trash Your Servers and Burn Your Code](https://chadfowler.com/articles/trash-your-servers-and-burn-your-code.html)
-(2013), Chad Fowler argued that servers should be immutable and disposable:
-never patched in place, but rebuilt from a known definition and thrown away —
-"need to upgrade? Build a new, upgraded system and throw the old one away."
-Infrastructure took that to heart; application code never did, because until
-recently nothing could rebuild it from a definition. Now something can. This
-repository is that argument applied one layer up: the specs are the definition,
-`src/` is the cattle, and no one patches a server here either.
+The approach follows Chad Fowler's
+[Phoenix Architecture](https://aicoding.leaflet.pub/), which argues that
+generative AI coding demands what good engineering always wanted anyway —
+"modularity, clear boundaries, disposable components" — and that code was never
+the asset in the first place. Specifications, tests, schemas and documented
+behavior are what survive; implementations are regenerated and replaced. Its
+sharpest line is the one this repository is organized around: *the architecture
+of a regenerative system is defined entirely by what you can't delete.* Here,
+what you can't delete is `system/`. Everything else is output.
 
 That inverts the usual arrangement. In most repositories the code is the asset
 and the docs drift away from it. Here the durable layer is the asset and the
