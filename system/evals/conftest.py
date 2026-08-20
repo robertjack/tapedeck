@@ -82,7 +82,13 @@ def hms(seconds):
 def write_archive_page(home, meta, sections):
     """Write archive/<id>.md directly, in the pinned SPEC-archive-001 shape
     (frontmatter, then '## [h:mm:ss](deep-link) Title' sections) — so suites for
-    downstream components stay independent of the archive implementation."""
+    downstream components stay independent of the archive implementation.
+
+    The address of each section is built the way contracts/library-layout.md
+    says a moment is addressed: the video's own `url` carrying a `t=` offset.
+    For a YouTube meta that is the familiar watch URL, byte for byte; for a
+    local one it is that file. A fixture that hard-coded youtube.com would
+    hand every downstream suite a page shape the contract does not describe."""
     (home / "archive").mkdir(exist_ok=True)
     vid = meta["id"]
     lines = [
@@ -98,8 +104,10 @@ def write_archive_page(home, meta, sections):
         f"# {meta['title']}",
         "",
     ]
+    base = meta["url"]
     for start_s, title, text in sections:
-        url = f"https://www.youtube.com/watch?v={vid}&t={int(start_s)}s"
+        joiner = "&" if "?" in base else "?"
+        url = f"{base}{joiner}t={int(start_s)}s"
         lines += [f"## [{hms(start_s)}]({url}) {title}", "", text, ""]
     (home / "archive" / f"{vid}.md").write_text("\n".join(lines))
 

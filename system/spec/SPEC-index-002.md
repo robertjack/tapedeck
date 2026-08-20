@@ -6,8 +6,13 @@ status: active
 depends: [SPEC-index-001]
 ---
 `search <query>` returns ranked matches, each carrying: video id, title, section start
-timestamp rendered `h:mm:ss`, a text excerpt, and the deep link
-`https://www.youtube.com/watch?v=<id>&t=<seconds>s`. `-k N` bounds the result count
+timestamp rendered `h:mm:ss`, a text excerpt, and the deep link in the layout
+contract's one form — the video's own address carrying a `t=<seconds>s` offset. For a
+video from YouTube that is `https://www.youtube.com/watch?v=<id>&t=<seconds>s`, exactly
+as it has always been; for a local file it is that file (SPEC-ingest-005). The address
+is the one the indexed page carried, not one rebuilt from the id: a result is a pointer
+back to the moment it was read from, and synthesizing a watch URL for footage that was
+never on YouTube would send the reader to somebody else's video or to nothing at all. `-k N` bounds the result count
 (default 8). `--json` emits the same fields structurally. A query with no matches
 prints nothing, exits 0, and `--json` yields `[]` — no results is an answer, not an
 error.

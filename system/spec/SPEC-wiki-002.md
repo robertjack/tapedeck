@@ -74,10 +74,15 @@ user's instructions to the maintainer, and an agent that may rewrite its own ins
 has none; any change at all, including one the maintainer believes is an improvement,
 fails the gate. `sources/<id>.md` must exist and must carry at least one deep link to
 `<id>` itself — it is the filed-state marker of SPEC-wiki-001 and it must be anchored to
-its own recording. Every `[[wikilink]]` in every page must resolve: the target is the text
+its own recording. The shape of that link is the library layout's one deep-link rule,
+which is the video's *own* address: a YouTube video is cited as `watch?v=<id>`, a local
+one by its `file://` path (SPEC-ingest-005). This component reads that rule rather than
+restating a host, because a gate that only recognizes YouTube would reject every filing
+of a video that came off disk — and the task the maintainer is handed quotes the same
+address form for the same reason, so it never has to invent one. Every `[[wikilink]]` in every page must resolve: the target is the text
 before any `|` alias, matched case-sensitively against the basename-without-`.md` of some
 page anywhere under `wiki/`, and a wiki whose links dead-end is a wiki nobody trusts on the
-second read. Every YouTube deep link in every page must verify against the library — the
+second read. Every deep link in every page, of either form, must verify against the library — the
 video exists, the timestamp is in bounds — decided by invoking ask's published boundary,
 one page's text per invocation, without `--require-citation`, because a note that cites
 nothing is allowed and a note that cites something false is not; what ask says about a bad

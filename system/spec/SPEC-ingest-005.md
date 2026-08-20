@@ -8,8 +8,13 @@ depends: [SPEC-ingest-001, SPEC-core-002, SPEC-core-004]
 A video does not have to come from YouTube. `add <path>` accepts a path to a media file
 that already exists on this machine — a lecture capture, a meeting recording, footage
 someone sent you — and puts it in the library beside everything fetched from the
-network. Everything downstream is unchanged, because everything downstream keys on a
-video id and a transcript, neither of which knows where the video came from.
+network. Everything downstream keys on a video id and a transcript, neither of which knows
+where a video came from, so most of the system needs nothing new. The exceptions are
+the two places that address a *moment* rather than a video, and they follow the layout
+contract's one deep-link rule rather than growing a second: the archive builds a page's
+addresses from the video's own url (SPEC-archive-001), and ask resolves and verifies a
+local citation exactly as it does a YouTube one (SPEC-ask-001), which the wiki's gate
+consumes rather than re-deriving (SPEC-wiki-002).
 
 **Resolution.** `resolve` answers `(VIDEO, <id>)` for a target naming an existing file,
 before it considers YouTube at all; a target that is neither an existing path nor a
