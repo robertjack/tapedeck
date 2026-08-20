@@ -17,9 +17,15 @@ PARAGRAPH_CHARS = 600  # soft cap, so an unbroken monologue still gets paragraph
 FRONTMATTER_KEYS = ("id", "title", "channel", "upload_date", "duration_s", "url")
 
 
-def deep_link(video_id: str, seconds) -> str:
-    """A moment in a video, per system/contracts/library-layout.md."""
-    return f"https://www.youtube.com/watch?v={video_id}&t={int(seconds)}s"
+def deep_link(url: str, seconds) -> str:
+    """A moment in a video: the video's own url with t=<seconds>s appended as a
+    query parameter (system/contracts/library-layout.md). One rule for both a
+    YouTube watch url (already carries `?v=`, so t= joins with `&`) and a local
+    `file://` url (no query yet, so t= opens one with `?`) — this module never
+    asks where the video came from.
+    """
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}t={int(seconds)}s"
 
 
 def hms(seconds) -> str:
@@ -159,7 +165,7 @@ def _paragraphs(segments):
 
 def page(meta, transcript) -> str:
     """Render archive/<id>.md from validated meta + transcript structures."""
-    video_id = str(meta["id"])
+    url = str(meta["url"])
     segments = sorted(transcript["segments"], key=lambda s: (_seg_start(s), _seg_end(s)))
     marks = sections(meta, segments)
 
@@ -187,11 +193,11 @@ def page(meta, transcript) -> str:
     for (start, title), group in zip(marks, _group(marks, segments)):
         # Link first: the index recovers id, start seconds and title from the
         # heading alone, so archive pages remain its only input (SPEC-index-001).
-        heading = f"## [{hms(start)}]({deep_link(video_id, start)})"
+        heading = f"## [{hms(start)}]({deep_link(url, start)})"
         lines.append(f"{heading} {title}" if title else heading)
         lines.append("")
         for p_start, paragraph in _paragraphs(group):
-            anchor = f"[{hms(p_start)}]({deep_link(video_id, p_start)})"
+            anchor = f"[{hms(p_start)}]({deep_link(url, p_start)})"
             lines += [f"{anchor} {paragraph}", ""]
 
     return "\n".join(lines).rstrip("\n") + "\n"
