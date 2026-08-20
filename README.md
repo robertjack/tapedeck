@@ -23,6 +23,10 @@ still there, still readable.
   local transcription, a markdown archive page where every paragraph is one click
   from its moment in the video, and full-text indexing. Your terminal is back in
   a couple of minutes.
+- **Local files too.** `tapedeck add ./lecture.mp4` adds footage you already
+  have — meeting recordings, lecture captures, anything on disk — into the same
+  library, searchable the same way. Your file is linked, not copied, and
+  citations point back at it.
 - **`search`** — ranked full-text search over everything ever said, each result
   carrying a timestamp and a deep link that opens YouTube right at that moment.
 - **`ask`** — questions answered from your library, with every citation
