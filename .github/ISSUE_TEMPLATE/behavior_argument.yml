@@ -1,0 +1,40 @@
+name: Behavior argument
+description: A behavior seems wrong, or a missing one should exist
+labels: [spec]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Behavior in this repository comes from clauses in `system/spec/` — each
+        one states a constraint and the reasoning behind it. So the useful shape
+        of this conversation is an argument against a clause, or for one that
+        doesn't exist yet. Implementation details aren't the subject: `src/` is
+        generated from these clauses and gets rewritten whenever they change.
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: The behavior
+      description: What tapedeck does today, and how you observed it.
+    validations:
+      required: true
+
+  - type: input
+    id: clause
+    attributes:
+      label: Clause
+      description: >-
+        The clause that pinned it, if you found it (`system/spec/SPEC-*.md`).
+        "None that I could find" is a fine and useful answer.
+      placeholder: SPEC-cli-009, or "none found"
+
+  - type: textarea
+    id: argument
+    attributes:
+      label: Why it should be otherwise
+      description: >-
+        What should happen instead, and the reasoning — a constraint that holds,
+        not a patch. The best of these read like the clause that would replace
+        the current one.
+    validations:
+      required: true
