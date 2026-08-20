@@ -46,15 +46,19 @@ def run_passthrough(home: Path, module: str, args: list[str]) -> int:
 
 
 def wiki_auto_enabled(home: Path) -> bool:
-    """An absent `[wiki].auto` key reads true (SPEC-cli-009) — one default,
-    written into the scaffold, and the code agrees with what it wrote."""
+    """`[wiki].auto` gates the epilogue, and an ABSENT key reads false
+    (SPEC-cli-009, amended for the public era): a filing spends real money on
+    the account `maintainer_command` names, and a stranger's first `add` must
+    never spend it unasked. One default, written into the scaffold as
+    `auto = false`, and this function agrees with what it wrote — only an
+    explicit `auto = true` turns the epilogue on."""
     try:
         config = tomllib.loads((home / "config.toml").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return True
+        return False
     section = config.get("wiki")
     if not isinstance(section, dict) or "auto" not in section:
-        return True
+        return False
     return bool(section["auto"])
 
 

@@ -84,7 +84,7 @@ def test_add_returns_while_the_filing_is_still_running(home):
     already gone — exit code returned, pipes closed, hand-off announced. The
     filing then lands on its own once the maintainer is released."""
     set_collection_pipeline(home)
-    configure_wiki(home, maintainer=HOLDS_THEN_FILES)
+    configure_wiki(home, auto=True, maintainer=HOLDS_THEN_FILES)
     proc = popen_cli(["add", VIDEO_A], home)
     try:
         out, err = proc.communicate(timeout=45)
@@ -117,7 +117,7 @@ def test_a_sweep_hands_off_every_video_and_the_log_keeps_sweep_order(home):
     the sweep's videos in the order the sweep completed them, and the wiki's
     own chronology is the witness."""
     set_collection_pipeline(home)
-    configure_wiki(home, maintainer=GOOD)
+    configure_wiki(home, auto=True, maintainer=GOOD)
     r = run_cli(["add", PLAYLIST], home)
     assert r.returncode == 0, r.stderr
     assert "log" in r.stderr.lower(), (
@@ -141,7 +141,7 @@ def test_a_failure_after_hand_off_leaves_an_unfiled_video_not_a_stderr_note(home
     can appear on add's own stderr — the durable trace is the one a failed
     filing always leaves, an unfiled video that `wiki sync --dry-run` names."""
     set_collection_pipeline(home)
-    configure_wiki(home, maintainer=ALWAYS_FAILS_LEAVING_A_TRACE)
+    configure_wiki(home, auto=True, maintainer=ALWAYS_FAILS_LEAVING_A_TRACE)
     r = run_cli(["add", VIDEO_A], home)
     assert r.returncode == 0, r.stderr
     assert library_artifacts_intact(home, VIDEO_A)
