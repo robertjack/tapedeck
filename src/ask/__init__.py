@@ -9,5 +9,9 @@ reports whether its citations hold, so a component that must judge a page's
 citations (wiki) reaches ask's verdict by asking ask rather than by keeping its own
 copy of the grammar (SPEC-ask-005, LESSON-0003). One reading, two doors.
 
+A citation may point at a video from YouTube or one added from disk (SPEC-ingest-005)
+— the same check either way, because the guarantee ask sells is that a cited moment
+exists, not where the video came from.
+
 The seam defaults the cli scaffolds config.toml from live in `ask.seams`.
 """
