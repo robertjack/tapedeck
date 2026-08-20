@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from ingest import __main__ as cli  # noqa: E402
-from ingest import fetch, meta, sources  # noqa: E402
+from ingest import fetch, local, meta, sources  # noqa: E402
 
 VID = "dQw4w9WgXcQ"
 
@@ -529,3 +529,176 @@ def test_watch_writes_bare_carriage_returns_when_tty(tmp_path):
     seen = buf.getvalue()
     assert seen.count("\r") >= 2
     assert "\n" not in seen  # no scrollback — every report overwrites in place
+
+
+# --- SPEC-ingest-005: a video does not have to come from YouTube -----------
+
+
+def test_local_target_finds_an_existing_file_and_resolves_it(tmp_path):
+    real = tmp_path / "sub" / "clip.mp4"
+    real.parent.mkdir()
+    real.write_bytes(b"hello")
+    link = tmp_path / "via-symlink.mp4"
+    link.symlink_to(real)
+    assert sources.local_target(str(link)) == real.resolve()
+    assert sources.local_target(f"  {link}  ") == real.resolve()  # whitespace tolerated
+
+
+def test_local_target_is_none_for_missing_files_and_directories(tmp_path):
+    assert sources.local_target(str(tmp_path / "nope.mp4")) is None
+    assert sources.local_target(str(tmp_path)) is None  # a directory is not a file
+    assert sources.local_target("") is None
+    assert sources.local_target("   ") is None
+
+
+def test_local_id_is_a_content_digest_of_the_right_shape(tmp_path):
+    a = tmp_path / "a.mp4"
+    b = tmp_path / "b.mp4"
+    a.write_bytes(b"same bytes")
+    b.write_bytes(b"same bytes")
+    different = tmp_path / "c.mp4"
+    different.write_bytes(b"different bytes")
+
+    id_a, id_b, id_c = sources.local_id(a), sources.local_id(b), sources.local_id(different)
+    assert id_a == id_b, "identical contents must yield the same id regardless of name"
+    assert id_a != id_c
+    assert sources.VIDEO_ID.fullmatch(id_a), f"must be a well-formed video id: {id_a!r}"
+
+
+def test_resolve_prefers_a_local_file_over_url_parsing(tmp_path):
+    # an absolute path is never a URL — the file check must run first, or this
+    # would otherwise fail as "not a YouTube URL"
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(b"local content")
+    kind, value = sources.resolve(str(path))
+    assert kind == sources.VIDEO
+    assert value == sources.local_id(path.resolve())
+
+
+def test_a_bare_filename_that_looks_like_a_video_id_still_resolves_as_local(
+    tmp_path, monkeypatch
+):
+    # named exactly like a bare video id, and it exists in the cwd — the file on
+    # disk must win over the id-shortcut, since resolve checks the filesystem
+    # before it considers anything about YouTube's grammar at all
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / VID
+    path.write_bytes(b"local content, not a real youtube id")
+    kind, value = sources.resolve(VID)
+    assert kind == sources.VIDEO
+    assert value == sources.local_id(path.resolve())
+    assert value != VID  # the digest, never the filename
+
+
+def test_local_metadata_reflects_only_the_file_itself(tmp_path):
+    source = (tmp_path / "My Recording.mkv").resolve()
+    source.write_bytes(b"stand-in bytes")
+
+    assert local.title(source) == "My Recording"
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", local.upload_date(source))
+    assert local.file_url(source) == source.as_uri()
+    assert local.file_url(source).startswith("file:///")
+
+
+def test_duration_s_wraps_ffprobe_failure_as_media_error(tmp_path, monkeypatch):
+    class FakeResult:
+        returncode = 1
+        stdout = ""
+        stderr = "Invalid data found when processing input"
+
+    monkeypatch.setattr(local.subprocess, "run", lambda *a, **k: FakeResult())
+    with pytest.raises(local.MediaError):
+        local.duration_s(tmp_path / "junk.mp4")
+
+
+def test_duration_s_wraps_a_missing_binary_as_media_error(tmp_path, monkeypatch):
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("no ffprobe")
+
+    monkeypatch.setattr(local.subprocess, "run", missing)
+    with pytest.raises(local.MediaError):
+        local.duration_s(tmp_path / "x.mp4")
+
+
+def test_duration_s_rounds_a_clean_reading(tmp_path, monkeypatch):
+    class FakeResult:
+        returncode = 0
+        stdout = "3.024000\n"
+        stderr = ""
+
+    monkeypatch.setattr(local.subprocess, "run", lambda *a, **k: FakeResult())
+    assert local.duration_s(tmp_path / "x.mp4") == 3
+
+
+def test_install_link_creates_a_symlink_named_like_a_fetch(tmp_path):
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    source = (tmp_path / "footage.mov").resolve()
+    source.write_bytes(b"bytes")
+    link = local.install_link(dest, source)
+    assert link.name == "video.mov"
+    assert link.is_symlink()
+    assert link.resolve() == source
+
+
+def test_add_local_end_to_end_with_ffprobe_stubbed(home, monkeypatch, capsys):
+    """add_local's whole path — id, symlink, meta.json — without depending on a
+    real ffprobe binary; the durable evals cover the real-media case."""
+    monkeypatch.setattr(local, "duration_s", lambda path: 42)
+    source = (home.parent / "Lecture One.mp4").resolve()
+    source.write_bytes(b"stand-in video bytes")
+
+    assert run(home, "add", str(source)) == 0
+    printed = capsys.readouterr().out.strip()
+    video_id = Path(printed).name
+    assert video_id == sources.local_id(source)
+
+    entry = home / "library" / video_id
+    document = json.loads((entry / "meta.json").read_text())
+    assert document["title"] == "Lecture One"
+    assert document["channel"] == ""
+    assert document["duration_s"] == 42
+    assert document["url"] == source.as_uri()
+
+    video = next(p for p in entry.iterdir() if p.name.startswith("video."))
+    assert video.is_symlink()
+    assert video.resolve() == source
+
+    # a second add of the identical bytes at a different name is the same entry
+    renamed = (home.parent / "renamed.mp4").resolve()
+    renamed.write_bytes(source.read_bytes())
+    assert run(home, "add", str(renamed)) == 0
+    assert [p.name for p in (home / "library").iterdir()] == [video_id]
+
+
+def test_add_local_fails_cleanly_with_no_readable_duration(home, monkeypatch):
+    def boom(path):
+        raise local.MediaError("no duration here")
+
+    monkeypatch.setattr(local, "duration_s", boom)
+    source = (home.parent / "junk.mp4").resolve()
+    source.write_bytes(b"not really media")
+
+    assert run(home, "add", str(source)) == 1
+    assert not (home / "library").exists() or list((home / "library").iterdir()) == []
+
+
+def test_add_local_never_touches_the_fetcher_seam(home, monkeypatch):
+    # no [ingest] section in config.toml at all — a missing fetcher must not matter
+    monkeypatch.setattr(local, "duration_s", lambda path: 5)
+    source = (home.parent / "no-fetcher-needed.mp4").resolve()
+    source.write_bytes(b"bytes")
+    assert run(home, "add", str(source)) == 0
+
+
+def test_add_local_a_dangling_symlink_reads_as_no_video(home, monkeypatch):
+    monkeypatch.setattr(local, "duration_s", lambda path: 5)
+    source = (home.parent / "vanishing.mp4").resolve()
+    source.write_bytes(b"bytes")
+    assert run(home, "add", str(source)) == 0
+    video_id = sources.local_id(source)
+    entry = home / "library" / video_id
+    assert fetch.has_video(entry)
+    source.unlink()
+    assert not fetch.has_video(entry)
+    assert (entry / "meta.json").is_file()

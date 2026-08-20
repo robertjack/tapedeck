@@ -15,15 +15,16 @@ player (`web_embedded`) still gets clean streams, so it leads the chain with
 `web_safari` excluded (its formats 403 intermittently without a PO-token
 provider).
 
-Also here: what counts as a downloaded video (SPEC-ingest-001), what counts as
-one of our own staging directories (SPEC-ingest-003), and how the fetcher's own
-chatter is handled (SPEC-ingest-004). By default it is captured, not streamed:
-discarded on a clean exit, replayed in full — the tool's own words — the moment
-the exit is not clean, because that is the only diagnosis a DRM 403 ever gave us.
-While it runs, progress comes from the staging directory's bytes rather than from
-parsing the tool, refreshed every three seconds or so, so it is unchanged behind
-whatever the seam points at. When the staged info json already names an expected
-size (yt-dlp writes it before the video data moves), the heartbeat turns that
+Also here: what counts as a downloaded video (SPEC-ingest-001) — a rule local
+adds (SPEC-ingest-005) share unchanged, since a symlink that resolves is a file
+like any other — what counts as one of our own staging directories
+(SPEC-ingest-003), and how the fetcher's own chatter is handled (SPEC-ingest-004).
+By default it is captured, not streamed: discarded on a clean exit, replayed in
+full — the tool's own words — the moment the exit is not clean, because that is
+the only diagnosis a DRM 403 ever gave us. While it runs, progress comes from the
+staging directory's bytes rather than from parsing the tool, refreshed every
+three seconds or so, so it is unchanged behind whatever the seam points at. When
+the staged info json already names an expected size, the heartbeat turns that
 into a percentage — capped at 99 and never decreasing, because merging streams
 can transiently overshoot the estimate and only a clean exit ever means done.
 When our stderr is a terminal, those reports stop stacking as scrollback and
@@ -323,6 +324,8 @@ def videos(directory: Path) -> list[Path]:
 
     `video.part` is a fetch in flight and `video.info.json` is a sidecar; neither
     is a video, so an entry holding only those has no video and is fetched again.
+    A local add's symlink (SPEC-ingest-005) satisfies this the same way any other
+    file does: `is_file()` follows it, and a dangling one reads as no video.
     """
     contents = sorted(directory.iterdir()) if directory.is_dir() else []
     return [

@@ -1,9 +1,11 @@
-"""ingest — turn a YouTube URL into library/<id>/: the video and its metadata.
+"""ingest — turn a video, remote or local, into library/<id>/: the video and its
+metadata.
 
 Sole writer of `library/<id>/video.*` and `library/<id>/meta.json`
 (system/contracts/library-layout.md). Boundary: `python -m ingest add <url>
 [--force]` for one video, `python -m ingest expand <url>` for the ids a playlist
-or channel URL names.
+or channel URL names. `add` also accepts a path to a file already on this
+machine (SPEC-ingest-005) — installed by symlink, no fetcher involved.
 
 The names re-exported here are the system's shared vocabulary, published so no
 other component re-derives them (LESSON-0003): the canonical id grammar, what

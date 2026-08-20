@@ -9,6 +9,11 @@ in and strict on the way out: a field the fetcher omitted becomes a sane default
 a field it spelled its own way is looked for under every spelling, and nothing
 the schema does not name is written.
 
+A local file (SPEC-ingest-005) is normalized through the exact same function: it
+hands in a yt-dlp-info-json-shaped dict built from what the file can honestly say
+about itself (`local.info`), so this module never has to know where a video
+came from.
+
 The one thing that cannot be defaulted is a title, because a library of
 "Untitled" is not a library. No title is a failed ingest.
 """
