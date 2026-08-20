@@ -1,0 +1,51 @@
+{
+  "id": "gen-20260820T055357Z-archive-db70",
+  "component": "archive",
+  "trigger": {
+    "kind": "drift",
+    "refs": [
+      "Regenerated earlier in this same round (SPEC-archive-001 amended for the layout contract's deep-link rule) and green ever since. Its hash moved afterwards, when the shared eval fixture began building a page's addresses from the video's own url instead of hard-coding youtube.com — an input to the hash, not a change this implementation owes."
+    ]
+  },
+  "root_hash": "sha256:db703bcc0b9f2ca090a6f237615549f9a77067424bdb3aca8e42548408fe5bf2",
+  "generator": {
+    "tool": "hand",
+    "model": null,
+    "session_ref": "claude-code:71067f13-e904-451b-9a81-68e9d08df4a7"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "skipped"
+  },
+  "escape_hatch": null,
+  "attempts": 0,
+  "duration_s": 0,
+  "transient_retries": 0,
+  "notes": "Re-attestation after the local-files round moved shared inputs (contracts/library-layout.md, contracts/ask-citations.md, the shared eval fixture). 322/322 durable evals green.",
+  "inputs": {
+    "manifest": "sha256:a255d4a41ffb9b562bdf594558d84ae764c3b7cd3f8054114cf8be8238e8fa5d",
+    "clauses": {
+      "SPEC-archive-001": "sha256:7a54dc443418bd4a397bbe1266f1f424d6e2bdf489350a3571026293119354eb",
+      "SPEC-archive-002": "sha256:d003533529b190e7e7e96b58828c90fc16e1e4e6a37d2e78e380a3779b8a8fce",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:3cc6aff3e227798eefefbaf7a01a0d0ba358387bcc0de658716d06b52a1dfe61",
+      "system/contracts/meta.schema.json": "sha256:98c560566ec2aea13d57aec61ed91cf6cb94a3aff698c909b640131e77f64bbd",
+      "system/contracts/transcript.schema.json": "sha256:5badcff15976c09aca2cd6ed396f815e4a7b27832fce287101d01d7b12358b5e"
+    },
+    "eval_sources": {
+      "system/evals/archive/test_local_addresses.py": "sha256:cbbe0387deec8c7335204731cc189368043a2a8d6342a2eba711f4cf0d1f50bc",
+      "system/evals/archive/test_paragraph_anchors.py": "sha256:ab0cb678ed540e753c97d93949531a2e31e9b33eeb77f830a6c350988373ca2d",
+      "system/evals/archive/test_render.py": "sha256:6b47627ee8ce18524ef09d97592b14226400d53e6a3eaeace1a8e17a94782dbf"
+    },
+    "lessons": {},
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:d7093c4bf74e9f5609bb76230fc3dddff4520cb2eff9d3e232418e5fbcd22fed"
+    },
+    "consumed_contracts": {}
+  }
+}

@@ -1,4 +1,5 @@
-"""Durable evals: a local video's page indexes like any other (SPEC-index-001,
+"""Durable evals: a local result addresses the moment it was read from
+(SPEC-index-002 as amended, SPEC-index-001,
 SPEC-index-002, SPEC-ingest-005).
 
 Boundary: `python -m index`, over an archive page whose section headings carry

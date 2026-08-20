@@ -1,0 +1,59 @@
+{
+  "id": "gen-20260820T055357Z-ingest-cf6d",
+  "component": "ingest",
+  "trigger": {
+    "kind": "drift",
+    "refs": [
+      "Regenerated earlier in this same round (SPEC-ingest-005) and green ever since. Its hash moved afterwards with the shared eval fixture's address rule, and again when SPEC-ingest-005's own overclaim about downstream components was corrected — prose about neighbours, not a constraint on this implementation."
+    ]
+  },
+  "root_hash": "sha256:cf6da9aaf07fce4edff1c9528fa978b30bfcd8b9322332db20e2ba58434341b0",
+  "generator": {
+    "tool": "hand",
+    "model": null,
+    "session_ref": "claude-code:71067f13-e904-451b-9a81-68e9d08df4a7"
+  },
+  "evals": {
+    "durable": "pass",
+    "dependents": "skipped"
+  },
+  "escape_hatch": null,
+  "attempts": 0,
+  "duration_s": 0,
+  "transient_retries": 0,
+  "notes": "Re-attestation after the local-files round moved shared inputs (contracts/library-layout.md, contracts/ask-citations.md, the shared eval fixture). 322/322 durable evals green.",
+  "inputs": {
+    "manifest": "sha256:c3d23f68ed59241426792c77d70ff0d66a73f56408cd2a3240c875a835fb8f8c",
+    "clauses": {
+      "SPEC-ingest-001": "sha256:7afe3d19d550736df9b4cbf11fda08b1e9581703942ea1cbe62cffb1c87aa7a6",
+      "SPEC-ingest-002": "sha256:64094b3d5750368c19508c173b7e178bbc3a30b89b5454aa650a9216a8d26b31",
+      "SPEC-ingest-003": "sha256:cfa8d2b47f8c455abfcb42cae528ea34249e969ed031c21e11a50b7ab98dd12d",
+      "SPEC-ingest-004": "sha256:c1230a65c7495f492dd558d863aa67b43909f61cd23e0d2a0902d9cb443e6cf5",
+      "SPEC-ingest-005": "sha256:67036ae82e137795617d38a260bf10b7d2633fc0797c6bde874ed3223ac84e28",
+      "SPEC-core-001": "sha256:c9ae500dda47db61427f465e102144331bb20c71bcbe24d3a3c9415d9ca3da5f",
+      "SPEC-core-002": "sha256:5a9ffd90653dcbe88d5696de737822b1b34f10aa881d1ab764f70865f3c12a59",
+      "SPEC-core-003": "sha256:a2bab394250f91bdbd393b168c566d87d34f89f021d844be043a31e896a1638c",
+      "SPEC-core-004": "sha256:a28d213cf3c57611111073ee17811003f84cd78e36d46337c05054c592f2a2d6"
+    },
+    "contracts": {
+      "system/contracts/library-layout.md": "sha256:3cc6aff3e227798eefefbaf7a01a0d0ba358387bcc0de658716d06b52a1dfe61",
+      "system/contracts/meta.schema.json": "sha256:98c560566ec2aea13d57aec61ed91cf6cb94a3aff698c909b640131e77f64bbd"
+    },
+    "eval_sources": {
+      "system/evals/ingest/test_expand.py": "sha256:7f07c44fe6bda81d618360696ea3301a7ace8b129180d76b852c6a58b2bbe31c",
+      "system/evals/ingest/test_fetcher_output.py": "sha256:bce2d03be7dacba8ea44100794788d35c2e5223ba97f98a35d97dde6035179c4",
+      "system/evals/ingest/test_force_refetch.py": "sha256:487fbc957a78df77f5fdad617d85c572c45e7cefdc41db58afbeb7aac2d5e028",
+      "system/evals/ingest/test_ingest.py": "sha256:562fe8c2ca48de5bc24acc1f9b3cc160da53c3a5ab4673bb156dafb480d92b53",
+      "system/evals/ingest/test_local_files.py": "sha256:77343d2d261cdfa7943c5219271c0f4bce416e7242088ef4f8132ac223d6dfea"
+    },
+    "lessons": {
+      "LESSON-0001": "sha256:1d7e1ab78c7d75d659542db7b661d5c8a57f339bc75b48575b36908f975e52bb",
+      "LESSON-0003": "sha256:c8f5d869f21ef882ccf20dbe57346069f2788b654691d86dba3bdfbe07268030",
+      "LESSON-0006": "sha256:08a358e345cb6fbba0a0929cc82ab949de50fd07722a05419a5c15e0b14ec5f4"
+    },
+    "shared_eval_sources": {
+      "system/evals/conftest.py": "sha256:d7093c4bf74e9f5609bb76230fc3dddff4520cb2eff9d3e232418e5fbcd22fed"
+    },
+    "consumed_contracts": {}
+  }
+}
