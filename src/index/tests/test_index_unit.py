@@ -30,10 +30,12 @@ def home(tmp_path):
     return tmp_path
 
 
-def write_page(home, video_id, title, body):
+def write_page(home, video_id, title, body, url=None):
+    link_base = url or f"https://www.youtube.com/watch?v={video_id}"
+    joiner = "&" if "?" in link_base else "?"
     (home / "archive" / f"{video_id}.md").write_text(
-        f'---\nid: {video_id}\ntitle: "{title}"\n---\n\n'
-        f"## [0:00:00](https://www.youtube.com/watch?v={video_id}&t=0s) Intro\n\n{body}\n"
+        f'---\nid: {video_id}\ntitle: "{title}"\nurl: {link_base}\n---\n\n'
+        f"## [0:00:00]({link_base}{joiner}t=0s) Intro\n\n{body}\n"
     )
 
 
@@ -58,6 +60,17 @@ def test_parse_strips_anchor_from_every_paragraph():
     assert page.sections[0].text == "First.\n\nSecond."
 
 
+def test_parse_strips_local_file_anchor_too():
+    text = (
+        "---\nid: aaaaaaaaaaa\ntitle: \"T\"\n---\n\n"
+        "## [0:00:05](file:///Users/x/clip.mp4?t=5s) Heading\n\n"
+        "[0:00:05](file:///Users/x/clip.mp4?t=5s) Hello local world."
+    )
+    page = parse(text)
+    assert page.sections[0].text == "Hello local world."
+    assert page.sections[0].url == "file:///Users/x/clip.mp4?t=5s"
+
+
 def test_parse_leaves_unanchored_prose_untouched():
     text = (
         "---\nid: aaaaaaaaaaa\ntitle: \"T\"\n---\n\n"
@@ -73,6 +86,15 @@ def test_parse_rejects_mismatched_filename_id():
         parse("---\nid: bbbbbbbbbbb\n---\n", stem="aaaaaaaaaaa")
 
 
+def test_section_url_is_the_heading_link_verbatim():
+    text = (
+        "---\nid: aaaaaaaaaaa\ntitle: \"T\"\n---\n\n"
+        "## [0:01:30](https://www.youtube.com/watch?v=aaaaaaaaaaa&t=90s) Heading\n\nHi."
+    )
+    page = parse(text)
+    assert page.sections[0].url == "https://www.youtube.com/watch?v=aaaaaaaaaaa&t=90s"
+
+
 def test_reindex_then_search_round_trip(home):
     write_page(home, "aaaaaaaaaaa", "Fixture", "Hello regeneration world.")
     r = run(home, "reindex")
@@ -82,6 +104,22 @@ def test_reindex_then_search_round_trip(home):
     rows = json.loads(r.stdout)
     assert rows and rows[0]["video_id"] == "aaaaaaaaaaa"
     assert "](https://" not in rows[0]["excerpt"]
+
+
+def test_reindex_then_search_local_file(home):
+    write_page(
+        home,
+        "bbbbbbbbbbb",
+        "Local Fixture",
+        "Notes about the sourdough migration.",
+        url="file:///Users/x/standup.mp4",
+    )
+    r = run(home, "reindex")
+    assert r.returncode == 0, r.stderr
+    r = run(home, "search", "sourdough", "--json")
+    assert r.returncode == 0, r.stderr
+    rows = json.loads(r.stdout)
+    assert rows and rows[0]["url"].startswith("file:///Users/x/standup.mp4")
 
 
 def test_search_without_index_is_an_error(home):
