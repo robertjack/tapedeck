@@ -12,8 +12,8 @@ user data.
 ```
 $TAPEDECK_HOME/
   config.toml                  # user settings incl. tool-command seams (SPEC-core-004)
-  library/<video-id>/          # one dir per video; <video-id> = 11-char YouTube id
-    video.<ext>                # the downloaded video — THE source of truth
+  library/<video-id>/          # one dir per video; <video-id> = 11 chars of [A-Za-z0-9_-]
+    video.<ext>                # the video — THE source of truth (a symlink when local)
     meta.json                  # validates system/contracts/meta.schema.json
     transcript.json            # validates system/contracts/transcript.schema.json
   library/.fetching-<id>-*/    # ingest's staging dir: a download in flight, or a dead one
@@ -58,8 +58,19 @@ that lesson exists to prevent, and agreeing with each other did not make either 
 video → transcript → archive page → index rows. Every arrow is re-runnable; deleting
 any derived artifact is recoverable by a CLI verb (`transcribe --force`, `reindex`).
 
+## Video ids
+
+A video id is 11 characters of `[A-Za-z0-9_-]`. For a video fetched from YouTube it is
+YouTube's own id. For a local file it is a deterministic digest of the file's
+*contents*, so the same footage added twice is the same entry however it was named or
+wherever it was moved (SPEC-ingest-005). Both are the same shape on purpose: every
+component keys on the id alone and none of them has to know where a video came from.
+
 ## Deep links
 
-A moment in a video is addressed as
-`https://www.youtube.com/watch?v=<video-id>&t=<seconds>s` — used by search output and
-ask citations.
+A moment in a video is addressed by **the video's own `url` with `t=<seconds>s`
+appended as a query parameter**. For a YouTube video that is exactly the familiar
+`https://www.youtube.com/watch?v=<video-id>&t=<seconds>s`; for a local file it is
+`file:///absolute/path/video.mkv?t=<seconds>s`. One rule covers both, which is what
+lets search output, archive pages, ask citations and the wiki address a moment without
+asking where the video came from.
