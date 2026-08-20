@@ -1,0 +1,52 @@
+name: Bug report
+description: Something tapedeck did wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The single most useful thing you can include is **the full output of the
+        command that failed**. `tapedeck add` deliberately replays its download
+        tool's entire output when a fetch fails, precisely so it can be pasted
+        into a report like this one.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got instead.
+      placeholder: |
+        I ran: tapedeck add "https://www.youtube.com/watch?v=..."
+        I expected: the video to be added
+        Instead: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Full output
+      description: Everything the command printed. Redact anything private.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`tapedeck doctor` output"
+      description: >-
+        Read-only diagnosis of your setup — it checks each configured tool, the
+        library home, SQLite FTS5, and the platform.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`tapedeck --version`, and your macOS version and chip."
+      placeholder: "tapedeck 0.3.0, macOS 15.5, M2"
+    validations:
+      required: true
