@@ -62,8 +62,11 @@ answerer_command = '{answerer}'
 [wiki]
 # maintainer_command is the agent that writes and later tends this wiki.
 maintainer_command = '{maintainer}'
-# auto files each video `add` completes; an absent key also reads true.
-auto = true
+# auto files each video `add` completes into the wiki, spending real agent
+# time and money on the account maintainer_command names. Ships off, and an
+# absent key also reads false — the wiki spends only when you ask it to.
+# Set auto = true to file every add automatically.
+auto = false
 
 [setup]
 # remedy.<executable> installs a tool `doctor` found missing; `tapedeck
